@@ -6,6 +6,9 @@ import {
   queueInsertAfterCurrentSchema,
   queueRemoveSchema,
   queueReorderSchema,
+  defaultQueueAddSchema,
+  defaultQueueAddBatchSchema,
+  defaultQueueRemoveSchema,
 } from '@music-together/shared'
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -166,6 +169,74 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       await playerService.stopPlaybackSafe(io, ctx.roomId)
 
       logger.info(`Queue cleared`, { roomId: ctx.roomId })
+    }),
+  )
+
+  // -----------------------------------------------------------------------
+  // Default queue (default playlist pool) — owner/admin only
+  // -----------------------------------------------------------------------
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_ADD,
+    withPermission('add', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueAddSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+
+      ctx.room.defaultQueue.push(track)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        `${ctx.user.nickname} 将「${track.title}」加入了默认播放列表`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      logger.info(`Default queue add: ${track.title}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_ADD_BATCH,
+    withPermission('add', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueAddBatchSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const { tracks: rawTracks } = parsed.data
+      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
+
+      ctx.room.defaultQueue.push(...tracks)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        `${ctx.user.nickname} 添加了 ${tracks.length} 首歌到默认播放列表`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      logger.info(`Default queue batch add: ${tracks.length} tracks`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_REMOVE,
+    withPermission('remove', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueRemoveSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的移除请求' })
+        return
+      }
+      const { trackId } = parsed.data
+
+      ctx.room.defaultQueue = ctx.room.defaultQueue.filter((t) => t.id !== trackId)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      logger.info(`Default queue remove`, { roomId: ctx.roomId })
     }),
   )
 }

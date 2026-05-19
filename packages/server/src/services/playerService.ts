@@ -399,6 +399,25 @@ export function playNextTrackInRoom(
 
     const nextTrack = queueService.getNextTrack(roomId, playMode)
     if (!nextTrack) {
+      // Fallback: if default queue is configured, randomly pick one and play
+      const room = roomRepo.get(roomId)
+      if (room && room.defaultQueue.length > 0) {
+        const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
+        const picked = room.defaultQueue[randomIndex]
+        const added = queueService.addTrack(roomId, picked)
+        if (added) {
+          io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+          const newTrack = room.queue.length > 0 ? room.queue[room.queue.length - 1] : null
+          if (newTrack) {
+            const success = await _playTrackInRoom(io, roomId, newTrack)
+            if (!success) {
+              stopPlayback(io, roomId)
+            }
+            lastNextTimestamp.set(roomId, Date.now())
+            return
+          }
+        }
+      }
       stopPlayback(io, roomId)
       return
     }
@@ -490,6 +509,15 @@ export async function syncPlaybackToSocket(
     // No current track but queue has items → start playing from queue
     const firstTrack = room.queue[0]
     await playTrackInRoom(io, roomId, firstTrack)
+  } else if (isAloneInRoom && room.defaultQueue.length > 0) {
+    // No current track, queue empty, but default queue has items → random pick
+    const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
+    const picked = room.defaultQueue[randomIndex]
+    const added = queueService.addTrack(roomId, picked)
+    if (added) {
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+      await playTrackInRoom(io, roomId, picked)
+    }
   }
 }
 

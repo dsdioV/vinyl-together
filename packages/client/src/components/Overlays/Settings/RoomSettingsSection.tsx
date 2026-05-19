@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { DefaultPlaylistSection } from './DefaultPlaylistSection'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -274,6 +275,10 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               </Button>
             </div>
           )}
+
+          <div className="mt-6">
+            <DefaultPlaylistSection />
+          </div>
         </div>
       )}
 

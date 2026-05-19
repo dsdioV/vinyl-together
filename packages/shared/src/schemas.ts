@@ -99,6 +99,20 @@ export const queueReorderSchema = z.object({
 })
 
 // ---------------------------------------------------------------------------
+// Default queue (default playlist pool)
+// ---------------------------------------------------------------------------
+
+export const defaultQueueAddSchema = z.object({
+  track: trackSchema,
+})
+
+export const defaultQueueAddBatchSchema = z.object({
+  tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+})
+
+export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })
+
+// ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 

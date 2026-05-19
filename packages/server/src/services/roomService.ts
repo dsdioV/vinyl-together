@@ -71,6 +71,7 @@ export function createRoom(
     audioQuality: 320,
     users: [user],
     queue: [],
+    defaultQueue: [],
     currentTrack: null,
     playState: {
       isPlaying: false,

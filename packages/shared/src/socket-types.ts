@@ -68,6 +68,9 @@ export interface ServerToClientEvents {
 
   // Playlist
   [EVENTS.PLAYLIST_MY_LIST]: (data: { platform: MusicSource; playlists: Playlist[] }) => void
+
+  // Default queue
+  [EVENTS.DEFAULT_QUEUE_UPDATED]: (data: { defaultQueue: Track[] }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
@@ -96,6 +99,11 @@ export interface ClientToServerEvents {
 
   // Queue batch
   [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
+
+  // Default queue
+  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: Track }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: Track[] }) => void
+  [EVENTS.DEFAULT_QUEUE_REMOVE]: (data: { trackId: string }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 

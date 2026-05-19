@@ -13,6 +13,8 @@ export interface RoomData {
   audioQuality: AudioQuality
   users: User[]
   queue: Track[]
+  /** 默认播放列表池，主队列为空时从中随机抽取 */
+  defaultQueue: Track[]
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode

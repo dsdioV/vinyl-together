@@ -79,6 +79,8 @@ export interface RoomState {
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode
+  /** 默认播放列表池，主队列为空时从中随机抽取（房主手动维护，不被消费） */
+  defaultQueue: Track[]
 }
 
 export interface PlayState {
