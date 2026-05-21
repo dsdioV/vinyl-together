@@ -2,7 +2,7 @@ name: Build & Push
 
 on:
   push:
-    branches: [main]
+    branches: [VVVVVV]
   workflow_dispatch:
 
 jobs:
