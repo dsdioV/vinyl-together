@@ -180,7 +180,12 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
               const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
               if (best) {
                 const cookie2 = authService.getAnyCookie(best.track.source, roomId)
-                const url2 = await resolveStreamUrl(best.track.source, best.track.urlId, room.audioQuality, cookie2 ?? undefined)
+                const url2 = await resolveStreamUrl(
+                  best.track.source,
+                  best.track.urlId,
+                  room.audioQuality,
+                  cookie2 ?? undefined,
+                )
                 if (url2) {
                   const replacement: Track = {
                     ...best.track,
@@ -397,7 +402,28 @@ export function playNextTrackInRoom(
       return
     }
 
-    const nextTrack = queueService.getNextTrack(roomId, playMode)
+    const room = roomRepo.get(roomId)
+    if (!room) return
+
+    // Capture current state BEFORE any mutations so we can compute the next
+    // track correctly even after auto-removing the current one from the queue.
+    const currentTrack = room.currentTrack
+    const oldCurrentIndex = currentTrack ? room.queue.findIndex((t) => t.id === currentTrack.id) : -1
+
+    // Auto-remove played track from queue (if enabled AND track is still in queue)
+    const autoRemoved = !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)
+    if (autoRemoved) {
+      room.queue = room.queue.filter((t) => t.id !== currentTrack.id)
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+    }
+
+    // Compute next track index using the OLD current index, but on the
+    // (possibly shorter) queue.  When the track at oldCurrentIndex was
+    // removed, the element that was at oldCurrentIndex+1 is now at
+    // oldCurrentIndex — so the "next" is exactly oldCurrentIndex.
+    const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, autoRemoved)
+    const nextTrack = nextIndex >= 0 ? room.queue[nextIndex] : null
+
     if (!nextTrack) {
       // Fallback: if default queue is configured, randomly pick one and play
       const room = roomRepo.get(roomId)
@@ -424,8 +450,11 @@ export function playNextTrackInRoom(
 
     const success = await _playTrackInRoom(io, roomId, nextTrack)
     if (!success) {
-      const skipTrack = queueService.getNextTrack(roomId, playMode)
-      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
+      // After a failed play, re-compute fallback normally (currentTrack is
+      // already set to the failed track by _playTrackInRoom; skipDebounce
+      // not needed since it was already cleared by the first call).
+      const fallbackTrack = queueService.getNextTrack(roomId, playMode)
+      if (fallbackTrack) await _playTrackInRoom(io, roomId, fallbackTrack)
     }
 
     // Refresh debounce timestamp after async work completes.

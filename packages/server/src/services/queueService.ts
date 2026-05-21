@@ -79,6 +79,68 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
 }
 
 /**
+ * Compute the next track **index** given a known previous-current-index and
+ * whether the track at that index has already been removed from the queue.
+ *
+ * This is a lower-level helper used by auto-remove flows where the
+ * currentTrack may have been deleted from the queue before computing the
+ * successor.  It avoids the `getNextTrack` trap of searching for a
+ * currentTrack that is no longer in the queue (which yields -1).
+ *
+ * @param prevIndex       Index of the track that just finished (before removal).
+ * @param prevRemoved     Whether that track was removed from the queue.
+ *
+ * Returns the next index in the (possibly shorter) queue, or -1 if no
+ * successor exists.
+ */
+export function computeNextIndex(roomId: string, playMode: PlayMode, prevIndex: number, prevRemoved: boolean): number {
+  const room = roomRepo.get(roomId)
+  if (!room || room.queue.length === 0) return -1
+
+  const len = room.queue.length
+  const mode = playMode ?? room.playMode ?? 'sequential'
+
+  switch (mode) {
+    case 'loop-one':
+      // After removing the only track the queue may be empty — handled above.
+      // Otherwise return the first (or prev, since it's the same track).
+      return prevRemoved && prevIndex < len ? prevIndex : 0 < len ? 0 : -1
+
+    case 'loop-all': {
+      if (prevRemoved) {
+        // The element that was at prevIndex+1 is now at prevIndex.
+        return prevIndex < len ? prevIndex : 0
+      }
+      const nextIndex = prevIndex + 1
+      return nextIndex < len ? nextIndex : 0
+    }
+
+    case 'shuffle': {
+      if (len === 1) return 0
+      // Avoid the same index — but since we may have removed it, exclude
+      // prevIndex (which may now point to a different track; statistically
+      // harmless to exclude it for variety).
+      const exclude = prevRemoved ? -1 : prevIndex
+      const candidates: number[] = []
+      for (let i = 0; i < len; i++) {
+        if (i !== exclude) candidates.push(i)
+      }
+      if (candidates.length === 0) return 0
+      return candidates[Math.floor(Math.random() * candidates.length)]
+    }
+
+    case 'sequential':
+    default: {
+      if (prevRemoved) {
+        return prevIndex < len ? prevIndex : -1
+      }
+      const nextIndex = prevIndex + 1
+      return nextIndex < len ? nextIndex : -1
+    }
+  }
+}
+
+/**
  * Get the next track based on the play mode.
  *
  * - sequential: next in queue; null at end

@@ -28,7 +28,12 @@ function getQualityLabel(quality: AudioQuality): string {
 }
 
 interface RoomSettingsSectionProps {
-  onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
+  onUpdateSettings: (settings: {
+    name?: string
+    password?: string | null
+    audioQuality?: AudioQuality
+    autoRemovePlayed?: boolean
+  }) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
@@ -37,6 +42,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isOwner = currentUser?.role === 'owner'
+  const isAdmin = currentUser?.role === 'admin'
 
   const driftDisplay = useMemo(() => {
     const ms = Math.round(syncDrift * 1000)
@@ -276,9 +282,30 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             </div>
           )}
 
+          <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
+            <Switch
+              checked={room?.autoRemovePlayed ?? false}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+            />
+          </SettingRow>
+
           <div className="mt-6">
             <DefaultPlaylistSection />
           </div>
+        </div>
+      )}
+
+      {isAdmin && !isOwner && (
+        <div>
+          <h3 className="text-base font-semibold">管理员设置</h3>
+          <Separator className="mt-2 mb-4" />
+
+          <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
+            <Switch
+              checked={room?.autoRemovePlayed ?? false}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+            />
+          </SettingRow>
         </div>
       )}
 

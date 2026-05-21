@@ -79,6 +79,7 @@ export function createRoom(
       serverTimestamp: Date.now(),
     },
     playMode: 'loop-all',
+    autoRemovePlayed: false,
   }
 
   roomRepo.set(roomId, room)
@@ -196,7 +197,7 @@ export function listRooms(): RoomListItem[] {
 
 export function updateSettings(
   roomId: string,
-  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality },
+  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality; autoRemovePlayed?: boolean },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -212,6 +213,10 @@ export function updateSettings(
 
   if (settings.audioQuality !== undefined) {
     room.audioQuality = settings.audioQuality
+  }
+
+  if (settings.autoRemovePlayed !== undefined) {
+    room.autoRemovePlayed = settings.autoRemovePlayed
   }
 }
 

@@ -18,6 +18,8 @@ export interface RoomData {
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode
+  /** 播完自动移出队列（房主开关，默认关闭） */
+  autoRemovePlayed: boolean
 }
 
 export interface SocketMapping {

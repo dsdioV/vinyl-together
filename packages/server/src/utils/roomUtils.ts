@@ -16,6 +16,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     playState: data.playState,
     playMode: data.playMode,
     defaultQueue: data.defaultQueue,
+    autoRemovePlayed: data.autoRemovePlayed,
   }
 }
 
