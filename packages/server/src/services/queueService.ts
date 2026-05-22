@@ -141,7 +141,55 @@ export function computeNextIndex(roomId: string, playMode: PlayMode, prevIndex: 
 }
 
 /**
+ * Like-mode selector: pick the next track by popularity.
+ *
+ * Sorts remaining queue tracks by:
+ *  1. Like count (descending)
+ *  2. Last-like timestamp (ascending — earlier liked = higher priority)
+ *  3. Original queue order (final deterministic tiebreaker)
+ *
+ * For shuffle mode, randomly picks within the highest-like group.
+ * For all other modes, returns the highest-ranked track.
+ */
+export function getNextTrackByLikes(roomId: string, playMode?: PlayMode): Track | null {
+  const room = roomRepo.get(roomId)
+  if (!room || room.queue.length === 0) return null
+
+  const mode = playMode ?? room.playMode ?? 'sequential'
+
+  // Annotate each track with like count and last-like timestamp
+  const annotated = room.queue.map((t) => ({
+    track: t,
+    likes: room.trackLikes.get(t.id)?.size ?? 0,
+    lastLikeAt: room.trackLikeTimestamps.get(t.id) ?? Infinity,
+    originalIndex: room.queue.indexOf(t),
+  }))
+
+  // Sort: likes desc → lastLikeAt asc → originalIndex asc
+  annotated.sort((a, b) => {
+    if (b.likes !== a.likes) return b.likes - a.likes
+    const tsDiff = a.lastLikeAt - b.lastLikeAt
+    if (tsDiff !== 0) return tsDiff
+    return a.originalIndex - b.originalIndex
+  })
+
+  if (mode === 'shuffle') {
+    // Randomly pick within the highest-like group
+    const maxLikes = annotated[0]?.likes ?? 0
+    const topGroup = annotated.filter((t) => t.likes === maxLikes)
+    const picked = topGroup[Math.floor(Math.random() * topGroup.length)]
+    return picked?.track ?? null
+  }
+
+  // sequential / loop-all / loop-one: return the top-ranked track
+  return annotated[0]?.track ?? null
+}
+
+/**
  * Get the next track based on the play mode.
+ *
+ * When like mode is active (songLikes + autoRemovePlayed), delegates to
+ * getNextTrackByLikes() which overrides the normal play-mode behavior.
  *
  * - sequential: next in queue; null at end
  * - loop-all:   next in queue; wraps to first at end
@@ -151,6 +199,11 @@ export function computeNextIndex(roomId: string, playMode: PlayMode, prevIndex: 
 export function getNextTrack(roomId: string, playMode?: PlayMode): Track | null {
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
+
+  // Like mode overrides normal play-mode selection
+  if (room.songLikes && room.autoRemovePlayed) {
+    return getNextTrackByLikes(roomId, playMode)
+  }
 
   const mode = playMode ?? room.playMode ?? 'sequential'
 

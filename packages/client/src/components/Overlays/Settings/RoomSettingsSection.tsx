@@ -33,6 +33,7 @@ interface RoomSettingsSectionProps {
     password?: string | null
     audioQuality?: AudioQuality
     autoRemovePlayed?: boolean
+    songLikes?: boolean
   }) => void
 }
 
@@ -289,6 +290,21 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             />
           </SettingRow>
 
+          <SettingRow
+            label="点赞模式"
+            description={
+              room?.autoRemovePlayed
+                ? '下一首将优先播放点赞数更高的歌曲'
+                : '需先开启「播完自动移出」'
+            }
+          >
+            <Switch
+              checked={room?.songLikes ?? false}
+              disabled={!room?.autoRemovePlayed}
+              onCheckedChange={(checked) => onUpdateSettings({ songLikes: checked })}
+            />
+          </SettingRow>
+
           <div className="mt-6">
             <DefaultPlaylistSection />
           </div>
@@ -304,6 +320,21 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             <Switch
               checked={room?.autoRemovePlayed ?? false}
               onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="点赞模式"
+            description={
+              room?.autoRemovePlayed
+                ? '下一首将优先播放点赞数更高的歌曲'
+                : '需先开启「播完自动移出」'
+            }
+          >
+            <Switch
+              checked={room?.songLikes ?? false}
+              disabled={!room?.autoRemovePlayed}
+              onCheckedChange={(checked) => onUpdateSettings({ songLikes: checked })}
             />
           </SettingRow>
         </div>

@@ -25,6 +25,7 @@ export const roomSettingsSchema = z.object({
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).nullable().optional(),
   audioQuality: audioQualitySchema.optional(),
   autoRemovePlayed: z.boolean().optional(),
+  songLikes: z.boolean().optional(),
 })
 
 export const setRoleSchema = z.object({
@@ -112,6 +113,13 @@ export const defaultQueueAddBatchSchema = z.object({
 })
 
 export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })
+
+// ---------------------------------------------------------------------------
+// Song likes
+// ---------------------------------------------------------------------------
+
+export const queueLikeSchema = z.object({ trackId: z.string().max(200) })
+export const queueUnlikeSchema = queueLikeSchema
 
 // ---------------------------------------------------------------------------
 // Chat

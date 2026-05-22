@@ -13,12 +13,14 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ArrowUpToLine, ChevronDown, ChevronUp, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp, Heart, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import type { MusicSource } from '@music-together/shared'
+import { storage } from '@/lib/storage'
 
 const EMPTY_QUEUE: Track[] = []
+const EMPTY_LIKES: Record<string, string[]> = {}
 
 const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = {
   netease: { label: '网易', className: 'text-white bg-red-500 ring-red-600/50' },
@@ -37,6 +39,9 @@ interface QueueDrawerProps {
 export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue, onClearQueue }: QueueDrawerProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const trackLikes = useRoomStore((s) => s.room?.trackLikes ?? EMPTY_LIKES)
+  const songLikes = useRoomStore((s) => s.room?.songLikes ?? false)
+  const myId = storage.getUserId()
   const { socket } = useSocketContext()
   const isMobile = useIsMobile() // layout: Drawer direction, height
   const hasHover = useHasHover() // interaction: hover vs touch
@@ -127,6 +132,18 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
       toast.info(`已发起投票：移除「${track.title}」`)
     }
   }
+
+  const handleLikeToggle = useCallback(
+    (track: Track) => {
+      const likedByMe = trackLikes[track.id]?.includes(myId) ?? false
+      if (likedByMe) {
+        socket.emit(EVENTS.QUEUE_UNLIKE, { trackId: track.id })
+      } else {
+        socket.emit(EVENTS.QUEUE_LIKE, { trackId: track.id })
+      }
+    },
+    [socket, trackLikes, myId],
+  )
 
   const handleInsertAfterCurrent = (track: Track, e?: MouseEvent) => {
     // If this was triggered from inside the floating actions, hide it immediately.
@@ -312,6 +329,39 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       )}
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {/* Like button — always visible (anyone can like) */}
+                      {songLikes && (
+                        <Tooltip delayDuration={400}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={cn(
+                                'h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0',
+                                (trackLikes[track.id]?.includes(myId) ?? false) && 'text-red-500 hover:text-red-600',
+                              )}
+                              onClick={() => handleLikeToggle(track)}
+                              aria-label={
+                                (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
+                              }
+                            >
+                              <Heart
+                                className="h-3 w-3"
+                                fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
+                              />
+                              {(trackLikes[track.id]?.length ?? 0) > 0 && (
+                                <span className="ml-0.5 text-[10px] font-medium tabular-nums">
+                                  {trackLikes[track.id]?.length}
+                                </span>
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            {(trackLikes[track.id]?.includes(myId) ?? false) ? '取消点赞' : '点赞'}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+
                       {/* Play button — hidden for currently playing track */}
                       {currentTrack?.id !== track.id && (canPlay || canVote) && (
                         <Tooltip delayDuration={400}>

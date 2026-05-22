@@ -417,12 +417,18 @@ export function playNextTrackInRoom(
       io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
     }
 
-    // Compute next track index using the OLD current index, but on the
-    // (possibly shorter) queue.  When the track at oldCurrentIndex was
-    // removed, the element that was at oldCurrentIndex+1 is now at
+    // In like mode, bypass index-based selection and pick by popularity.
+    // Otherwise compute next track index using the OLD current index, but
+    // on the (possibly shorter) queue.  When the track at oldCurrentIndex
+    // was removed, the element that was at oldCurrentIndex+1 is now at
     // oldCurrentIndex — so the "next" is exactly oldCurrentIndex.
-    const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, autoRemoved)
-    const nextTrack = nextIndex >= 0 ? room.queue[nextIndex] : null
+    let nextTrack: Track | null = null
+    if (room.songLikes && room.autoRemovePlayed) {
+      nextTrack = queueService.getNextTrackByLikes(roomId, playMode)
+    } else {
+      const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, autoRemoved)
+      nextTrack = nextIndex >= 0 ? room.queue[nextIndex] : null
+    }
 
     if (!nextTrack) {
       // Fallback: if default queue is configured, randomly pick one and play

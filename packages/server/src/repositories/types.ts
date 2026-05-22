@@ -20,6 +20,12 @@ export interface RoomData {
   playMode: PlayMode
   /** 播完自动移出队列（房主开关，默认关闭） */
   autoRemovePlayed: boolean
+  /** 点赞模式（房主开关，需 autoRemovePlayed 开启，默认关闭） */
+  songLikes: boolean
+  /** 点赞数据：trackId → 点赞用户ID集合 */
+  trackLikes: Map<string, Set<string>>
+  /** 点赞时间戳（tiebreaker）：trackId → 最近点赞时间戳 */
+  trackLikeTimestamps: Map<string, number>
 }
 
 export interface SocketMapping {

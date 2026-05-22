@@ -33,6 +33,7 @@ export interface ServerToClientEvents {
     password?: string | null
     audioQuality: AudioQuality
     autoRemovePlayed: boolean
+    songLikes: boolean
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
@@ -72,6 +73,9 @@ export interface ServerToClientEvents {
 
   // Default queue
   [EVENTS.DEFAULT_QUEUE_UPDATED]: (data: { defaultQueue: Track[] }) => void
+
+  // Song likes
+  [EVENTS.QUEUE_LIKES_UPDATED]: (data: { trackLikes: Record<string, string[]> }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
@@ -85,6 +89,7 @@ export interface ClientToServerEvents {
     password?: string | null
     audioQuality?: AudioQuality
     autoRemovePlayed?: boolean
+    songLikes?: boolean
   }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
@@ -105,6 +110,10 @@ export interface ClientToServerEvents {
 
   // Queue batch
   [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
+
+  // Song likes
+  [EVENTS.QUEUE_LIKE]: (data: { trackId: string }) => void
+  [EVENTS.QUEUE_UNLIKE]: (data: { trackId: string }) => void
 
   // Default queue
   [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: Track }) => void
