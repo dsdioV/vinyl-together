@@ -10,7 +10,7 @@ import type { Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useCallback, useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AbilityContext } from '@/providers/AbilityProvider'
 import { ArrowUpToLine, ChevronDown, ChevronUp, Heart, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
@@ -57,6 +57,21 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
   // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
+
+  // When like mode is on, determine which track would play next
+  // (highest likes → lowest queue index as tiebreaker)
+  const nextTrackId = useMemo<string | null>(() => {
+    if (!songLikes || queue.length === 0) return null
+    const sorted = [...queue]
+      .filter((t) => t.id !== currentTrack?.id)
+      .sort((a, b) => {
+        const aLikes = trackLikes[a.id]?.length ?? 0
+        const bLikes = trackLikes[b.id]?.length ?? 0
+        if (bLikes !== aLikes) return bLikes - aLikes
+        return queue.indexOf(a) - queue.indexOf(b)
+      })
+    return sorted[0]?.id ?? null
+  }, [songLikes, queue, currentTrack?.id, trackLikes])
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
@@ -305,6 +320,45 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       <MarqueeText className="text-xs text-muted-foreground">{track.artist.join(' / ')}</MarqueeText>
                     </div>
 
+                    {/* Like button + count — always visible when like mode is on */}
+                    {songLikes && (
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        {/* Next-up indicator */}
+                        {nextTrackId === track.id && currentTrack?.id !== track.id && (
+                          <Badge
+                            variant="default"
+                            className="mr-1 h-4 gap-0.5 whitespace-nowrap bg-primary/15 px-1.5 py-0 text-[10px] font-medium text-primary hover:bg-primary/20"
+                          >
+                            ▶ 即将播放
+                          </Badge>
+                        )}
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex items-center gap-0.5 rounded px-1 py-0.5 text-xs transition-colors',
+                            (trackLikes[track.id]?.includes(myId) ?? false)
+                              ? 'text-red-500 hover:text-red-600'
+                              : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleLikeToggle(track)
+                          }}
+                          aria-label={
+                            (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
+                          }
+                        >
+                          <Heart
+                            className="h-3.5 w-3.5"
+                            fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
+                          />
+                          {(trackLikes[track.id]?.length ?? 0) > 0 && (
+                            <span className="tabular-nums">{trackLikes[track.id]?.length}</span>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
                     {/* Requester badge — absolute top-right inside item */}
                     {track.requestedBy && (
                       <Badge
@@ -329,40 +383,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       )}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {/* Like button — always visible (anyone can like) */}
-                      {songLikes && (
-                        <Tooltip delayDuration={400}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={cn(
-                                'h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0',
-                                (trackLikes[track.id]?.includes(myId) ?? false) && 'text-red-500 hover:text-red-600',
-                              )}
-                              onClick={() => handleLikeToggle(track)}
-                              aria-label={
-                                (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
-                              }
-                            >
-                              <Heart
-                                className="h-3 w-3"
-                                fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
-                              />
-                              {(trackLikes[track.id]?.length ?? 0) > 0 && (
-                                <span className="ml-0.5 text-[10px] font-medium tabular-nums">
-                                  {trackLikes[track.id]?.length}
-                                </span>
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom">
-                            {(trackLikes[track.id]?.includes(myId) ?? false) ? '取消点赞' : '点赞'}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-
-                      {/* Play button — hidden for currently playing track */}
+                        {/* Play button — hidden for currently playing track */}
                       {currentTrack?.id !== track.id && (canPlay || canVote) && (
                         <Tooltip delayDuration={400}>
                           <TooltipTrigger asChild>
