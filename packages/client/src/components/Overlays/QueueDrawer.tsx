@@ -274,6 +274,45 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       if (!isTouch && dismissedHoverTrackId === track.id) setDismissedHoverTrackId(null)
                     }}
                   >
+                    {/* Like button + count — always visible when like mode is on, on the left */}
+                    {songLikes && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex items-center gap-0.5 rounded px-1 py-0.5 text-xs transition-colors',
+                            (trackLikes[track.id]?.includes(myId) ?? false)
+                              ? 'text-red-500 hover:text-red-600'
+                              : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleLikeToggle(track)
+                          }}
+                          aria-label={
+                            (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
+                          }
+                        >
+                          <Heart
+                            className="h-3.5 w-3.5"
+                            fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
+                          />
+                          {(trackLikes[track.id]?.length ?? 0) > 0 && (
+                            <span className="tabular-nums">{trackLikes[track.id]?.length}</span>
+                          )}
+                        </button>
+                        {/* Next-up indicator */}
+                        {nextTrackId === track.id && currentTrack?.id !== track.id && (
+                          <Badge
+                            variant="default"
+                            className="h-4 gap-0.5 whitespace-nowrap bg-primary/15 px-1.5 py-0 text-[10px] font-medium text-primary hover:bg-primary/20"
+                          >
+                            ▶ 即将播放
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+
                     {/* Index */}
                     <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{i + 1}</span>
 
