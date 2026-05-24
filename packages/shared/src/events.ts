@@ -74,6 +74,17 @@ export const EVENTS = {
 
   // Queue insert
   QUEUE_INSERT_AFTER_CURRENT: 'queue:insert_after_current',
+
+  // Default queue (default playlist pool)
+  DEFAULT_QUEUE_ADD: 'default_queue:add',
+
+  // Song likes
+  QUEUE_LIKE: 'queue:like',
+  QUEUE_UNLIKE: 'queue:unlike',
+  QUEUE_LIKES_UPDATED: 'queue:likes_updated',
+  DEFAULT_QUEUE_ADD_BATCH: 'default_queue:add_batch',
+  DEFAULT_QUEUE_REMOVE: 'default_queue:remove',
+  DEFAULT_QUEUE_UPDATED: 'default_queue:updated',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

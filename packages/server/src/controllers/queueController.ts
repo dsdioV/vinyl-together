@@ -6,10 +6,16 @@ import {
   queueInsertAfterCurrentSchema,
   queueRemoveSchema,
   queueReorderSchema,
+  defaultQueueAddSchema,
+  defaultQueueAddBatchSchema,
+  defaultQueueRemoveSchema,
+  queueLikeSchema,
+  queueUnlikeSchema,
 } from '@music-together/shared'
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
+import { createWithRoom } from '../middleware/withRoom.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
@@ -168,4 +174,155 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       logger.info(`Queue cleared`, { roomId: ctx.roomId })
     }),
   )
+
+  // -----------------------------------------------------------------------
+  // Default queue (default playlist pool) — owner/admin only
+  // -----------------------------------------------------------------------
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_ADD,
+    withPermission('add', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueAddSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+
+      ctx.room.defaultQueue.push(track)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        `${ctx.user.nickname} 将「${track.title}」加入了默认播放列表`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      logger.info(`Default queue add: ${track.title}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_ADD_BATCH,
+    withPermission('add', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueAddBatchSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      const { tracks: rawTracks } = parsed.data
+      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
+
+      ctx.room.defaultQueue.push(...tracks)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        `${ctx.user.nickname} 添加了 ${tracks.length} 首歌到默认播放列表`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      logger.info(`Default queue batch add: ${tracks.length} tracks`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_REMOVE,
+    withPermission('remove', 'Queue', (ctx, raw) => {
+      const parsed = defaultQueueRemoveSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的移除请求' })
+        return
+      }
+      const { trackId } = parsed.data
+
+      ctx.room.defaultQueue = ctx.room.defaultQueue.filter((t) => t.id !== trackId)
+      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+
+      logger.info(`Default queue remove`, { roomId: ctx.roomId })
+    }),
+  )
+
+  // -----------------------------------------------------------------------
+  // Song likes — anyone in the room can like/unlike tracks
+  // -----------------------------------------------------------------------
+
+  socket.on(
+    EVENTS.QUEUE_LIKE,
+    createWithRoom(io)(async (ctx, raw) => {
+      const parsed = queueLikeSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的点赞请求' })
+        return
+      }
+      const { trackId } = parsed.data
+
+      // Track must exist in queue or be currently playing
+      const inQueue = ctx.room.queue.some((t) => t.id === trackId)
+      const isCurrent = ctx.room.currentTrack?.id === trackId
+      if (!inQueue && !isCurrent) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲不在播放列表中' })
+        return
+      }
+
+      // Get or create the like set for this track
+      let likeSet = ctx.room.trackLikes.get(trackId)
+      if (!likeSet) {
+        likeSet = new Set()
+        ctx.room.trackLikes.set(trackId, likeSet)
+      }
+
+      // Already liked — no-op (idempotent)
+      if (likeSet.has(ctx.user.id)) return
+
+      likeSet.add(ctx.user.id)
+      ctx.room.trackLikeTimestamps.set(trackId, Date.now())
+
+      // Broadcast updated likes to all room members
+      _broadcastLikes(io, ctx.roomId, ctx.room)
+
+      logger.info(`Track liked: ${trackId} by ${ctx.user.nickname}`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.QUEUE_UNLIKE,
+    createWithRoom(io)(async (ctx, raw) => {
+      const parsed = queueUnlikeSchema.safeParse(raw)
+      if (!parsed.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的取消点赞请求' })
+        return
+      }
+      const { trackId } = parsed.data
+
+      const likeSet = ctx.room.trackLikes.get(trackId)
+      if (!likeSet || !likeSet.has(ctx.user.id)) return // Not liked — no-op
+
+      likeSet.delete(ctx.user.id)
+
+      // Clean up empty sets
+      if (likeSet.size === 0) {
+        ctx.room.trackLikes.delete(trackId)
+        ctx.room.trackLikeTimestamps.delete(trackId)
+      }
+
+      // Broadcast updated likes
+      _broadcastLikes(io, ctx.roomId, ctx.room)
+
+      logger.info(`Track unliked: ${trackId} by ${ctx.user.nickname}`, { roomId: ctx.roomId })
+    }),
+  )
+}
+
+/** Serialize trackLikes Map → Record and broadcast to the room */
+function _broadcastLikes(
+  io: TypedServer,
+  roomId: string,
+  room: { trackLikes: Map<string, Set<string>> },
+): void {
+  const trackLikes: Record<string, string[]> = {}
+  for (const [trackId, userIds] of room.trackLikes) {
+    trackLikes[trackId] = Array.from(userIds)
+  }
+  io.to(roomId).emit(EVENTS.QUEUE_LIKES_UPDATED, { trackLikes })
 }

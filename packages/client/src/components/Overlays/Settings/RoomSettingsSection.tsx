@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import { DefaultPlaylistSection } from './DefaultPlaylistSection'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
@@ -27,7 +28,13 @@ function getQualityLabel(quality: AudioQuality): string {
 }
 
 interface RoomSettingsSectionProps {
-  onUpdateSettings: (settings: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
+  onUpdateSettings: (settings: {
+    name?: string
+    password?: string | null
+    audioQuality?: AudioQuality
+    autoRemovePlayed?: boolean
+    songLikes?: boolean
+  }) => void
 }
 
 export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionProps) {
@@ -36,6 +43,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
   const isOwner = currentUser?.role === 'owner'
+  const isAdmin = currentUser?.role === 'admin'
 
   const driftDisplay = useMemo(() => {
     const ms = Math.round(syncDrift * 1000)
@@ -274,6 +282,61 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               </Button>
             </div>
           )}
+
+          <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
+            <Switch
+              checked={room?.autoRemovePlayed ?? false}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="点赞模式"
+            description={
+              room?.autoRemovePlayed
+                ? '下一首将优先播放点赞数更高的歌曲'
+                : '需先开启「播完自动移出」'
+            }
+          >
+            <Switch
+              checked={room?.songLikes ?? false}
+              disabled={!room?.autoRemovePlayed}
+              onCheckedChange={(checked) => onUpdateSettings({ songLikes: checked })}
+            />
+          </SettingRow>
+
+          <div className="mt-6">
+            <DefaultPlaylistSection />
+          </div>
+        </div>
+      )}
+
+      {isAdmin && !isOwner && (
+        <div>
+          <h3 className="text-base font-semibold">管理员设置</h3>
+          <Separator className="mt-2 mb-4" />
+
+          <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
+            <Switch
+              checked={room?.autoRemovePlayed ?? false}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            label="点赞模式"
+            description={
+              room?.autoRemovePlayed
+                ? '下一首将优先播放点赞数更高的歌曲'
+                : '需先开启「播完自动移出」'
+            }
+          >
+            <Switch
+              checked={room?.songLikes ?? false}
+              disabled={!room?.autoRemovePlayed}
+              onCheckedChange={(checked) => onUpdateSettings({ songLikes: checked })}
+            />
+          </SettingRow>
         </div>
       )}
 

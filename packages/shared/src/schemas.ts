@@ -24,6 +24,8 @@ export const roomSettingsSchema = z.object({
   name: z.string().min(1).max(LIMITS.ROOM_NAME_MAX_LENGTH).optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH).nullable().optional(),
   audioQuality: audioQualitySchema.optional(),
+  autoRemovePlayed: z.boolean().optional(),
+  songLikes: z.boolean().optional(),
 })
 
 export const setRoleSchema = z.object({
@@ -97,6 +99,27 @@ export const queueRemoveSchema = z.object({ trackId: z.string().max(200) })
 export const queueReorderSchema = z.object({
   trackIds: z.array(z.string().max(200)).max(LIMITS.QUEUE_MAX_SIZE),
 })
+
+// ---------------------------------------------------------------------------
+// Default queue (default playlist pool)
+// ---------------------------------------------------------------------------
+
+export const defaultQueueAddSchema = z.object({
+  track: trackSchema,
+})
+
+export const defaultQueueAddBatchSchema = z.object({
+  tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+})
+
+export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })
+
+// ---------------------------------------------------------------------------
+// Song likes
+// ---------------------------------------------------------------------------
+
+export const queueLikeSchema = z.object({ trackId: z.string().max(200) })
+export const queueUnlikeSchema = queueLikeSchema
 
 // ---------------------------------------------------------------------------
 // Chat

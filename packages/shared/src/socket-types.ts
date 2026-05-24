@@ -32,6 +32,8 @@ export interface ServerToClientEvents {
     hasPassword: boolean
     password?: string | null
     audioQuality: AudioQuality
+    autoRemovePlayed: boolean
+    songLikes: boolean
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
@@ -68,6 +70,12 @@ export interface ServerToClientEvents {
 
   // Playlist
   [EVENTS.PLAYLIST_MY_LIST]: (data: { platform: MusicSource; playlists: Playlist[] }) => void
+
+  // Default queue
+  [EVENTS.DEFAULT_QUEUE_UPDATED]: (data: { defaultQueue: Track[] }) => void
+
+  // Song likes
+  [EVENTS.QUEUE_LIKES_UPDATED]: (data: { trackLikes: Record<string, string[]> }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
@@ -76,7 +84,13 @@ export interface ClientToServerEvents {
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_LIST]: () => void
-  [EVENTS.ROOM_SETTINGS]: (data: { name?: string; password?: string | null; audioQuality?: AudioQuality }) => void
+  [EVENTS.ROOM_SETTINGS]: (data: {
+    name?: string
+    password?: string | null
+    audioQuality?: AudioQuality
+    autoRemovePlayed?: boolean
+    songLikes?: boolean
+  }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
   [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
@@ -96,6 +110,15 @@ export interface ClientToServerEvents {
 
   // Queue batch
   [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
+
+  // Song likes
+  [EVENTS.QUEUE_LIKE]: (data: { trackId: string }) => void
+  [EVENTS.QUEUE_UNLIKE]: (data: { trackId: string }) => void
+
+  // Default queue
+  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: Track }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: Track[] }) => void
+  [EVENTS.DEFAULT_QUEUE_REMOVE]: (data: { trackId: string }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 

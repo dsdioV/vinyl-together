@@ -13,11 +13,11 @@ import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
-import { usePlaylist } from '@/hooks/usePlaylist'
+import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
-import { Loader2, Music2, Search, ListMusic } from 'lucide-react'
+import { Loader2, Music2, Search, ListMusic, Hash } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
 import { toast } from 'sonner'
@@ -43,6 +43,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [searchType, setSearchType] = useState<'song' | 'album' | 'playlist'>('song')
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
+  const [showIdInput, setShowIdInput] = useState(false)
+  const [idInput, setIdInput] = useState('')
+  const [idLoading, setIdLoading] = useState(false)
   const listRef = useRef<VirtualTrackListRef>(null)
   const sourceContainerRef = useRef<HTMLDivElement>(null)
   const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 })
@@ -169,6 +172,30 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
   }
 
+  const handleIdLookup = () => {
+    const trimmed = idInput.trim()
+    if (!trimmed) return
+
+    const parsedId = parsePlaylistInput(trimmed, source)
+    if (!parsedId) {
+      toast.error('无法识别该 ID 或链接，请检查后重试')
+      return
+    }
+
+    setIdLoading(true)
+    const fakePlaylist: Playlist = {
+      id: parsedId,
+      name: `歌单 · ${parsedId}`,
+      cover: '',
+      trackCount: 0,
+      source,
+    }
+    setSelectedAlbum(fakePlaylist)
+    fetchPlaylistTracks(source, parsedId, undefined, searchType as 'album' | 'playlist').finally(() => {
+      setIdLoading(false)
+    })
+  }
+
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="flex h-[70vh] flex-col overflow-hidden sm:h-auto sm:max-h-[80vh] sm:max-w-2xl">
@@ -253,7 +280,35 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 </Button>
+                {searchType !== 'song' && (
+                  <Button
+                    variant={showIdInput ? 'default' : 'outline'}
+                    size="icon"
+                    onClick={() => setShowIdInput((v) => !v)}
+                    aria-label="按 ID 查找"
+                    title="按 ID / 链接精确查找"
+                  >
+                    <Hash className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
+
+              {/* ID lookup input */}
+              {showIdInput && searchType !== 'song' && (
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="输入歌单 ID 或链接"
+                    value={idInput}
+                    onChange={(e) => setIdInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleIdLookup()}
+                    className="flex-1 text-sm"
+                    aria-label="歌单 ID 或链接"
+                  />
+                  <Button onClick={handleIdLookup} disabled={idLoading} size="sm" aria-label="按 ID 查找">
+                    {idLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : '查找'}
+                  </Button>
+                </div>
+              )}
 
               {/* Results area — virtual scrolling with auto-load */}
               {hasSearched ? (

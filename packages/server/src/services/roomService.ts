@@ -71,6 +71,10 @@ export function createRoom(
     audioQuality: 320,
     users: [user],
     queue: [],
+    defaultQueue: [],
+    songLikes: false,
+    trackLikes: new Map(),
+    trackLikeTimestamps: new Map(),
     currentTrack: null,
     playState: {
       isPlaying: false,
@@ -78,6 +82,7 @@ export function createRoom(
       serverTimestamp: Date.now(),
     },
     playMode: 'loop-all',
+    autoRemovePlayed: false,
   }
 
   roomRepo.set(roomId, room)
@@ -195,7 +200,13 @@ export function listRooms(): RoomListItem[] {
 
 export function updateSettings(
   roomId: string,
-  settings: { name?: string; password?: string | null; audioQuality?: AudioQuality },
+  settings: {
+    name?: string
+    password?: string | null
+    audioQuality?: AudioQuality
+    autoRemovePlayed?: boolean
+    songLikes?: boolean
+  },
 ): void {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -211,6 +222,14 @@ export function updateSettings(
 
   if (settings.audioQuality !== undefined) {
     room.audioQuality = settings.audioQuality
+  }
+
+  if (settings.autoRemovePlayed !== undefined) {
+    room.autoRemovePlayed = settings.autoRemovePlayed
+  }
+
+  if (settings.songLikes !== undefined) {
+    room.songLikes = settings.songLikes
   }
 }
 

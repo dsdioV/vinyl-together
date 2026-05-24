@@ -79,7 +79,117 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
 }
 
 /**
+ * Compute the next track **index** given a known previous-current-index and
+ * whether the track at that index has already been removed from the queue.
+ *
+ * This is a lower-level helper used by auto-remove flows where the
+ * currentTrack may have been deleted from the queue before computing the
+ * successor.  It avoids the `getNextTrack` trap of searching for a
+ * currentTrack that is no longer in the queue (which yields -1).
+ *
+ * @param prevIndex       Index of the track that just finished (before removal).
+ * @param prevRemoved     Whether that track was removed from the queue.
+ *
+ * Returns the next index in the (possibly shorter) queue, or -1 if no
+ * successor exists.
+ */
+export function computeNextIndex(roomId: string, playMode: PlayMode, prevIndex: number, prevRemoved: boolean): number {
+  const room = roomRepo.get(roomId)
+  if (!room || room.queue.length === 0) return -1
+
+  const len = room.queue.length
+  const mode = playMode ?? room.playMode ?? 'sequential'
+
+  switch (mode) {
+    case 'loop-one':
+      // After removing the only track the queue may be empty — handled above.
+      // Otherwise return the first (or prev, since it's the same track).
+      return prevRemoved && prevIndex < len ? prevIndex : 0 < len ? 0 : -1
+
+    case 'loop-all': {
+      if (prevRemoved) {
+        // The element that was at prevIndex+1 is now at prevIndex.
+        return prevIndex < len ? prevIndex : 0
+      }
+      const nextIndex = prevIndex + 1
+      return nextIndex < len ? nextIndex : 0
+    }
+
+    case 'shuffle': {
+      if (len === 1) return 0
+      // Avoid the same index — but since we may have removed it, exclude
+      // prevIndex (which may now point to a different track; statistically
+      // harmless to exclude it for variety).
+      const exclude = prevRemoved ? -1 : prevIndex
+      const candidates: number[] = []
+      for (let i = 0; i < len; i++) {
+        if (i !== exclude) candidates.push(i)
+      }
+      if (candidates.length === 0) return 0
+      return candidates[Math.floor(Math.random() * candidates.length)]
+    }
+
+    case 'sequential':
+    default: {
+      if (prevRemoved) {
+        return prevIndex < len ? prevIndex : -1
+      }
+      const nextIndex = prevIndex + 1
+      return nextIndex < len ? nextIndex : -1
+    }
+  }
+}
+
+/**
+ * Like-mode selector: pick the next track by popularity.
+ *
+ * Sorts remaining queue tracks by:
+ *  1. Like count (descending)
+ *  2. Last-like timestamp (ascending — earlier liked = higher priority)
+ *  3. Original queue order (final deterministic tiebreaker)
+ *
+ * For shuffle mode, randomly picks within the highest-like group.
+ * For all other modes, returns the highest-ranked track.
+ */
+export function getNextTrackByLikes(roomId: string, playMode?: PlayMode): Track | null {
+  const room = roomRepo.get(roomId)
+  if (!room || room.queue.length === 0) return null
+
+  const mode = playMode ?? room.playMode ?? 'sequential'
+
+  // Annotate each track with like count and last-like timestamp
+  const annotated = room.queue.map((t) => ({
+    track: t,
+    likes: room.trackLikes.get(t.id)?.size ?? 0,
+    lastLikeAt: room.trackLikeTimestamps.get(t.id) ?? Infinity,
+    originalIndex: room.queue.indexOf(t),
+  }))
+
+  // Sort: likes desc → lastLikeAt asc → originalIndex asc
+  annotated.sort((a, b) => {
+    if (b.likes !== a.likes) return b.likes - a.likes
+    const tsDiff = a.lastLikeAt - b.lastLikeAt
+    if (tsDiff !== 0) return tsDiff
+    return a.originalIndex - b.originalIndex
+  })
+
+  if (mode === 'shuffle') {
+    // Randomly pick within the highest-like group
+    const maxLikes = annotated[0]?.likes ?? 0
+    const topGroup = annotated.filter((t) => t.likes === maxLikes)
+    const picked = topGroup[Math.floor(Math.random() * topGroup.length)]
+    return picked?.track ?? null
+  }
+
+  // sequential / loop-all / loop-one: return the top-ranked track
+  return annotated[0]?.track ?? null
+}
+
+/**
  * Get the next track based on the play mode.
+ *
+ * When like mode is active (songLikes + autoRemovePlayed), delegates to
+ * getNextTrackByLikes() which overrides the normal play-mode behavior.
  *
  * - sequential: next in queue; null at end
  * - loop-all:   next in queue; wraps to first at end
@@ -89,6 +199,11 @@ export function reorderTracks(roomId: string, trackIds: string[]): void {
 export function getNextTrack(roomId: string, playMode?: PlayMode): Track | null {
   const room = roomRepo.get(roomId)
   if (!room || room.queue.length === 0) return null
+
+  // Like mode overrides normal play-mode selection
+  if (room.songLikes && room.autoRemovePlayed) {
+    return getNextTrackByLikes(roomId, playMode)
+  }
 
   const mode = playMode ?? room.playMode ?? 'sequential'
 

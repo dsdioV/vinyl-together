@@ -10,15 +10,17 @@ import type { Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useHasHover } from '@/hooks/useHasHover'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { useCallback, useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ArrowUpToLine, ChevronDown, ChevronUp, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp, Heart, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import type { MusicSource } from '@music-together/shared'
+import { storage } from '@/lib/storage'
 
 const EMPTY_QUEUE: Track[] = []
+const EMPTY_LIKES: Record<string, string[]> = {}
 
 const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = {
   netease: { label: '网易', className: 'text-white bg-red-500 ring-red-600/50' },
@@ -37,6 +39,9 @@ interface QueueDrawerProps {
 export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQueue, onClearQueue }: QueueDrawerProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const currentTrack = usePlayerStore((s) => s.currentTrack)
+  const trackLikes = useRoomStore((s) => s.room?.trackLikes ?? EMPTY_LIKES)
+  const songLikes = useRoomStore((s) => s.room?.songLikes ?? false)
+  const myId = storage.getUserId()
   const { socket } = useSocketContext()
   const isMobile = useIsMobile() // layout: Drawer direction, height
   const hasHover = useHasHover() // interaction: hover vs touch
@@ -52,6 +57,21 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null)
   // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
+
+  // When like mode is on, determine which track would play next
+  // (highest likes → lowest queue index as tiebreaker)
+  const nextTrackId = useMemo<string | null>(() => {
+    if (!songLikes || queue.length === 0) return null
+    const sorted = [...queue]
+      .filter((t) => t.id !== currentTrack?.id)
+      .sort((a, b) => {
+        const aLikes = trackLikes[a.id]?.length ?? 0
+        const bLikes = trackLikes[b.id]?.length ?? 0
+        if (bLikes !== aLikes) return bLikes - aLikes
+        return queue.indexOf(a) - queue.indexOf(b)
+      })
+    return sorted[0]?.id ?? null
+  }, [songLikes, queue, currentTrack?.id, trackLikes])
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
@@ -127,6 +147,18 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
       toast.info(`已发起投票：移除「${track.title}」`)
     }
   }
+
+  const handleLikeToggle = useCallback(
+    (track: Track) => {
+      const likedByMe = trackLikes[track.id]?.includes(myId) ?? false
+      if (likedByMe) {
+        socket.emit(EVENTS.QUEUE_UNLIKE, { trackId: track.id })
+      } else {
+        socket.emit(EVENTS.QUEUE_LIKE, { trackId: track.id })
+      }
+    },
+    [socket, trackLikes, myId],
+  )
 
   const handleInsertAfterCurrent = (track: Track, e?: MouseEvent) => {
     // If this was triggered from inside the floating actions, hide it immediately.
@@ -242,6 +274,45 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       if (!isTouch && dismissedHoverTrackId === track.id) setDismissedHoverTrackId(null)
                     }}
                   >
+                    {/* Like button + count — always visible when like mode is on, on the left */}
+                    {songLikes && (
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex items-center gap-0.5 rounded px-1 py-0.5 text-xs transition-colors',
+                            (trackLikes[track.id]?.includes(myId) ?? false)
+                              ? 'text-red-500 hover:text-red-600'
+                              : 'text-muted-foreground hover:text-foreground',
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleLikeToggle(track)
+                          }}
+                          aria-label={
+                            (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
+                          }
+                        >
+                          <Heart
+                            className="h-3.5 w-3.5"
+                            fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
+                          />
+                          {(trackLikes[track.id]?.length ?? 0) > 0 && (
+                            <span className="tabular-nums">{trackLikes[track.id]?.length}</span>
+                          )}
+                        </button>
+                        {/* Next-up indicator */}
+                        {nextTrackId === track.id && currentTrack?.id !== track.id && (
+                          <Badge
+                            variant="default"
+                            className="h-4 gap-0.5 whitespace-nowrap bg-primary/15 px-1.5 py-0 text-[10px] font-medium text-primary hover:bg-primary/20"
+                          >
+                            ▶ 即将播放
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+
                     {/* Index */}
                     <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{i + 1}</span>
 
@@ -288,11 +359,11 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       <MarqueeText className="text-xs text-muted-foreground">{track.artist.join(' / ')}</MarqueeText>
                     </div>
 
-                    {/* Requester badge — absolute top-right inside item */}
+                    {/* Requester badge — in flow, after track info (avoids overlap with long titles) */}
                     {track.requestedBy && (
                       <Badge
                         variant="outline"
-                        className="absolute right-2 top-1.5 z-10 h-4 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
+                        className="shrink-0 h-4 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
                       >
                         <User className="h-2.5 w-2.5" />
                         {track.requestedBy}
@@ -312,7 +383,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       )}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {/* Play button — hidden for currently playing track */}
+                        {/* Play button — hidden for currently playing track */}
                       {currentTrack?.id !== track.id && (canPlay || canVote) && (
                         <Tooltip delayDuration={400}>
                           <TooltipTrigger asChild>

@@ -16,10 +16,28 @@ export function useQueueSync() {
       }
     }
 
+    const onDefaultQueueUpdated = (data: { defaultQueue: Track[] }) => {
+      const room = useRoomStore.getState().room
+      if (room) {
+        useRoomStore.getState().updateRoom({ defaultQueue: data.defaultQueue })
+      }
+    }
+
+    const onLikesUpdated = (data: { trackLikes: Record<string, string[]> }) => {
+      const room = useRoomStore.getState().room
+      if (room) {
+        useRoomStore.getState().updateRoom({ trackLikes: data.trackLikes })
+      }
+    }
+
     socket.on(EVENTS.QUEUE_UPDATED, onQueueUpdated)
+    socket.on(EVENTS.DEFAULT_QUEUE_UPDATED, onDefaultQueueUpdated)
+    socket.on(EVENTS.QUEUE_LIKES_UPDATED, onLikesUpdated)
 
     return () => {
       socket.off(EVENTS.QUEUE_UPDATED, onQueueUpdated)
+      socket.off(EVENTS.DEFAULT_QUEUE_UPDATED, onDefaultQueueUpdated)
+      socket.off(EVENTS.QUEUE_LIKES_UPDATED, onLikesUpdated)
     }
   }, [socket])
 }

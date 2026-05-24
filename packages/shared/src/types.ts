@@ -79,6 +79,14 @@ export interface RoomState {
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode
+  /** 默认播放列表池，主队列为空时从中随机抽取（房主手动维护，不被消费） */
+  defaultQueue: Track[]
+  /** 播完自动移出队列（房主开关，默认关闭） */
+  autoRemovePlayed: boolean
+  /** 点赞模式（房主开关，需 autoRemovePlayed 开启，默认关闭） */
+  songLikes: boolean
+  /** 点赞数据：trackId → 点赞用户ID列表 */
+  trackLikes: Record<string, string[]>
 }
 
 export interface PlayState {

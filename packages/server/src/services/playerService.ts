@@ -180,7 +180,12 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
               const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
               if (best) {
                 const cookie2 = authService.getAnyCookie(best.track.source, roomId)
-                const url2 = await resolveStreamUrl(best.track.source, best.track.urlId, room.audioQuality, cookie2 ?? undefined)
+                const url2 = await resolveStreamUrl(
+                  best.track.source,
+                  best.track.urlId,
+                  room.audioQuality,
+                  cookie2 ?? undefined,
+                )
                 if (url2) {
                   const replacement: Track = {
                     ...best.track,
@@ -390,6 +395,13 @@ export function playNextTrackInRoom(
   options?: { skipDebounce?: boolean },
 ): Promise<void> {
   return withPlayMutex(roomId, async () => {
+    // Guard: if a NEXT is already in progress for this room, drop this event.
+    // Prevents concurrent _playTrackInRoom calls when stream URL resolution
+    // takes longer than the debounce window (500ms).
+    if (!options?.skipDebounce && nextAdvancing.has(roomId)) {
+      return
+    }
+
     if (options?.skipDebounce) {
       // Still update the timestamp so a normal NEXT right after is debounced
       lastNextTimestamp.set(roomId, Date.now())
@@ -397,24 +409,91 @@ export function playNextTrackInRoom(
       return
     }
 
-    const nextTrack = queueService.getNextTrack(roomId, playMode)
-    if (!nextTrack) {
-      stopPlayback(io, roomId)
-      return
+    nextAdvancing.add(roomId)
+    try {
+      await _executePlayNext(io, roomId, playMode, options)
+    } finally {
+      nextAdvancing.delete(roomId)
+      // Refresh debounce timestamp after async work completes.
+      // Without this, a second PLAYER_NEXT waiting on the mutex could pass
+      // the debounce check if _playTrackInRoom took longer than 500ms (e.g.
+      // stream URL resolution), causing a double-skip.
+      lastNextTimestamp.set(roomId, Date.now())
     }
-
-    const success = await _playTrackInRoom(io, roomId, nextTrack)
-    if (!success) {
-      const skipTrack = queueService.getNextTrack(roomId, playMode)
-      if (skipTrack) await _playTrackInRoom(io, roomId, skipTrack)
-    }
-
-    // Refresh debounce timestamp after async work completes.
-    // Without this, a second PLAYER_NEXT waiting on the mutex could pass
-    // the debounce check if _playTrackInRoom took longer than 500ms (e.g.
-    // stream URL resolution), causing a double-skip.
-    lastNextTimestamp.set(roomId, Date.now())
   })
+}
+
+/**
+ * Execute the next-track logic (inside mutex, guarded by nextAdvancing).
+ * Extracted so the try/finally in playNextTrackInRoom covers the full async
+ * operation including _playTrackInRoom and fallback.
+ */
+async function _executePlayNext(
+  io: TypedServer,
+  roomId: string,
+  playMode: PlayMode,
+  options?: { skipDebounce?: boolean },
+): Promise<void> {
+  const room = roomRepo.get(roomId)
+  if (!room) return
+
+  // Capture current state BEFORE any mutations so we can compute the next
+  // track correctly even after auto-removing the current one from the queue.
+  const currentTrack = room.currentTrack
+  const oldCurrentIndex = currentTrack ? room.queue.findIndex((t) => t.id === currentTrack.id) : -1
+
+  // Auto-remove played track from queue (if enabled AND track is still in queue)
+  const autoRemoved = !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)
+  if (autoRemoved) {
+    room.queue = room.queue.filter((t) => t.id !== currentTrack.id)
+    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+  }
+
+  // In like mode, bypass index-based selection and pick by popularity.
+  // Otherwise compute next track index using the OLD current index, but
+  // on the (possibly shorter) queue.  When the track at oldCurrentIndex
+  // was removed, the element that was at oldCurrentIndex+1 is now at
+  // oldCurrentIndex — so the "next" is exactly oldCurrentIndex.
+  let nextTrack: Track | null = null
+  if (room.songLikes && room.autoRemovePlayed) {
+    nextTrack = queueService.getNextTrackByLikes(roomId, playMode)
+  } else {
+    const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, autoRemoved)
+    nextTrack = nextIndex >= 0 ? room.queue[nextIndex] : null
+  }
+
+  if (!nextTrack) {
+    // Fallback: if default queue is configured, randomly pick one and play
+    const room = roomRepo.get(roomId)
+    if (room && room.defaultQueue.length > 0) {
+      const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
+      const picked = room.defaultQueue[randomIndex]
+      const added = queueService.addTrack(roomId, picked)
+      if (added) {
+        io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+        const newTrack = room.queue.length > 0 ? room.queue[room.queue.length - 1] : null
+        if (newTrack) {
+          const success = await _playTrackInRoom(io, roomId, newTrack)
+          if (!success) {
+            stopPlayback(io, roomId)
+          }
+          lastNextTimestamp.set(roomId, Date.now())
+          return
+        }
+      }
+    }
+    stopPlayback(io, roomId)
+    return
+  }
+
+  const success = await _playTrackInRoom(io, roomId, nextTrack)
+  if (!success) {
+    // After a failed play, re-compute fallback normally (currentTrack is
+    // already set to the failed track by _playTrackInRoom; skipDebounce
+    // not needed since it was already cleared by the first call).
+    const fallbackTrack = queueService.getNextTrack(roomId, playMode)
+    if (fallbackTrack) await _playTrackInRoom(io, roomId, fallbackTrack)
+  }
 }
 
 /**
@@ -490,6 +569,15 @@ export async function syncPlaybackToSocket(
     // No current track but queue has items → start playing from queue
     const firstTrack = room.queue[0]
     await playTrackInRoom(io, roomId, firstTrack)
+  } else if (isAloneInRoom && room.defaultQueue.length > 0) {
+    // No current track, queue empty, but default queue has items → random pick
+    const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
+    const picked = room.defaultQueue[randomIndex]
+    const added = queueService.addTrack(roomId, picked)
+    if (added) {
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+      await playTrackInRoom(io, roomId, picked)
+    }
   }
 }
 
@@ -499,6 +587,9 @@ export async function syncPlaybackToSocket(
 
 /** Debounce tracking for PLAYER_NEXT per room */
 const lastNextTimestamp = new Map<string, number>()
+
+/** Set of rooms currently advancing to the next track (prevents concurrent PLAYER_NEXT) */
+const nextAdvancing = new Set<string>()
 
 /** Track consecutive rejected conductor reports per room to break deadlocks */
 const conductorRejectCount = new Map<string, number>()
@@ -512,6 +603,7 @@ const CONDUCTOR_REJECT_DRIFT_THRESHOLD_S = 3
 /** Remove per-room entries for a deleted room */
 export function cleanupRoom(roomId: string): void {
   lastNextTimestamp.delete(roomId)
+  nextAdvancing.delete(roomId)
   conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
 }

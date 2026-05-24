@@ -8,6 +8,7 @@ import {
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithOwnerOnly } from '../middleware/withControl.js'
+import { createWithRoom } from '../middleware/withRoom.js'
 import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as chatService from '../services/chatService.js'
@@ -168,10 +169,12 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
     }
   })
 
-  // ---- Room settings (仅房主，含密码管理) ----
+  // ---- Room settings ----
+  // Owner：全部设置；Admin：仅可切换 autoRemovePlayed；Member：无权限
+  const withRoomForSettings = createWithRoom(io)
   socket.on(
     EVENTS.ROOM_SETTINGS,
-    withOwnerOnly((ctx, raw) => {
+    withRoomForSettings((ctx, raw) => {
       const parsed = roomSettingsSchema.safeParse(raw)
       if (!parsed.success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, {
@@ -181,10 +184,47 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
+      const isOwner = ctx.user.role === 'owner'
+      const isAdmin = ctx.user.role === 'admin'
+
+      // Admin 只能改 autoRemovePlayed / songLikes，且请求中不能含有其他字段
+      if (!isOwner && !isAdmin) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.NO_PERMISSION,
+          message: '只有房主和管理员可以修改设置',
+        })
+        return
+      }
+
+      // 若非 owner，仅允许 autoRemovePlayed / songLikes 变更
+      if (!isOwner) {
+        const hasRestrictedKeys = parsed.data.name !== undefined
+          || parsed.data.password !== undefined
+          || parsed.data.audioQuality !== undefined
+        if (hasRestrictedKeys) {
+          ctx.socket.emit(EVENTS.ROOM_ERROR, {
+            code: ERROR_CODE.NO_PERMISSION,
+            message: '只有房主可以修改房间名、密码和音质',
+          })
+          return
+        }
+      }
+
+      // 验证：启用点赞模式需要先开启自动移出
+      if (parsed.data.songLikes === true && !ctx.room.autoRemovePlayed) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_INPUT,
+          message: '启用点赞模式需要先开启「播完自动移出」',
+        })
+        return
+      }
+
       roomService.updateSettings(ctx.roomId, {
         name: parsed.data.name,
         password: parsed.data.password,
         audioQuality: parsed.data.audioQuality,
+        autoRemovePlayed: parsed.data.autoRemovePlayed,
+        songLikes: parsed.data.songLikes,
       })
 
       const updatedRoom = roomRepo.get(ctx.roomId)
@@ -195,11 +235,15 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         name: updatedRoom.name,
         hasPassword: updatedRoom.password !== null,
         audioQuality: updatedRoom.audioQuality,
+        autoRemovePlayed: updatedRoom.autoRemovePlayed,
+        songLikes: updatedRoom.songLikes,
       }
       // 给 owner 发送含密码的设置
       ctx.socket.emit(EVENTS.ROOM_SETTINGS, {
         ...baseSettings,
         password: updatedRoom.password ?? null,
+        autoRemovePlayed: updatedRoom.autoRemovePlayed,
+        songLikes: updatedRoom.songLikes,
       })
       // 给房间内其他成员发送不含密码的设置
       ctx.socket.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, baseSettings)
