@@ -359,50 +359,11 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       <MarqueeText className="text-xs text-muted-foreground">{track.artist.join(' / ')}</MarqueeText>
                     </div>
 
-                    {/* Like button + count — always visible when like mode is on */}
-                    {songLikes && (
-                      <div className="flex shrink-0 items-center gap-0.5">
-                        {/* Next-up indicator */}
-                        {nextTrackId === track.id && currentTrack?.id !== track.id && (
-                          <Badge
-                            variant="default"
-                            className="mr-1 h-4 gap-0.5 whitespace-nowrap bg-primary/15 px-1.5 py-0 text-[10px] font-medium text-primary hover:bg-primary/20"
-                          >
-                            ▶ 即将播放
-                          </Badge>
-                        )}
-                        <button
-                          type="button"
-                          className={cn(
-                            'flex items-center gap-0.5 rounded px-1 py-0.5 text-xs transition-colors',
-                            (trackLikes[track.id]?.includes(myId) ?? false)
-                              ? 'text-red-500 hover:text-red-600'
-                              : 'text-muted-foreground hover:text-foreground',
-                          )}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleLikeToggle(track)
-                          }}
-                          aria-label={
-                            (trackLikes[track.id]?.includes(myId) ?? false) ? `取消点赞 ${track.title}` : `点赞 ${track.title}`
-                          }
-                        >
-                          <Heart
-                            className="h-3.5 w-3.5"
-                            fill={(trackLikes[track.id]?.includes(myId) ?? false) ? 'currentColor' : 'none'}
-                          />
-                          {(trackLikes[track.id]?.length ?? 0) > 0 && (
-                            <span className="tabular-nums">{trackLikes[track.id]?.length}</span>
-                          )}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Requester badge — absolute top-right inside item */}
+                    {/* Requester badge — in flow, after track info (avoids overlap with long titles) */}
                     {track.requestedBy && (
                       <Badge
                         variant="outline"
-                        className="absolute right-2 top-1.5 z-10 h-4 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
+                        className="shrink-0 h-4 gap-0.5 border-primary/30 bg-primary/10 px-1.5 py-0 text-[10px] font-normal text-primary"
                       >
                         <User className="h-2.5 w-2.5" />
                         {track.requestedBy}
