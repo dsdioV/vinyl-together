@@ -1,6 +1,7 @@
-import { EVENTS, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, defineAbilityFor, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
+import { createWithRoom } from '../middleware/withRoom.js'
 import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from '../services/playerService.js'
@@ -44,9 +45,22 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
     }),
   )
 
+  // Conductor (hostId) auto-next bypasses CASL — system behavior, not manual user action.
+  // Non-conductor manual next still requires CASL permission check.
+  const withRoom = createWithRoom(io)
   socket.on(
     EVENTS.PLAYER_NEXT,
-    withPermission('next', 'Player', async (ctx) => {
+    withRoom(async (ctx) => {
+      if (ctx.user.id !== ctx.room.hostId) {
+        const ability = defineAbilityFor(ctx.user.role)
+        if (!ability.can('next', 'Player')) {
+          ctx.socket.emit(EVENTS.ROOM_ERROR, {
+            code: ERROR_CODE.NO_PERMISSION,
+            message: '你没有权限执行此操作',
+          })
+          return
+        }
+      }
       await playerService.playNextTrackInRoom(ctx.io, ctx.roomId, ctx.room.playMode)
     }),
   )
