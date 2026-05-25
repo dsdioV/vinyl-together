@@ -286,7 +286,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
             <Switch
               checked={room?.autoRemovePlayed ?? false}
-              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })}
             />
           </SettingRow>
 
@@ -319,7 +319,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
             <Switch
               checked={room?.autoRemovePlayed ?? false}
-              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked })}
+              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })}
             />
           </SettingRow>
 
