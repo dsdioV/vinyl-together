@@ -1,8 +1,8 @@
 <p align="center">
-  <img alt="Music Together" src="public/logo.svg" width="80">
+  <img alt="Vinyl Together" src="public/logo.svg" width="80">
 </p>
 
-<h1 align="center">Music Together</h1>
+<h1 align="center">Vinyl Together</h1>
 
 <p align="center">
   在线多人同步听歌平台 -- 创建房间，邀请朋友，一起实时听同一首歌。
@@ -12,11 +12,13 @@
   <a href="README.en.md">English</a>
 </p>
 
+> 本项目基于 [Yueby/music-together](https://github.com/Yueby/music-together) 进行二次开发。
+
 <p align="center">
-  <a href="https://github.com/Yueby/music-together/stargazers"><img src="https://img.shields.io/github/stars/Yueby/music-together?style=flat&logo=github" alt="Stars"></a>
-  <a href="https://github.com/Yueby/music-together/network/members"><img src="https://img.shields.io/github/forks/Yueby/music-together?style=flat&logo=github" alt="Forks"></a>
-  <a href="https://github.com/Yueby/music-together/issues"><img src="https://img.shields.io/github/issues/Yueby/music-together?style=flat&logo=github" alt="Issues"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/Yueby/music-together?style=flat" alt="License"></a>
+  <a href="https://github.com/dsdioV/vinyl-together/stargazers"><img src="https://img.shields.io/github/stars/dsdioV/vinyl-together?style=flat&logo=github" alt="Stars"></a>
+  <a href="https://github.com/dsdioV/vinyl-together/network/members"><img src="https://img.shields.io/github/forks/dsdioV/vinyl-together?style=flat&logo=github" alt="Forks"></a>
+  <a href="https://github.com/dsdioV/vinyl-together/issues"><img src="https://img.shields.io/github/issues/dsdioV/vinyl-together?style=flat&logo=github" alt="Issues"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dsdioV/vinyl-together?style=flat" alt="License"></a>
 </p>
 
 <p align="center">
@@ -71,8 +73,8 @@
 ### 安装与开发
 
 ```bash
-git clone https://github.com/Yueby/music-together.git
-cd music-together
+git clone https://github.com/dsdioV/vinyl-together.git
+cd vinyl-together
 pnpm install
 pnpm dev
 ```
@@ -84,9 +86,9 @@ pnpm dev
 Docker 单镜像部署：
 
 ```bash
-docker run -d --name music-together --restart unless-stopped \
+docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
-  ghcr.io/yueby/music-together:latest
+  ghcr.io/dsdioV/vinyl-together:latest
 ```
 
 > 如果宿主机 `3001` 端口已被占用，修改 `-p 宿主机端口:容器端口` 左侧端口即可，例如 `-p 8080:3001`。
@@ -96,10 +98,10 @@ docker run -d --name music-together --restart unless-stopped \
 **需要显式限制来源时，再配置 `CLIENT_URL`：**
 
 ```bash
-docker run -d --name music-together --restart unless-stopped \
+docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
   -e CLIENT_URL=https://music.example.com \
-  ghcr.io/yueby/music-together:latest
+  ghcr.io/dsdioV/vinyl-together:latest
 ```
 
 > `CLIENT_URL` 现在主要用于显式白名单模式或前后端分离部署；默认自动模式下通常不再需要手动设置。
