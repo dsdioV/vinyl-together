@@ -1,19 +1,12 @@
-import { getServerTime, isCalibrated, getMedianRTT } from '@/lib/clockSync'
+import { getServerTime, isCalibrated } from '@/lib/clockSync'
 import {
-  DRIFT_SEEK_THRESHOLD_MS,
-  DRIFT_DEAD_ZONE_MS,
-  DRIFT_RATE_KP,
-  MAX_RATE_ADJUSTMENT,
-  DRIFT_SMOOTH_ALPHA,
-  DRIFT_PLUGIN_SEEK_THRESHOLD_MS,
   CONDUCTOR_REPORT_INTERVAL_MS,
   CONDUCTOR_REPORT_FAST_INTERVAL_MS,
   CONDUCTOR_REPORT_FAST_DURATION_MS,
   MAX_NETWORK_DELAY_S,
   SYNC_REQUEST_INTERVAL_MS,
-  DRIFT_GRACE_PERIOD_MS,
-  DRIFT_SEEK_RTT_MARGIN_MS,
-  HARD_SEEK_CONFIRM_COUNT,
+  SYNC_HARD_SEEK_THRESHOLD_S,
+  SYNC_INITIAL_WINDOW_MS,
 } from '@/lib/constants'
 import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -39,29 +32,26 @@ function scheduleDelay(serverTimeToExecute: number): number {
   return Math.max(0, serverTimeToExecute - getServerTime())
 }
 
-/** Clamp a value between -limit and +limit. */
-function clamp(value: number, limit: number): number {
-  return Math.max(-limit, Math.min(limit, value))
-}
-
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
 /**
  * Manages playback sync via **event-driven Scheduled Execution**
- * with periodic **proportional drift correction + EMA smoothing**:
+ * with **lazy drift correction**:
  *
- *   |smoothedDrift| > 200ms → hard seek (audible jump, rare)
- *   |smoothedDrift| 30~200ms → proportional rate adjustment
- *                              rate = 1 - clamp(drift * Kp, ±0.02)
- *   |smoothedDrift| < 30ms  → reset to normal rate 1.0x (dead zone)
+ *   |drift| < 5s  → no correction (smooth playback priority)
+ *   |drift| ≥ 5s  → hard seek to expected position (after 2 confirmations)
  *
- * The EMA low-pass filter smooths noisy drift measurements to prevent
- * the control loop from oscillating between speed-up and slow-down.
+ * The high threshold (5s) is deliberate — in a casual-listening scenario,
+ * a few seconds of drift is far less disruptive than seek-induced
+ * rebuffering.  Tighter synchronisation is provided by the initial
+ * PLAYER_PLAY/SEEK events which carry a serverTimeToExecute for
+ * coordinated execution.
  *
- * If a browser speed plugin (e.g. Global Speed) overrides the rate,
- * rate correction is automatically disabled and only hard seek is used.
+ * New tracks also get an initial no-sync window (SYNC_INITIAL_WINDOW_MS)
+ * during which all SYNC_RESPONSE messages are ignored, giving the audio
+ * buffer time to stabilise.
  */
 export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
   const { socket } = useSocketContext()
@@ -72,21 +62,12 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
   // Monotonic action ID — guards against stale setTimeout(fn, 0) callbacks
   // when rapid events arrive in the same event loop tick.
   const actionIdRef = useRef(0)
-  // When true, rate() micro-adjustment is disabled (browser plugin detected)
-  const rateDisabledRef = useRef(false)
-  // Consecutive count of rate override detections (require 3 to confirm plugin)
-  const rateOverrideCountRef = useRef(0)
-  // Timer for the 50ms rate-override detection check (stored so we can clear it)
-  const rateCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // EMA-smoothed drift value (seconds) — persists across sync responses
-  const smoothedDriftRef = useRef(0)
-  // When true, next sync response seeds EMA directly instead of blending,
-  // avoiding the cold-start lag after pause/resume/new-track.
-  const emaColdStartRef = useRef(true)
   // Timestamp when the current track started playing (for adaptive conductor reporting)
   const trackStartTimeRef = useRef(0)
-  // Consecutive hard-seek triggers — require HARD_SEEK_CONFIRM_COUNT before actually seeking
-  const hardSeekCountRef = useRef(0)
+  // No-sync window end timestamp (ms) — SYNC_RESPONSE is ignored before this
+  const noSyncUntilRef = useRef(0)
+  // Consecutive large-drift triggers — require 2 before actually seeking
+  const largeDriftCountRef = useRef(0)
 
   const clearScheduled = () => {
     if (scheduledTimerRef.current) {
@@ -112,8 +93,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
           if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
         }
         setCurrentTime(data.playState.currentTime)
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
         // Keep roomStore.playState in sync for recovery effect
         useRoomStore.getState().updateRoom({
           playState: {
@@ -140,9 +119,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
           if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
           setCurrentTime(data.playState.currentTime)
         }
-        // Reset drift state — paused means no drift
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
         usePlayerStore.getState().setSyncDrift(0)
         // Keep roomStore.playState in sync for recovery effect
         useRoomStore.getState().updateRoom({
@@ -170,8 +146,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
           setCurrentTime(data.playState.currentTime)
         }
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
         if (soundIdRef.current !== undefined) {
           howlRef.current.play(soundIdRef.current)
         } else {
@@ -191,36 +165,33 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     // -- NEW TRACK (PLAYER_PLAY) ---------------------------------------------
     // When a new track loads, cancel any pending action from the previous track
     // so it doesn't accidentally seek/pause/resume the new Howl instance.
-    // Also reset rate-disabled flag to give the new track a fresh chance.
+    // Also set a no-sync window to let the audio buffer stabilise.
     const onPlay = () => {
       clearScheduled()
       ++actionIdRef.current // invalidate any pending stale callbacks
-      rateDisabledRef.current = false
-      rateOverrideCountRef.current = 0
-      hardSeekCountRef.current = 0
-      smoothedDriftRef.current = 0
-      emaColdStartRef.current = true
+      largeDriftCountRef.current = 0
       trackStartTimeRef.current = Date.now()
+      noSyncUntilRef.current = Date.now() + SYNC_INITIAL_WINDOW_MS
     }
 
-    // -- SYNC RESPONSE (proportional drift correction + EMA smoothing) ------
+    // -- SYNC RESPONSE (lazy drift correction) ------------------------------
+    // Only correct when drift exceeds a generous 5s threshold, and only
+    // after 2 consecutive confirmations.  The initial no-sync window
+    // suppresses all corrections on a new track.
     const onSyncResponse = (data: { currentTime: number; isPlaying: boolean; serverTimestamp: number }) => {
+      // No-sync window: let the audio buffer stabilise first
+      if (Date.now() < noSyncUntilRef.current) return
+
       if (!howlRef.current) return
       if (!howlRef.current.playing()) return
 
-      // Conductor (hostId) is the authoritative playback source — skip drift
-      // correction to avoid a feedback loop where server estimate (based on
-      // host reports) pulls the conductor forward/backward.
+      // Conductor (hostId) is the authoritative playback source — skip
+      // drift correction to avoid a feedback loop.
       const { room: syncRoom } = useRoomStore.getState()
       const myId = storage.getUserId()
       if (syncRoom?.hostId === myId) return
 
-      // Grace period after new track: skip rate micro-adjustments
-      // (estimateCurrentTime is unreliable until conductor submits at least
-      // one progress report), but still allow hard seek for large drifts.
-      const inGracePeriod = Date.now() - trackStartTimeRef.current < DRIFT_GRACE_PERIOD_MS
-
-      // Use NTP-calibrated server time for accurate delay estimation
+      // Estimate the expected position at this moment
       const networkDelaySec = Math.max(
         0,
         Math.min(MAX_NETWORK_DELAY_S, (getServerTime() - data.serverTimestamp) / 1000),
@@ -228,79 +199,21 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       const expectedTime = data.currentTime + (data.isPlaying ? networkDelaySec : 0)
 
       const currentSeek = howlRef.current.seek() as number
-      const rawDrift = currentSeek - expectedTime
+      const drift = currentSeek - expectedTime
 
-      // EMA low-pass filter: smooths noisy measurements to prevent oscillation.
-      // On cold start (after pause/resume/new-track), seed with raw value
-      // directly so the first correction is immediate, not dampened by stale 0.
-      if (emaColdStartRef.current) {
-        smoothedDriftRef.current = rawDrift
-        emaColdStartRef.current = false
+      usePlayerStore.getState().setSyncDrift(0)
+
+      if (Math.abs(drift) >= SYNC_HARD_SEEK_THRESHOLD_S) {
+        largeDriftCountRef.current++
+        if (largeDriftCountRef.current >= 2) {
+          // Confirmed: large sustained drift — hard seek
+          largeDriftCountRef.current = 0
+          howlRef.current.seek(expectedTime)
+          if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
+        }
       } else {
-        smoothedDriftRef.current = DRIFT_SMOOTH_ALPHA * rawDrift + (1 - DRIFT_SMOOTH_ALPHA) * smoothedDriftRef.current
-      }
-      const sd = smoothedDriftRef.current
-      const absDrift = Math.abs(sd)
-
-      // Update store with smoothed value so UI shows stable drift reading
-      usePlayerStore.getState().setSyncDrift(sd)
-
-      // Adaptive hard-seek threshold: on high-latency links the NTP offset
-      // error (asymmetric routing) and extrapolation jitter can easily reach
-      // the static 200ms threshold, triggering repeated backward jumps.
-      // Raising the threshold proportionally to the observed RTT avoids this.
-      const rttBasedThreshold = (getMedianRTT() + DRIFT_SEEK_RTT_MARGIN_MS) / 1000
-      const hardSeekThreshold = rateDisabledRef.current
-        ? DRIFT_PLUGIN_SEEK_THRESHOLD_MS / 1000
-        : Math.max(DRIFT_SEEK_THRESHOLD_MS / 1000, rttBasedThreshold)
-
-      if (absDrift > hardSeekThreshold) {
-        // Require HARD_SEEK_CONFIRM_COUNT consecutive triggers to avoid
-        // acting on a single noisy measurement.
-        hardSeekCountRef.current++
-        if (hardSeekCountRef.current < HARD_SEEK_CONFIRM_COUNT) return
-        // Confirmed: large sustained drift — hard seek
-        hardSeekCountRef.current = 0
-        howlRef.current.seek(expectedTime)
-        if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
-        smoothedDriftRef.current = 0
-        emaColdStartRef.current = true
-      } else if (absDrift > DRIFT_DEAD_ZONE_MS / 1000 && !rateDisabledRef.current) {
-        // Drift fell below hard-seek threshold — reset consecutive counter
-        // so only truly consecutive above-threshold measurements trigger a seek.
-        hardSeekCountRef.current = 0
-        // 宽限期内跳过 rate 微调 — 等 conductor report 稳定后再启用
-        if (inGracePeriod) return
-        // Proportional rate correction: larger drift → stronger correction,
-        // naturally decelerating as we approach the target — no oscillation.
-        const adj = clamp(sd * DRIFT_RATE_KP, MAX_RATE_ADJUSTMENT)
-        const targetRate = 1 - adj
-        howlRef.current.rate(targetRate)
-        // Verify rate was applied — detect browser speed plugin interference.
-        // Use setTimeout instead of rAF to avoid false positives when the tab
-        // is in background (rAF is throttled/paused by browsers).
-        // Require 3 consecutive detections to confirm a plugin, not just one.
-        // Clear previous check timer to avoid stacking on rapid sync responses.
-        if (rateCheckTimerRef.current) clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = setTimeout(() => {
-          rateCheckTimerRef.current = null
-          if (!howlRef.current) return
-          if (Math.abs(howlRef.current.rate() - targetRate) > 0.005) {
-            rateOverrideCountRef.current++
-            if (rateOverrideCountRef.current >= 3) {
-              rateDisabledRef.current = true
-              console.warn(
-                'Rate correction disabled: external plugin detected (confirmed after 3 consecutive overrides)',
-              )
-            }
-          } else {
-            // Rate applied successfully — reset counter
-            rateOverrideCountRef.current = 0
-          }
-        }, 50)
-      } else {
-        // Within dead zone: ensure normal playback rate
-        hardSeekCountRef.current = 0
+        // Within acceptable range — reset counter and ensure normal rate
+        largeDriftCountRef.current = 0
         if (howlRef.current.rate() !== 1) howlRef.current.rate(1)
       }
     }
@@ -313,10 +226,6 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
 
     return () => {
       clearScheduled()
-      if (rateCheckTimerRef.current) {
-        clearTimeout(rateCheckTimerRef.current)
-        rateCheckTimerRef.current = null
-      }
       socket.off(EVENTS.PLAYER_SEEK, onSeek)
       socket.off(EVENTS.PLAYER_PAUSE, onPause)
       socket.off(EVENTS.PLAYER_RESUME, onResume)

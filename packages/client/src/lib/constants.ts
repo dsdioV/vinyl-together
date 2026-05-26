@@ -24,43 +24,23 @@ export const CONDUCTOR_REPORT_FAST_INTERVAL_MS = 2_000
 export const CONDUCTOR_REPORT_FAST_DURATION_MS = 10_000
 
 /** Interval for client-initiated sync requests (drift correction) */
-export const SYNC_REQUEST_INTERVAL_MS = 2_000
+export const SYNC_REQUEST_INTERVAL_MS = 10_000
 
-/** Drift threshold (ms) before hard-seeking to correct position */
-export const DRIFT_SEEK_THRESHOLD_MS = 200
+/**
+ * Hard-seek threshold (seconds).
+ * Only seek when the client-server position difference exceeds this value.
+ * This deliberately large threshold prioritises smooth playback over
+ * tight synchronisation — seek-induced rebuffering is far more disruptive
+ * than a few seconds of drift in a casual-listening scenario.
+ */
+export const SYNC_HARD_SEEK_THRESHOLD_S = 5
 
-/** Dead zone (ms) — below this drift we restore rate to 1.0 (no correction) */
-export const DRIFT_DEAD_ZONE_MS = 30
-
-/** Proportional gain for drift correction: rate = 1 - clamp(drift * Kp) */
-export const DRIFT_RATE_KP = 0.25
-
-/** Maximum rate adjustment magnitude (±2% cap — increased from 1% to
- *  allow faster soft convergence on high-latency connections, reducing
- *  the time the system spends near the hard-seek threshold). */
-export const MAX_RATE_ADJUSTMENT = 0.02
-
-/** EMA smoothing factor for drift measurements (0–1, higher = more responsive).
- *  Lowered from 0.3 to 0.2 for more noise suppression on high-latency links. */
-export const DRIFT_SMOOTH_ALPHA = 0.2
-
-/** Fallback seek threshold (ms) when rate correction is disabled by plugin */
-export const DRIFT_PLUGIN_SEEK_THRESHOLD_MS = 30
-
-/** Grace period (ms) after new track before drift correction activates.
- *  Allows at least one conductor report to correct estimateCurrentTime. */
-export const DRIFT_GRACE_PERIOD_MS = 3_000
-
-/** Extra margin (ms) added to the median RTT when computing the adaptive
- *  hard-seek threshold.  Final threshold = max(DRIFT_SEEK_THRESHOLD_MS,
- *  medianRTT + DRIFT_SEEK_RTT_MARGIN_MS).  This prevents high-latency
- *  NTP jitter from repeatedly triggering hard seeks. */
-export const DRIFT_SEEK_RTT_MARGIN_MS = 100
-
-/** Number of consecutive sync responses whose smoothed drift exceeds
- *  the hard-seek threshold before actually seeking.  Prevents a single
- *  noisy measurement from causing an audible jump. */
-export const HARD_SEEK_CONFIRM_COUNT = 2
+/**
+ * Initial no-sync window (ms) after a new track starts.
+ * During this window the client ignores all SYNC_RESPONSE messages,
+ * giving the audio buffer time to stabilise before any correction.
+ */
+export const SYNC_INITIAL_WINDOW_MS = 6_000
 
 /** Safety clamp for network delay estimation (seconds) — prevents clock-skew outliers */
 export const MAX_NETWORK_DELAY_S = 5
