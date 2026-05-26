@@ -5,14 +5,12 @@
 <h1 align="center">Vinyl Together</h1>
 
 <p align="center">
-  A real-time collaborative music listening platform — create a room, invite friends, and listen to the same song perfectly synchronized.
+  A real-time collaborative music listening platform — create a room, invite friends, and listen to the same song perfectly synchronized. A feature fork of <a href="https://github.com/Yueby/music-together">Music Together</a>.
 </p>
 
 <p align="center">
   <a href="README.md">简体中文</a>
 </p>
-
-> This project is a fork of [Yueby/music-together](https://github.com/Yueby/music-together) with additional features.
 
 <p align="center">
   <a href="https://github.com/dsdioV/vinyl-together/stargazers"><img src="https://img.shields.io/github/stars/dsdioV/vinyl-together?style=flat&logo=github" alt="Stars"></a>
@@ -30,35 +28,20 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker">
 </p>
 
-## Screenshots
-
-### Desktop
-
-| Home | Search | Player | Chat |
-|:---:|:---:|:---:|:---:|
-| ![Home](screenshots/1.png) | ![Search](screenshots/2.png) | ![Player](screenshots/3.png) | ![Chat](screenshots/4.png) |
-
-### Mobile
-
-| Home | Search | Player | Chat |
-|:---:|:---:|:---:|:---:|
-| ![Home](screenshots/1_m.png) | ![Search](screenshots/2_m.png) | ![Player](screenshots/3_m.png) | ![Chat](screenshots/4_m.png) |
-
-### Lyrics Display Comparison
-
-| Desktop Lyrics | Portrait Default (Cover) | Portrait Lyrics Mode |
-|:---:|:---:|:---:|
-| ![Desktop Lyrics](screenshots/3.png) | ![Portrait Default](screenshots/3_m.png) | ![Portrait Lyrics](screenshots/3_m1.png) |
-
 ## Features
 
-- **Real-time sync** -- NTP clock synchronization + scheduled execution for minimal latency
-- **Multi-platform music sources** -- NetEase Cloud Music, QQ Music
-- **Apple Music-style lyrics** -- Word-by-word animated lyrics, responsive on desktop and mobile
+- **Real-time sync** -- NTP clock synchronization with minimal latency
+- **Multi-platform sources** -- NetEase Cloud Music, QQ Music search and playback
+- **Apple Music-style lyrics** -- Word-by-word animated lyrics, desktop and mobile optimized
 - **VIP song support** -- Room-scoped cookie pool via NetEase QR login
-- **RBAC permissions** -- Host > Admin > Member with fine-grained access control
+- **RBAC permissions** -- Host > Admin > Member with fine-grained control
 - **Voting system** -- Members vote to control playback actions
 - **Play modes** -- Sequential, single loop, list loop, shuffle
+- **Auto-remove played** -- Remove songs from queue after playback ends (configurable)
+- **Default playlist** -- Auto-fill empty queue with random songs from a designated playlist (configurable)
+- **Search by ID** -- Look up playlists and albums by numeric ID
+- **Like mode** -- Most-liked song plays next (requires auto-remove)
+- **Unlimited batch import** -- Remove the 200-song limit for playlist imports
 - **Real-time chat** -- In-room text messaging with system messages
 - **Role grace period** -- Privileged users retain roles for 30s after disconnect
 - **Mobile responsive** -- Adaptive layout with orientation-based switching

@@ -239,7 +239,7 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
             <Headphones className="h-5 w-5 text-primary" />
-            <span className="text-base font-semibold tracking-tight text-foreground">Music Together</span>
+            <span className="text-base font-semibold tracking-tight text-foreground">Vinyl Together</span>
           </div>
           <UserPopover />
         </div>
@@ -267,25 +267,39 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-border/50">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-4">
-          <span className="text-xs text-muted-foreground">
-            Music Together · Made by Yueby ·{' '}
-            <a
-              href="https://github.com/Yueby/music-together/blob/main/package.json"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="relative inline-flex items-center transition-colors hover:text-foreground"
-            >
-              v{__APP_VERSION__}
-              {hasUpdate && (
-                <span
-                  className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
-                  title="有新版本可用，刷新页面以更新"
-                />
-              )}
-            </a>
-          </span>
+          <div className="text-xs text-muted-foreground">
+            <div>
+              Vinyl Together · Made by Voidsd ·{' '}
+              <a
+                href="https://github.com/dsdioV/vinyl-together/blob/main/package.json"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="relative inline-flex items-center transition-colors hover:text-foreground"
+              >
+                v{__APP_VERSION__}
+                {hasUpdate && (
+                  <span
+                    className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500"
+                    title="有新版本可用，刷新页面以更新"
+                  />
+                )}
+              </a>
+            </div>
+            <div>
+              基于{' '}
+              <a
+                href="https://github.com/Yueby/music-together"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors hover:text-foreground"
+              >
+                Music Together
+              </a>{' '}
+              二次开发
+            </div>
+          </div>
           <a
-            href="https://github.com/Yueby/music-together"
+            href="https://github.com/dsdioV/vinyl-together"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"

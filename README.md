@@ -5,14 +5,12 @@
 <h1 align="center">Vinyl Together</h1>
 
 <p align="center">
-  在线多人同步听歌平台 -- 创建房间，邀请朋友，一起实时听同一首歌。
+  在线多人同步听歌平台 -- 创建房间，邀请朋友，一起实时听同一首歌。基于 <a href="https://github.com/Yueby/music-together">Music Together</a> 项目二次开发
 </p>
 
 <p align="center">
   <a href="README.en.md">English</a>
 </p>
-
-> 本项目基于 [Yueby/music-together](https://github.com/Yueby/music-together) 进行二次开发。
 
 <p align="center">
   <a href="https://github.com/dsdioV/vinyl-together/stargazers"><img src="https://img.shields.io/github/stars/dsdioV/vinyl-together?style=flat&logo=github" alt="Stars"></a>
@@ -30,35 +28,20 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker">
 </p>
 
-## 截图
-
-### 桌面端
-
-|            首页            |            搜索            |            播放            |            聊天            |
-| :------------------------: | :------------------------: | :------------------------: | :------------------------: |
-| ![首页](screenshots/1.png) | ![搜索](screenshots/2.png) | ![播放](screenshots/3.png) | ![聊天](screenshots/4.png) |
-
-### 移动端
-
-|             首页             |             搜索             |             播放             |             聊天             |
-| :--------------------------: | :--------------------------: | :--------------------------: | :--------------------------: |
-| ![首页](screenshots/1_m.png) | ![搜索](screenshots/2_m.png) | ![播放](screenshots/3_m.png) | ![聊天](screenshots/4_m.png) |
-
-### 歌词展示对比
-
-|            桌面端歌词            |         竖屏默认（封面）         |           竖屏歌词模式            |
-| :------------------------------: | :------------------------------: | :-------------------------------: |
-| ![桌面端歌词](screenshots/3.png) | ![竖屏默认](screenshots/3_m.png) | ![竖屏歌词](screenshots/3_m1.png) |
-
 ## 功能特性
 
 - **实时同步播放** -- 基于 NTP 时钟同步 + 定时执行，延迟极低
 - **多平台音源** -- 支持网易云音乐、QQ 音乐搜索与播放
 - **Apple Music 风格歌词** -- 逐词高亮动画歌词，桌面端/移动端自适应
-- **VIP 歌曲支持** -- 网易云 QR 登录贡献 Cookie，解锁 VIP 曲目（房间级作用域）
+- **VIP 歌曲支持** -- 网易云 QR 登录贡献 Cookie，解锁 VIP 曲目
 - **权限管理 (RBAC)** -- 房主 > 管理员 > 普通成员，细粒度权限控制
 - **投票系统** -- 普通成员通过投票控制切歌、暂停等操作
 - **播放模式** -- 顺序播放、单曲循环、列表循环、随机播放
+- **播完自动移出** -- 歌曲播完后自动从队列移除，避免少数歌曲反复循环（房主可选）
+- **默认播放列表** -- 队列为空时从指定歌单随机补充（房主可设置）
+- **按 ID 搜索歌单/专辑** -- 搜索框支持使用数字 ID 精确查找
+- **点赞模式** -- 点赞数高的歌曲优先播放（需开启自动移出）
+- **无上限批量导入** -- 移除原有 200 首上限，长歌单可完整导入
 - **实时聊天** -- 房间内文字聊天，支持系统消息
 - **角色宽限期** -- 特权用户断线后保留角色 30 秒，重连自动恢复
 - **移动端适配** -- 响应式设计，横竖屏自动切换布局
@@ -121,17 +104,17 @@ packages/
 
 ## 致谢
 
-| 库                                                                                            | 说明               |
-| --------------------------------------------------------------------------------------------- | ------------------ |
-| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web 音频播放       |
-| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | 歌词组件 (GPL-3.0) |
-| [Meting](https://github.com/metowolf/Meting)                                                  | 多平台音乐 API     |
-| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API     |
-| [CASL](https://github.com/stalniy/casl)                                                       | 权限管理           |
-| [Zustand](https://github.com/pmndrs/zustand)                                                  | 状态管理           |
-| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI 组件库          |
-| [Motion](https://github.com/motiondivision/motion)                                            | 动画库             |
-| [qq-music-download](https://github.com/tooplick/qq-music-download)                            | QQ 音乐登录参考    |
+| 库 | 说明 |
+|---|---|
+| [Howler.js](https://github.com/goldfire/howler.js) | Web 音频播放 |
+| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics) | 歌词组件 (GPL-3.0) |
+| [Meting](https://github.com/metowolf/Meting) | 多平台音乐 API |
+| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API |
+| [CASL](https://github.com/stalniy/casl) | 权限管理 |
+| [Zustand](https://github.com/pmndrs/zustand) | 状态管理 |
+| [shadcn/ui](https://github.com/shadcn-ui/ui) | UI 组件库 |
+| [Motion](https://github.com/motiondivision/motion) | 动画库 |
+| [qq-music-download](https://github.com/tooplick/qq-music-download) | QQ 音乐登录参考 |
 
 ## 协议
 
