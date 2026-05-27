@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTime } from '@/lib/format'
@@ -59,6 +60,7 @@ export const PlayerControls = memo(function PlayerControls({
   const [playCooldown, setPlayCooldown] = useState(false)
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekTime, setSeekTime] = useState(0)
+  const [modePopoverOpen, setModePopoverOpen] = useState(false)
   const cooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const playCooldownTimer = useRef<ReturnType<typeof setTimeout>>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -112,13 +114,13 @@ export const PlayerControls = memo(function PlayerControls({
     playCooldownTimer.current = setTimeout(() => setPlayCooldown(false), TIMING.PLAYER_NEXT_DEBOUNCE_MS)
   }
 
-  const handlePlayModeToggle = () => {
-    const currentIdx = PLAY_MODE_CYCLE.indexOf(playMode)
-    const nextMode = PLAY_MODE_CYCLE[(currentIdx + 1) % PLAY_MODE_CYCLE.length]
+  const handleSelectMode = (mode: PlayMode) => {
+    setModePopoverOpen(false)
+    if (mode === playMode) return
     if (canSetMode) {
-      socket.emit(EVENTS.PLAYER_SET_MODE, { mode: nextMode })
+      socket.emit(EVENTS.PLAYER_SET_MODE, { mode })
     } else if (canVote) {
-      onStartVote('set-mode', { mode: nextMode })
+      onStartVote('set-mode', { mode })
     }
   }
 
@@ -159,33 +161,61 @@ export const PlayerControls = memo(function PlayerControls({
         <div className="flex w-full items-center">
           {/* Left: play mode */}
           <div className="flex flex-1 items-center justify-start">
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <motion.div whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 text-white/70 hover:bg-white/10"
-                    onClick={handlePlayModeToggle}
-                    disabled={!canSetMode && !canVote}
-                    aria-label={modeConfig.label}
-                  >
-                    <AnimatePresence mode="wait" initial={false}>
-                      <motion.div
-                        key={playMode}
-                        initial={{ scale: 0.6, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        exit={{ scale: 0.6, opacity: 0 }}
-                        transition={{ duration: 0.15 }}
+            <Popover open={modePopoverOpen} onOpenChange={setModePopoverOpen}>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <motion.div whileTap={{ scale: 0.9 }}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-white/70 hover:bg-white/10"
+                        disabled={!canSetMode && !canVote}
+                        aria-label={modeConfig.label}
                       >
-                        <ModeIcon className="size-5" />
-                      </motion.div>
-                    </AnimatePresence>
-                  </Button>
-                </motion.div>
-              </TooltipTrigger>
-              <TooltipContent>{modeConfig.label}</TooltipContent>
-            </Tooltip>
+                        <AnimatePresence mode="wait" initial={false}>
+                          <motion.div
+                            key={playMode}
+                            initial={{ scale: 0.6, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.6, opacity: 0 }}
+                            transition={{ duration: 0.15 }}
+                          >
+                            <ModeIcon className="size-5" />
+                          </motion.div>
+                        </AnimatePresence>
+                      </Button>
+                    </motion.div>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{modeConfig.label}</TooltipContent>
+              </Tooltip>
+              <PopoverContent
+                align="start"
+                side="top"
+                className="w-36 p-1"
+              >
+                {PLAY_MODE_CYCLE.map((mode) => {
+                  const cfg = PLAY_MODE_CONFIG[mode]
+                  const Icon = cfg.icon
+                  const isActive = mode === playMode
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => handleSelectMode(mode)}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
+                        isActive
+                          ? 'bg-white/15 text-white'
+                          : 'text-white/70 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <Icon className="size-4" />
+                      <span>{cfg.label}</span>
+                    </button>
+                  )
+                })}
+              </PopoverContent>
+            </Popover>
           </div>
 
           {/* Center: prev + play/pause + next */}
