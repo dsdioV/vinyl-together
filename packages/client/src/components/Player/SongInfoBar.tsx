@@ -4,7 +4,8 @@ import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import { usePlayerStore } from '@/stores/playerStore'
-import { MessageSquare, Volume2, VolumeX } from 'lucide-react'
+import { getSourceUrl } from '@/lib/utils'
+import { ExternalLink, MessageSquare, Volume2, VolumeX } from 'lucide-react'
 import { motion } from 'motion/react'
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { LAYOUT_TRANSITION, SPRING } from './constants'
@@ -116,9 +117,25 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
           </motion.div>
         </motion.div>
 
-        {/* Right-bottom: volume + chat buttons (always visible, aligned to bottom) */}
+        {/* Right-bottom: volume + chat + external link buttons (always visible, aligned to bottom) */}
         <div className="flex shrink-0 items-center">
           <VolumeControl volume={volume} setVolume={setVolume} toggleMute={toggleMute} />
+          {currentTrack && (
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <a
+                  href={getSourceUrl(currentTrack)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white active:scale-90 transition-transform"
+                  aria-label={`在源平台打开 ${currentTrack.title}`}
+                >
+                  <ExternalLink className="size-4" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent>在源平台打开</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
               <motion.div whileTap={{ scale: 0.9 }}>

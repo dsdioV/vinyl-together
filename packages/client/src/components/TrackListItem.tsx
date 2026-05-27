@@ -1,9 +1,9 @@
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDuration } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { cn, getSourceUrl } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
-import { ArrowUpToLine, Check, Music2, Plus, X } from 'lucide-react'
+import { ArrowUpToLine, Check, ExternalLink, Music2, Plus, X } from 'lucide-react'
 import { memo } from 'react'
 
 export interface TrackListItemProps {
@@ -81,6 +81,23 @@ export const TrackListItem = memo(function TrackListItem({
 
       {/* Duration */}
       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
+
+      {/* Source platform link */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <a
+            href={getSourceUrl(track)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent active:scale-90 transition-all"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`在源平台打开 ${track.title}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </TooltipTrigger>
+        <TooltipContent>在源平台打开</TooltipContent>
+      </Tooltip>
 
       {/* Actions — remove button OR add/insert buttons */}
       <div className="flex shrink-0 items-center gap-1">

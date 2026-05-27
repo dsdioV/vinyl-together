@@ -1,7 +1,7 @@
 import { MarqueeText } from '@/components/ui/marquee-text'
-import { cn } from '@/lib/utils'
+import { cn, getSourceUrl } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
-import { Disc3 } from 'lucide-react'
+import { Disc3, ExternalLink } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { LAYOUT_TRANSITION, SPRING } from './constants'
@@ -81,6 +81,17 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
             <MarqueeText>{currentTrack ? currentTrack.artist.join(' / ') : '...'}</MarqueeText>
           </motion.div>
         </motion.div>
+        {currentTrack && (
+          <a
+            href={getSourceUrl(currentTrack)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white/50 hover:text-white/80 hover:bg-white/10 active:scale-90 transition-all"
+            aria-label={`在源平台打开 ${currentTrack.title}`}
+          >
+            <ExternalLink className="size-4" />
+          </a>
+        )}
       </div>
     )
   }

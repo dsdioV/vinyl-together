@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { cn, getSourceUrl } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -13,7 +13,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { ArrowUpToLine, ChevronDown, ChevronUp, Heart, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp, ExternalLink, Heart, ListX, Music, Play, Trash2, User, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { MarqueeText } from '@/components/ui/marquee-text'
 import type { MusicSource } from '@music-together/shared'
@@ -339,14 +339,19 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                         <Music className="h-4 w-4 text-muted-foreground" />
                       </div>
                       {track.source && SOURCE_STYLE[track.source] && (
-                        <span
+                        <a
+                          href={getSourceUrl(track)}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className={cn(
-                            'absolute -bottom-1 -right-1 rounded px-0.5 text-[8px] font-bold leading-tight ring-1',
+                            'absolute -bottom-1 -right-1 rounded px-0.5 text-[8px] font-bold leading-tight ring-1 transition-transform hover:scale-110',
                             SOURCE_STYLE[track.source].className,
                           )}
+                          title={`在源平台打开 ${track.title}`}
+                          onClick={(e) => e.stopPropagation()}
                         >
                           {SOURCE_STYLE[track.source].label}
-                        </span>
+                        </a>
                       )}
                     </div>
 
@@ -384,6 +389,22 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       )}
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {/* External link — open in source platform */}
+                      <Tooltip delayDuration={400}>
+                        <TooltipTrigger asChild>
+                          <a
+                            href={getSourceUrl(track)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent active:scale-90 transition-all min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                            aria-label={`在源平台打开 ${track.title}`}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">在源平台打开</TooltipContent>
+                      </Tooltip>
+
                         {/* Play button — hidden for currently playing track */}
                       {currentTrack?.id !== track.id && (canPlay || canVote) && (
                         <Tooltip delayDuration={400}>
