@@ -86,6 +86,14 @@ declare module '@neteasecloudmusicapienhanced/api' {
         [key: string]: unknown
       }
     }>
+    /** 根据 ID 获取单曲详情 */
+    song_detail(params: { ids: string } & RequestBaseConfig): Promise<{
+      body: {
+        code?: number
+        songs?: Record<string, unknown>[]
+        [key: string]: unknown
+      }
+    }>
     album(params: Record<string, unknown>): Promise<{
       body: {
         code?: number

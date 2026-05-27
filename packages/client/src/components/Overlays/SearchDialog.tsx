@@ -63,6 +63,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     hasMoreTracks,
     fetchPlaylistTracks,
     loadMoreTracks,
+    fetchTrackById,
   } = usePlaylist()
 
   const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
@@ -179,10 +180,40 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
     fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
   }
 
-  const handleIdLookup = () => {
+  const handleIdLookup = async () => {
     const trimmed = idInput.trim()
     if (!trimmed) return
 
+    // Song mode: fetch a single track by ID and add directly to queue
+    if (searchType === 'song') {
+      const parsedId = parsePlaylistInput(trimmed, source)
+      if (!parsedId) {
+        toast.error('无法识别该 ID 或链接，请检查后重试')
+        return
+      }
+
+      setIdLoading(true)
+      const track = await fetchTrackById(source, parsedId)
+      setIdLoading(false)
+
+      if (!track) {
+        toast.error('未找到该歌曲，请检查 ID 是否正确')
+        return
+      }
+
+      const key = trackKey(track)
+      if (queueKeys.has(key) || addedIds.has(key)) {
+        toast.info(`「${track.title}」已在队列中`)
+        return
+      }
+      onAddToQueue(track)
+      setAddedIds((prev) => new Set(prev).add(key))
+      setIdInput('')
+      setShowIdInput(false)
+      return
+    }
+
+    // Album/Playlist mode: open detail view
     const parsedId = parsePlaylistInput(trimmed, source)
     if (!parsedId) {
       toast.error('无法识别该 ID 或链接，请检查后重试')
@@ -287,29 +318,27 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 <Button onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 </Button>
-                {searchType !== 'song' && (
-                  <Button
-                    variant={showIdInput ? 'default' : 'outline'}
-                    size="icon"
-                    onClick={() => setShowIdInput((v) => !v)}
-                    aria-label="按 ID 查找"
-                    title="按 ID / 链接精确查找"
-                  >
-                    <Hash className="h-4 w-4" />
-                  </Button>
-                )}
+                <Button
+                  variant={showIdInput ? 'default' : 'outline'}
+                  size="icon"
+                  onClick={() => setShowIdInput((v) => !v)}
+                  aria-label="按 ID 查找"
+                  title="按 ID / 链接精确查找"
+                >
+                  <Hash className="h-4 w-4" />
+                </Button>
               </div>
 
               {/* ID lookup input */}
-              {showIdInput && searchType !== 'song' && (
+              {showIdInput && (
                 <div className="flex gap-2">
                   <Input
-                    placeholder="输入歌单 ID 或链接"
+                    placeholder={searchType === 'song' ? '输入歌曲 ID 或链接' : '输入歌单 ID 或链接'}
                     value={idInput}
                     onChange={(e) => setIdInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleIdLookup()}
                     className="flex-1 text-sm"
-                    aria-label="歌单 ID 或链接"
+                    aria-label={searchType === 'song' ? '歌曲 ID 或链接' : '歌单 ID 或链接'}
                   />
                   <Button onClick={handleIdLookup} disabled={idLoading} size="sm" aria-label="按 ID 查找">
                     {idLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : '查找'}

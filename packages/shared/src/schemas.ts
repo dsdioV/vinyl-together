@@ -160,6 +160,11 @@ export const coverQuerySchema = z.object({
   size: z.coerce.number().int().positive().default(300),
 })
 
+export const trackQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
+})
+
 export const playlistQuerySchema = z.object({
   source: musicSourceSchema,
   id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),

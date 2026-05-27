@@ -229,6 +229,27 @@ export function usePlaylist() {
     [socket],
   )
 
+  /**
+   * Fetch a single track by its platform ID.
+   * Uses the /api/music/track endpoint.
+   */
+  const fetchTrackById = useCallback(
+    async (source: MusicSource, trackId: string): Promise<Track | null> => {
+      try {
+        const params = new URLSearchParams({ source, id: trackId })
+        const res = await fetch(`${SERVER_URL}/api/music/track?${params.toString()}`, {
+          credentials: 'include',
+        })
+        if (!res.ok) return null
+        const data = await res.json()
+        return data.track ?? null
+      } catch {
+        return null
+      }
+    },
+    [],
+  )
+
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
       // Chunk large batch additions into QUEUE_BATCH_MAX_SIZE groups
@@ -259,5 +280,6 @@ export function usePlaylist() {
     addTrackToQueue,
     insertTrackAfterCurrent,
     addBatchToQueue,
+    fetchTrackById,
   }
 }

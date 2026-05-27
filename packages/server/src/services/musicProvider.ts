@@ -815,6 +815,167 @@ class MusicProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // Public API — Single Track by ID
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch a single track by its platform sourceId.
+   * Checks the track registry first, then falls back to platform-specific APIs.
+   * Returns a Track with a fresh nanoid id, or null if not found.
+   */
+  async getTrackById(source: MusicSource, sourceId: string): Promise<Track | null> {
+    // 1. Check registry
+    const registryKey = `${source}:${sourceId}`
+    const cached = this.trackRegistry.get(registryKey)
+    if (cached) {
+      logger.info(`Track ID lookup cache hit: ${source}/${sourceId}`)
+      return { ...cached, id: nanoid() }
+    }
+
+    logger.info(`Track ID lookup cache miss: ${source}/${sourceId}, fetching from platform`)
+
+    try {
+      let track: Track | null = null
+
+      switch (source) {
+        case 'netease':
+          track = await this.fetchNeteaseTrackById(sourceId)
+          break
+        case 'tencent':
+          track = await this.fetchTencentTrackById(sourceId)
+          break
+        case 'kugou':
+          track = await this.fetchKugouTrackById(sourceId)
+          break
+        default:
+          return null
+      }
+
+      if (track) {
+        this.registerTracks([track])
+        // Resolve cover if missing
+        if (!track.cover && track.picId) {
+          await this.batchResolveCover([track], source)
+        }
+      }
+
+      return track
+    } catch (err) {
+      logger.error(`getTrackById failed for ${source}/${sourceId}:`, err)
+      return null
+    }
+  }
+
+  /**
+   * Fetch a single Netease track by song ID via ncmApi.song_detail.
+   */
+  private async fetchNeteaseTrackById(songId: string): Promise<Track | null> {
+    try {
+      const res = await withTimeout(
+        ncmApi.song_detail({ ids: songId, timestamp: Date.now() }),
+        15_000,
+      )
+
+      if (res === null) {
+        logger.warn(`Netease song_detail timeout: ${songId}`)
+        return null
+      }
+
+      const songs = res?.body?.songs
+      if (!Array.isArray(songs) || songs.length === 0) {
+        logger.warn(`Netease song_detail returned empty: ${songId}`, { code: res?.body?.code })
+        return null
+      }
+
+      return this.rawToTrack(songs[0] as Record<string, unknown>, 'netease')
+    } catch (err) {
+      logger.error(`Netease song_detail failed: ${songId}`, err)
+      return null
+    }
+  }
+
+  /**
+   * Fetch a single Tencent track by song mid via QQ Music Desktop API.
+   */
+  private async fetchTencentTrackById(mid: string): Promise<Track | null> {
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: {
+          ct: '6',
+          cv: '80600',
+          tmeAppID: 'qqmusic',
+        },
+        'music.trackInfo.UniformRuleClass': {
+          module: 'music.trackInfo.UniformRuleClass',
+          method: 'CgiGetTrackInfo',
+          param: {
+            mids: [mid],
+            types: [0],
+          },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+
+      if (!response) {
+        logger.warn(`Tencent track info timeout: ${mid}`)
+        return null
+      }
+
+      const result = response['music.trackInfo.UniformRuleClass']
+      if (result?.code !== 0 || !result?.data?.tracks?.[0]) {
+        logger.warn(`Tencent track info failed for ${mid}: code ${result?.code}`)
+        return null
+      }
+
+      const trackData = result.data.tracks[0]
+      return this.rawToTrack({ musicData: trackData }, 'tencent')
+    } catch (err) {
+      logger.error(`Tencent track info failed: ${mid}`, err)
+      return null
+    }
+  }
+
+  /**
+   * Fetch a single Kugou track by hash via the Kugou song info API.
+   */
+  private async fetchKugouTrackById(hash: string): Promise<Track | null> {
+    try {
+      const url = `https://wwwapi.kugou.com/yy/index.php?r=play/getdata&hash=${encodeURIComponent(hash)}`
+
+      const response = await withTimeout(
+        fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            Referer: 'https://www.kugou.com',
+          },
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+
+      if (!response || response.status !== 1 || !response.data) {
+        logger.warn(`Kugou track info failed for hash ${hash}: status ${response?.status}`)
+        return null
+      }
+
+      return this.rawToTrack(response.data, 'kugou')
+    } catch (err) {
+      logger.error(`Kugou track info failed: ${hash}`, err)
+      return null
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API — Playlist (new: paginated)
   // ---------------------------------------------------------------------------
 

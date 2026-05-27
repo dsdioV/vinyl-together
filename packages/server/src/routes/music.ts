@@ -4,6 +4,7 @@ import {
   lyricQuerySchema,
   coverQuerySchema,
   playlistQuerySchema,
+  trackQuerySchema,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
@@ -104,6 +105,18 @@ router.get(
 
     const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie, type)
     res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
+  }),
+)
+
+router.get(
+  '/track',
+  validated(trackQuerySchema, 'Get track by ID', async (data, _req, res) => {
+    const track = await musicProvider.getTrackById(data.source, data.id)
+    if (!track) {
+      res.status(404).json({ error: '歌曲未找到' })
+      return
+    }
+    res.json({ track })
   }),
 )
 
