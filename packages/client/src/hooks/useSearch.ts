@@ -46,7 +46,11 @@ export function useSearch(
         `${SERVER_URL}/api/music/search?source=${searchSource}&keyword=${encodeURIComponent(searchKeyword)}&limit=${PAGE_SIZE}&page=${searchPage}&type=${searchType}`,
         { signal, credentials: 'include' },
       )
-      if (!res.ok) throw new Error('Search failed')
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        const msg = body?.error ?? `HTTP ${res.status}`
+        throw new Error(msg)
+      }
       const data = await res.json()
       const tracks = data.tracks || []
       return { tracks, hasMore: data.hasMore ?? tracks.length >= PAGE_SIZE }
@@ -78,7 +82,7 @@ export function useSearch(
         .catch((err) => {
           if (err instanceof DOMException && err.name === 'AbortError') return
           if (searchIdRef.current !== currentSearchId) return
-          toast.error('搜索失败，请重试')
+          toast.error(`搜索失败：${err instanceof Error ? err.message : '未知错误'}`)
           setResults([])
           setHasMore(false)
         })
