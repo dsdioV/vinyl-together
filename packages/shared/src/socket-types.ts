@@ -34,6 +34,7 @@ export interface ServerToClientEvents {
     audioQuality: AudioQuality
     autoRemovePlayed: boolean
     songLikes: boolean
+    voteThreshold?: number
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
@@ -90,6 +91,7 @@ export interface ClientToServerEvents {
     audioQuality?: AudioQuality
     autoRemovePlayed?: boolean
     songLikes?: boolean
+    voteThreshold?: number
   }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 

@@ -10,7 +10,7 @@ import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { AudioQuality } from '@music-together/shared'
-import { LIMITS } from '@music-together/shared'
+import { LIMITS, VOTE } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -34,6 +34,7 @@ interface RoomSettingsSectionProps {
     audioQuality?: AudioQuality
     autoRemovePlayed?: boolean
     songLikes?: boolean
+    voteThreshold?: number
   }) => void
 }
 
@@ -67,6 +68,17 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   // Room name editing state
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState('')
+
+  // 投票通过率 — 百分比显示（1-100），内部存储为小数 (0.01-1.0)
+  const [voteThresholdPercent, setVoteThresholdPercent] = useState(
+    () => Math.round((room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD) * 100),
+  )
+  // Sync from room when it changes (e.g. another admin updated it)
+  useEffect(() => {
+    if (room?.voteThreshold !== undefined) {
+      setVoteThresholdPercent(Math.round(room.voteThreshold * 100))
+    }
+  }, [room?.voteThreshold])
 
   useEffect(() => {
     setPasswordEnabled(room?.hasPassword ?? false)
@@ -305,6 +317,45 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             />
           </SettingRow>
 
+          <SettingRow
+            label="投票通过率"
+            description={`当前：需要 ${Math.max(1, Math.round((room?.users.length ?? 1) * (room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD)))} / ${room?.users.length ?? 0} 人通过`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={voteThresholdPercent}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  // Allow empty input during editing
+                  if (raw === '') {
+                    setVoteThresholdPercent(0)
+                    return
+                  }
+                  const v = Number(raw)
+                  if (isNaN(v)) return
+                  setVoteThresholdPercent(v)
+                }}
+                onBlur={() => {
+                  const clamped = Math.min(100, Math.max(1, voteThresholdPercent || VOTE.DEFAULT_THRESHOLD * 100))
+                  setVoteThresholdPercent(clamped)
+                  onUpdateSettings({ voteThreshold: clamped / 100 })
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const clamped = Math.min(100, Math.max(1, voteThresholdPercent || VOTE.DEFAULT_THRESHOLD * 100))
+                    setVoteThresholdPercent(clamped)
+                    onUpdateSettings({ voteThreshold: clamped / 100 })
+                  }
+                }}
+                className="h-7 w-16 text-sm text-center"
+              />
+              <span className="text-sm text-muted-foreground">%</span>
+            </div>
+          </SettingRow>
+
           <div className="mt-6">
             <DefaultPlaylistSection />
           </div>
@@ -336,6 +387,44 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               disabled={!room?.autoRemovePlayed}
               onCheckedChange={(checked) => onUpdateSettings({ songLikes: checked })}
             />
+          </SettingRow>
+
+          <SettingRow
+            label="投票通过率"
+            description={`当前：需要 ${Math.max(1, Math.round((room?.users.length ?? 1) * (room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD)))} / ${room?.users.length ?? 0} 人通过`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={voteThresholdPercent}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  if (raw === '') {
+                    setVoteThresholdPercent(0)
+                    return
+                  }
+                  const v = Number(raw)
+                  if (isNaN(v)) return
+                  setVoteThresholdPercent(v)
+                }}
+                onBlur={() => {
+                  const clamped = Math.min(100, Math.max(1, voteThresholdPercent || VOTE.DEFAULT_THRESHOLD * 100))
+                  setVoteThresholdPercent(clamped)
+                  onUpdateSettings({ voteThreshold: clamped / 100 })
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const clamped = Math.min(100, Math.max(1, voteThresholdPercent || VOTE.DEFAULT_THRESHOLD * 100))
+                    setVoteThresholdPercent(clamped)
+                    onUpdateSettings({ voteThreshold: clamped / 100 })
+                  }
+                }}
+                className="h-7 w-16 text-sm text-center"
+              />
+              <span className="text-sm text-muted-foreground">%</span>
+            </div>
           </SettingRow>
         </div>
       )}

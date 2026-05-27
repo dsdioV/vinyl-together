@@ -87,6 +87,8 @@ export interface RoomState {
   songLikes: boolean
   /** 点赞数据：trackId → 点赞用户ID列表 */
   trackLikes: Record<string, string[]>
+  /** 投票通过率 (0.01–1.0)，默认 0.67 */
+  voteThreshold: number
 }
 
 export interface PlayState {

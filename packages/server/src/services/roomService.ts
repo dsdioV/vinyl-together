@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { AudioQuality, RoomListItem, User } from '@music-together/shared'
+import { VOTE } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -83,6 +84,7 @@ export function createRoom(
     },
     playMode: 'loop-all',
     autoRemovePlayed: false,
+    voteThreshold: VOTE.DEFAULT_THRESHOLD,
   }
 
   roomRepo.set(roomId, room)
@@ -180,7 +182,7 @@ export function leaveRoom(
   const hostChanged = electConductor(room)
 
   // Update active vote threshold so it doesn't become impossible to pass
-  const voteUpdated = updateVoteThreshold(roomId, room.users.length, user.id)
+  const voteUpdated = updateVoteThreshold(roomId, room.users.length, room.voteThreshold, user.id)
 
   logger.info(`User ${user.nickname} left room ${roomId}`, { roomId })
   return { roomId, user, room, hostChanged, voteUpdated }
@@ -206,6 +208,7 @@ export function updateSettings(
     audioQuality?: AudioQuality
     autoRemovePlayed?: boolean
     songLikes?: boolean
+    voteThreshold?: number
   },
 ): void {
   const room = roomRepo.get(roomId)
@@ -230,6 +233,10 @@ export function updateSettings(
 
   if (settings.songLikes !== undefined) {
     room.songLikes = settings.songLikes
+  }
+
+  if (settings.voteThreshold !== undefined) {
+    room.voteThreshold = settings.voteThreshold
   }
 }
 

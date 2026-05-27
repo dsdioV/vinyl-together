@@ -26,6 +26,8 @@ export interface RoomData {
   trackLikes: Map<string, Set<string>>
   /** 点赞时间戳（tiebreaker）：trackId → 最近点赞时间戳 */
   trackLikeTimestamps: Map<string, number>
+  /** 投票通过率 (0.01–1.0)，默认 0.67 */
+  voteThreshold: number
 }
 
 export interface SocketMapping {

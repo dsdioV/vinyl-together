@@ -137,7 +137,7 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const vote = voteService.createVote(ctx.roomId, ctx.room.hostId, ctx.user, action, ctx.room.users.length, payload)
+      const vote = voteService.createVote(ctx.roomId, ctx.room.hostId, ctx.user, action, ctx.room.users.length, ctx.room.voteThreshold, payload)
 
       if (!vote) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.VOTE_IN_PROGRESS, message: '已有投票正在进行中' })

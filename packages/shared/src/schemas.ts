@@ -26,6 +26,7 @@ export const roomSettingsSchema = z.object({
   audioQuality: audioQualitySchema.optional(),
   autoRemovePlayed: z.boolean().optional(),
   songLikes: z.boolean().optional(),
+  voteThreshold: z.number().min(0.01).max(1).optional(),
 })
 
 export const setRoleSchema = z.object({

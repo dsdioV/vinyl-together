@@ -38,6 +38,9 @@ export function useRoom() {
       name?: string
       password?: string | null
       audioQuality?: import('@music-together/shared').AudioQuality
+      autoRemovePlayed?: boolean
+      songLikes?: boolean
+      voteThreshold?: number
     }) => {
       socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },

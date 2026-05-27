@@ -38,11 +38,12 @@ export function createVote(
   initiator: User,
   action: VoteAction,
   totalUsers: number,
+  threshold: number,
   payload?: Record<string, unknown>,
 ): Vote | null {
   if (activeVotes.has(roomId)) return null
 
-  const requiredVotes = Math.floor(totalUsers / 2) + 1
+  const requiredVotes = Math.max(1, Math.round(totalUsers * threshold))
 
   const vote: Vote = {
     id: nanoid(8),
@@ -106,7 +107,7 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
  *
  * Returns true if the vote state was modified (caller should broadcast updated state).
  */
-export function updateVoteThreshold(roomId: string, currentUserCount: number, departedUserId?: string): boolean {
+export function updateVoteThreshold(roomId: string, currentUserCount: number, threshold: number, departedUserId?: string): boolean {
   const vote = activeVotes.get(roomId)
   if (!vote) return false
 
@@ -115,7 +116,7 @@ export function updateVoteThreshold(roomId: string, currentUserCount: number, de
     delete vote.votes[departedUserId]
   }
 
-  const newRequired = Math.floor(currentUserCount / 2) + 1
+  const newRequired = Math.max(1, Math.round(currentUserCount * threshold))
   vote.requiredVotes = newRequired
   vote.totalUsers = currentUserCount
   logger.info(`Vote threshold updated: ${newRequired} required (${currentUserCount} users)`, { roomId })

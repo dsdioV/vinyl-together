@@ -19,6 +19,13 @@ export const TIMING = {
   VOTE_TIMEOUT_MS: 30_000,
 } as const
 
+/** 投票通过率默认值与边界 */
+export const VOTE = {
+  DEFAULT_THRESHOLD: 0.67,
+  THRESHOLD_MIN: 0.01,
+  THRESHOLD_MAX: 1,
+} as const
+
 /** QR code login status codes (shared between client polling and server responses) */
 export const QR_STATUS = {
   EXPIRED: 800,
