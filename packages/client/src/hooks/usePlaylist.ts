@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
+import { EVENTS, LIMITS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
@@ -231,7 +231,16 @@ export function usePlaylist() {
 
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      // Chunk large batch additions into QUEUE_BATCH_MAX_SIZE groups
+      // so long playlists can be added without hitting the schema limit
+      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
+      for (let i = 0; i < tracks.length; i += batchSize) {
+        const chunk = tracks.slice(i, i + batchSize)
+        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
+          tracks: chunk,
+          playlistName: i === 0 ? playlistName : `${playlistName ?? ''} (续 ${Math.floor(i / batchSize) + 1})`,
+        })
+      }
     },
     [socket],
   )

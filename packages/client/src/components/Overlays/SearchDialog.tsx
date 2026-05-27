@@ -15,7 +15,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { EVENTS } from '@music-together/shared'
+import { EVENTS, LIMITS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, Hash } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -148,7 +148,14 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
+      for (let i = 0; i < tracks.length; i += batchSize) {
+        const chunk = tracks.slice(i, i + batchSize)
+        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
+          tracks: chunk,
+          playlistName: i === 0 ? playlistName : `${playlistName ?? ''} (续 ${Math.floor(i / batchSize) + 1})`,
+        })
+      }
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
