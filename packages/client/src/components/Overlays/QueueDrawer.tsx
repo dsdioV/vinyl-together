@@ -199,7 +199,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
-      <DrawerContent className={cn('flex flex-col p-0', isMobile && 'h-[70vh]')}>
+      <DrawerContent className={cn('flex flex-col overflow-x-hidden p-0', isMobile && 'h-[70vh]')}>
         <DrawerHeader className="shrink-0 border-b px-4 py-3">
           <div className="flex items-center justify-between">
             <DrawerTitle className="flex items-center gap-2 text-base">
@@ -257,7 +257,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                       width: '100%',
                       height: `${virtualRow.size}px`,
                       transform: `translateY(${virtualRow.start}px)`,
-                      paddingTop: '8px', // To simulate the top padding/gap
+                      paddingTop: '8px',
+                      overflow: 'hidden',
                     }}
                   >
                     <div
@@ -350,7 +351,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                     </div>
 
                     {/* Track info */}
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 overflow-hidden [contain:inline-size]">
                       <MarqueeText
                         className={cn('text-sm', currentTrack?.id === track.id && 'font-medium text-primary')}
                       >

@@ -38,7 +38,7 @@ export function MarqueeText({ children, className }: MarqueeTextProps) {
   const duration = overflow > 0 ? Math.max(5, 4 + overflow / 30) : 0
 
   return (
-    <div ref={containerRef} className={cn('overflow-hidden', className)}>
+    <div ref={containerRef} className={cn('w-full overflow-hidden', className)}>
       <span
         ref={textRef}
         className={cn('inline-block whitespace-nowrap', overflow > 0 && 'animate-marquee will-change-transform')}

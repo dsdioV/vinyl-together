@@ -11,11 +11,12 @@ import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
-import { Loader2, Music2, Search, X, ListMusic, Hash } from 'lucide-react'
+import { Loader2, Music2, Search, ListMusic, Hash } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PlaylistDetail } from './PlaylistDetail'
+import { TrackListItem } from '@/components/TrackListItem'
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
@@ -339,27 +340,19 @@ export function DefaultPlaylistSection() {
           <span className="text-xs">尚未添加歌曲到默认列表</span>
         </div>
       ) : (
-        <div className="max-h-64 overflow-y-auto rounded-md border divide-y">
-          {defaultQueue.map((track) => (
-            <div
-              key={track.id}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-accent/50 transition-colors"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{track.title}</p>
-                <p className="text-muted-foreground truncate text-xs">{track.artist.join(' / ')}</p>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                onClick={() => handleRemoveFromDefault(track)}
-                aria-label={`移除 ${track.title}`}
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
+        <div className="max-h-64 overflow-x-hidden overflow-y-auto rounded-md border">
+          <div className="grid grid-cols-1 divide-y">
+            {defaultQueue.map((track, index) => (
+              <TrackListItem
+                key={track.id}
+                track={track}
+                index={index}
+                isAdded={false}
+                onAdd={() => {}}
+                onRemove={handleRemoveFromDefault}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

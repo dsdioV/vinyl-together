@@ -140,7 +140,7 @@ export function SettingsDialog({
               <PlatformHub />
             </div>
           ) : (
-            <ScrollArea className="min-h-0 flex-1">
+            <ScrollArea className="min-h-0 min-w-0 flex-1">
               <div className="p-4 sm:p-6">
                 {tab === 'room' && <RoomSettingsSection onUpdateSettings={onUpdateSettings} />}
                 {tab === 'members' && <MembersSection onSetUserRole={onSetUserRole} />}

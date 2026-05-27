@@ -3,7 +3,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Track } from '@music-together/shared'
-import { ArrowUpToLine, Check, Music2, Plus } from 'lucide-react'
+import { ArrowUpToLine, Check, Music2, Plus, X } from 'lucide-react'
 import { memo } from 'react'
 
 export interface TrackListItemProps {
@@ -13,6 +13,8 @@ export interface TrackListItemProps {
   onAdd: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
   onArtistClick?: (artist: string) => void
+  /** When provided, shows a remove button instead of add/insert buttons */
+  onRemove?: (track: Track) => void
   style?: React.CSSProperties
   className?: string
 }
@@ -24,6 +26,7 @@ export const TrackListItem = memo(function TrackListItem({
   onAdd,
   onInsertAfterCurrent,
   onArtistClick,
+  onRemove,
   style,
   className,
 }: TrackListItemProps) {
@@ -79,39 +82,58 @@ export const TrackListItem = memo(function TrackListItem({
       {/* Duration */}
       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
 
-      {/* Add / Top buttons */}
+      {/* Actions — remove button OR add/insert buttons */}
       <div className="flex shrink-0 items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={isAdded ? 'ghost' : 'outline'}
-              size="icon"
-              className={cn('h-8 w-8 shrink-0', isAdded && 'text-emerald-500 hover:text-emerald-500')}
-              disabled={isAdded}
-              onClick={() => onAdd(track)}
-              aria-label={isAdded ? '已添加' : `添加 ${track.title} 到播放列表`}
-            >
-              {isAdded ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>
-        </Tooltip>
-
-        {onInsertAfterCurrent && !isAdded && (
+        {onRemove ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={() => onInsertAfterCurrent(track)}
-                aria-label={`置顶 ${track.title}`}
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={() => onRemove(track)}
+                aria-label={`移除 ${track.title}`}
               >
-                <ArrowUpToLine className="h-4 w-4" />
+                <X className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>置顶到当前播放下方</TooltipContent>
+            <TooltipContent>从默认列表移除</TooltipContent>
           </Tooltip>
+        ) : (
+          <>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={isAdded ? 'ghost' : 'outline'}
+                  size="icon"
+                  className={cn('h-8 w-8 shrink-0', isAdded && 'text-emerald-500 hover:text-emerald-500')}
+                  disabled={isAdded}
+                  onClick={() => onAdd(track)}
+                  aria-label={isAdded ? '已添加' : `添加 ${track.title} 到播放列表`}
+                >
+                  {isAdded ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{isAdded ? '已添加' : '添加到播放列表'}</TooltipContent>
+            </Tooltip>
+
+            {onInsertAfterCurrent && !isAdded && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => onInsertAfterCurrent(track)}
+                    aria-label={`置顶 ${track.title}`}
+                  >
+                    <ArrowUpToLine className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>置顶到当前播放下方</TooltipContent>
+              </Tooltip>
+            )}
+          </>
         )}
       </div>
     </div>
