@@ -58,24 +58,26 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   // Desktop: after clicking an action, temporarily suppress the hover toolbar until the cursor leaves the item
   const [dismissedHoverTrackId, setDismissedHoverTrackId] = useState<string | null>(null)
 
-  // When like mode is on, determine which track would play next
-  // (highest likes → lowest queue index as tiebreaker)
-  const nextTrackId = useMemo<string | null>(() => {
-    if (!songLikes || queue.length === 0) return null
-    const sorted = [...queue]
-      .filter((t) => t.id !== currentTrack?.id)
-      .sort((a, b) => {
-        const aLikes = trackLikes[a.id]?.length ?? 0
-        const bLikes = trackLikes[b.id]?.length ?? 0
-        if (bLikes !== aLikes) return bLikes - aLikes
-        return queue.indexOf(a) - queue.indexOf(b)
-      })
-    return sorted[0]?.id ?? null
-  }, [songLikes, queue, currentTrack?.id, trackLikes])
+  // Toggle: show queue in original order or sorted by likes (when songLikes mode is on)
+  const [sortByLikes, setSortByLikes] = useState(false)
+
+  useEffect(() => {
+    setSortByLikes(songLikes)
+  }, [songLikes])
+
+  const displayQueue = useMemo<Track[]>(() => {
+    if (!songLikes || !sortByLikes) return queue
+    return [...queue].sort((a, b) => {
+      const aLikes = trackLikes[a.id]?.length ?? 0
+      const bLikes = trackLikes[b.id]?.length ?? 0
+      if (bLikes !== aLikes) return bLikes - aLikes
+      return queue.indexOf(a) - queue.indexOf(b)
+    })
+  }, [songLikes, sortByLikes, queue, trackLikes])
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
-    count: queue.length,
+    count: displayQueue.length,
     getScrollElement: () => scrollElement,
     estimateSize: () => 56,
     overscan: 5,
@@ -109,17 +111,23 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
     toast.success('播放列表已清空')
   }, [confirmClear, onClearQueue])
 
-  const handleMoveUp = (index: number) => {
-    if (index <= 0) return
+  const handleMoveUp = (displayIndex: number) => {
+    const track = displayQueue[displayIndex]
+    if (!track) return
+    const realIndex = queue.indexOf(track)
+    if (realIndex <= 0) return
     const ids = queue.map((t) => t.id)
-    ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
+    ;[ids[realIndex - 1], ids[realIndex]] = [ids[realIndex], ids[realIndex - 1]]
     onReorderQueue(ids)
   }
 
-  const handleMoveDown = (index: number) => {
-    if (index >= queue.length - 1) return
+  const handleMoveDown = (displayIndex: number) => {
+    const track = displayQueue[displayIndex]
+    if (!track) return
+    const realIndex = queue.indexOf(track)
+    if (realIndex < 0 || realIndex >= queue.length - 1) return
     const ids = queue.map((t) => t.id)
-    ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
+    ;[ids[realIndex], ids[realIndex + 1]] = [ids[realIndex + 1], ids[realIndex]]
     onReorderQueue(ids)
   }
 
@@ -204,8 +212,23 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           <div className="flex items-center justify-between">
             <DrawerTitle className="flex items-center gap-2 text-base">
               <Music className="h-4 w-4" />
-              播放列表 ({queue.length})
+              播放列表 ({displayQueue.length})
             </DrawerTitle>
+            {songLikes && (
+              <button
+                type="button"
+                onClick={() => setSortByLikes((v) => !v)}
+                className={cn(
+                  'flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+                  sortByLikes
+                    ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Heart className="h-3 w-3" fill={sortByLikes ? 'currentColor' : 'none'} />
+                {sortByLikes ? '赞序' : '队列'}
+              </button>
+            )}
             <div className="flex items-center gap-1">
               {canRemove && queue.length > 0 && (
                 <Tooltip delayDuration={300}>
@@ -239,14 +262,15 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
         </DrawerHeader>
 
         <div ref={setScrollElement} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
-          {queue.length === 0 ? (
+          {displayQueue.length === 0 ? (
             <div className="flex h-40 items-center justify-center text-muted-foreground">播放列表为空</div>
           ) : (
             <div className="w-full" style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index
-                const track = queue[i]
+                const track = displayQueue[i]
                 if (!track) return null
+                const realIndex = queue.indexOf(track)
                 return (
                   <div
                     key={track.id}
@@ -302,15 +326,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                             <span className="tabular-nums">{trackLikes[track.id]?.length}</span>
                           )}
                         </button>
-                        {/* Next-up indicator */}
-                        {nextTrackId === track.id && currentTrack?.id !== track.id && (
-                          <Badge
-                            variant="default"
-                            className="h-4 gap-0.5 whitespace-nowrap bg-primary/15 px-1.5 py-0 text-[10px] font-medium text-primary hover:bg-primary/20"
-                          >
-                            ▶ 即将播放
-                          </Badge>
-                        )}
+
                       </div>
                     )}
 
@@ -431,7 +447,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                                disabled={i === 0}
+                                disabled={realIndex <= 0}
                                 onClick={() => handleMoveUp(i)}
                                 aria-label={`上移 ${track.title}`}
                               >
@@ -447,7 +463,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                                disabled={i === queue.length - 1}
+                                disabled={realIndex >= queue.length - 1}
                                 onClick={() => handleMoveDown(i)}
                                 aria-label={`下移 ${track.title}`}
                               >
