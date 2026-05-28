@@ -68,12 +68,16 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
   const displayQueue = useMemo<Track[]>(() => {
     if (!songLikes || !sortByLikes) return queue
     return [...queue].sort((a, b) => {
+      // Current track always first
+      if (a.id === currentTrack?.id) return -1
+      if (b.id === currentTrack?.id) return 1
+      // Then sort by likes desc → queue index asc
       const aLikes = trackLikes[a.id]?.length ?? 0
       const bLikes = trackLikes[b.id]?.length ?? 0
       if (bLikes !== aLikes) return bLikes - aLikes
       return queue.indexOf(a) - queue.indexOf(b)
     })
-  }, [songLikes, sortByLikes, queue, trackLikes])
+  }, [songLikes, sortByLikes, queue, trackLikes, currentTrack?.id])
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
