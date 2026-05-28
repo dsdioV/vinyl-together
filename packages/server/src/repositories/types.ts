@@ -1,4 +1,4 @@
-import type { AudioQuality, ChatMessage, PlayMode, PlayState, RoomListItem, Track, User } from '@music-together/shared'
+import type { AudioQuality, ChatMessage, PlayMode, PlayState, PlayedTrack, RoomListItem, Track, User } from '@music-together/shared'
 
 /** 服务端内部房间数据模型 -- 含密码（永远不发送给客户端） */
 export interface RoomData {
@@ -28,6 +28,8 @@ export interface RoomData {
   trackLikeTimestamps: Map<string, number>
   /** 投票通过率 (0.01–1.0)，默认 0.67 */
   voteThreshold: number
+  /** 已播放歌曲历史记录 */
+  playedHistory: PlayedTrack[]
 }
 
 export interface SocketMapping {

@@ -9,7 +9,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
 import { EVENTS, TIMING } from '@music-together/shared'
-import { ArrowRightToLine, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
+import { ArrowRightToLine, Clock, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
@@ -32,6 +32,7 @@ interface PlayerControlsProps {
   onNext: () => void
   onPrev: () => void
   onOpenQueue: () => void
+  onOpenHistory: () => void
   onStartVote: (action: VoteAction, payload?: Record<string, unknown>) => void
 }
 
@@ -42,6 +43,7 @@ export const PlayerControls = memo(function PlayerControls({
   onNext,
   onPrev,
   onOpenQueue,
+  onOpenHistory,
   onStartVote,
 }: PlayerControlsProps) {
   const { socket } = useSocketContext()
@@ -279,8 +281,25 @@ export const PlayerControls = memo(function PlayerControls({
             </Tooltip>
           </div>
 
-          {/* Right: queue */}
-          <div className="flex flex-1 items-center justify-end">
+          {/* Right: history + queue */}
+          <div className="flex flex-1 items-center justify-end gap-1">
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <motion.div whileTap={{ scale: 0.9 }}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="relative h-9 w-9 text-white/70 hover:bg-white/10"
+                    onClick={onOpenHistory}
+                    aria-label="点歌历史"
+                  >
+                    <Clock className="size-5" />
+                  </Button>
+                </motion.div>
+              </TooltipTrigger>
+              <TooltipContent>点歌历史</TooltipContent>
+            </Tooltip>
+
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <motion.div whileTap={{ scale: 0.9 }}>

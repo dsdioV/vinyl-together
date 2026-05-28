@@ -1,5 +1,5 @@
-import type { AudioQuality, MusicSource, PlayMode, PlayState, ScheduledPlayState, Track } from '@music-together/shared'
-import { EVENTS, ERROR_CODE, NTP } from '@music-together/shared'
+import type { AudioQuality, MusicSource, PlayMode, PlayState, PlayedTrack, ScheduledPlayState, Track } from '@music-together/shared'
+import { EVENTS, ERROR_CODE, LIMITS, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { nanoid } from 'nanoid'
 import { musicProvider } from './musicProvider.js'
@@ -441,6 +441,20 @@ async function _executePlayNext(
   // track correctly even after auto-removing the current one from the queue.
   const currentTrack = room.currentTrack
   const oldCurrentIndex = currentTrack ? room.queue.findIndex((t) => t.id === currentTrack.id) : -1
+
+  // Record finished track to play history (regardless of autoRemovePlayed)
+  if (currentTrack) {
+    const entry: PlayedTrack = {
+      track: currentTrack,
+      playedAt: Date.now(),
+      requestedBy: currentTrack.requestedBy,
+    }
+    room.playedHistory.push(entry)
+    if (room.playedHistory.length > LIMITS.PLAYED_HISTORY_MAX_SIZE) {
+      room.playedHistory = room.playedHistory.slice(-LIMITS.PLAYED_HISTORY_MAX_SIZE)
+    }
+    io.to(roomId).emit(EVENTS.PLAYED_HISTORY_UPDATED, { playedHistory: room.playedHistory })
+  }
 
   // Auto-remove played track from queue (if enabled AND track is still in queue)
   const autoRemoved = !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)

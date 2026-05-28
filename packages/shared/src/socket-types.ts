@@ -7,6 +7,7 @@ import type {
   PlayMode,
   Playlist,
   PlatformAuthStatus,
+  PlayedTrack,
   RoomListItem,
   RoomState,
   ScheduledPlayState,
@@ -77,6 +78,9 @@ export interface ServerToClientEvents {
 
   // Song likes
   [EVENTS.QUEUE_LIKES_UPDATED]: (data: { trackLikes: Record<string, string[]> }) => void
+
+  // Played history
+  [EVENTS.PLAYED_HISTORY_UPDATED]: (data: { playedHistory: PlayedTrack[] }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */

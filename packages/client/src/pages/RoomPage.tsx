@@ -10,6 +10,7 @@ import { ChatPanel } from '@/components/Chat/ChatPanel'
 import { RoomHeader } from '@/components/Room/RoomHeader'
 import { SearchDialog } from '@/components/Overlays/SearchDialog'
 import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
+import { HistoryDrawer } from '@/components/Overlays/HistoryDrawer'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
@@ -68,6 +69,7 @@ export default function RoomPage() {
 
   const [searchOpen, setSearchOpen] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
 
@@ -324,6 +326,7 @@ export default function RoomPage() {
                 onPrev={prev}
                 onOpenChat={toggleChat}
                 onOpenQueue={() => setQueueOpen(true)}
+                onOpenHistory={() => setHistoryOpen(true)}
                 chatUnreadCount={chatUnreadCount}
               />
             </div>
@@ -358,6 +361,10 @@ export default function RoomPage() {
             onRemoveFromQueue={removeTrack}
             onReorderQueue={reorderTracks}
             onClearQueue={clearQueue}
+          />
+          <HistoryDrawer
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
           />
           <SettingsDialog
             open={settingsOpen}

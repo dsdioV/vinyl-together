@@ -64,6 +64,16 @@ export interface Track {
   requestedBy?: string
 }
 
+/** 已播放的歌曲记录 */
+export interface PlayedTrack {
+  /** 歌曲完整信息 */
+  track: Track
+  /** 播放时间戳（ms） */
+  playedAt: number
+  /** 点歌人昵称 */
+  requestedBy?: string
+}
+
 /** 客户端可见的房间状态 */
 export interface RoomState {
   id: string
@@ -89,6 +99,8 @@ export interface RoomState {
   trackLikes: Record<string, string[]>
   /** 投票通过率 (0.01–1.0)，默认 0.67 */
   voteThreshold: number
+  /** 已播放歌曲历史记录 */
+  playedHistory: PlayedTrack[]
 }
 
 export interface PlayState {

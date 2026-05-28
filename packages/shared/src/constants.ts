@@ -11,6 +11,7 @@ export const LIMITS = {
   SEARCH_PAGE_SIZE_MAX: 50,
   SEARCH_PAGE_MAX: 100,
   PLAYLIST_ID_MAX_LENGTH: 200,
+  PLAYED_HISTORY_MAX_SIZE: 200,
 } as const
 
 export const TIMING = {

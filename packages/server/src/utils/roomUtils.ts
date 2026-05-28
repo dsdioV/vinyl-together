@@ -19,6 +19,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     autoRemovePlayed: data.autoRemovePlayed,
     songLikes: data.songLikes,
     voteThreshold: data.voteThreshold,
+    playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(
       Array.from(data.trackLikes.entries()).map(([trackId, userIds]) => [trackId, Array.from(userIds)]),
     ),

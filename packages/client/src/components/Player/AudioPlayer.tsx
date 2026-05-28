@@ -54,6 +54,7 @@ interface AudioPlayerProps {
   onPrev: () => void
   onOpenChat: () => void
   onOpenQueue: () => void
+  onOpenHistory: () => void
   chatUnreadCount: number
 }
 
@@ -65,6 +66,7 @@ export function AudioPlayer({
   onPrev,
   onOpenChat,
   onOpenQueue,
+  onOpenHistory,
   chatUnreadCount,
 }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
@@ -99,6 +101,7 @@ export function AudioPlayer({
     onNext,
     onPrev,
     onOpenQueue,
+    onOpenHistory,
     onStartVote: startVote,
   } as const
 

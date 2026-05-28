@@ -85,6 +85,7 @@ export function createRoom(
     playMode: 'loop-all',
     autoRemovePlayed: false,
     voteThreshold: VOTE.DEFAULT_THRESHOLD,
+    playedHistory: [],
   }
 
   roomRepo.set(roomId, room)
