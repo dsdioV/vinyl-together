@@ -632,7 +632,7 @@ class MusicProvider {
   }
 
   // ---------------------------------------------------------------------------
-  // Public API — Stream URL, Lyric, Cover (unchanged from original)
+  // Public API — Stream URL, Lyric, Cover
   // ---------------------------------------------------------------------------
 
   /**
@@ -652,10 +652,29 @@ class MusicProvider {
       }
     }
 
+    // Kugou: bypass @meting/core entirely — its kugou provider hardcodes
+    // appid=1014 (iOS) but the QR login generates tokens under appid=1005
+    // (Android).  Use kugouAuthService.getPlayUrl() with the correct appid.
+    if (source === 'kugou') {
+      try {
+        const result = await kugouAuth.getPlayUrl(urlId, cookie)
+        let url = result.url || null
+        if (url?.startsWith('http://')) {
+          url = url.replace(/^http:\/\//, 'https://')
+        }
+        if (!cookie && url) {
+          this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
+        }
+        return url
+      } catch (err) {
+        logger.error(`Kugou getPlayUrl failed for ${urlId}:`, err)
+        return null
+      }
+    }
+
     try {
       let meting: MetingInstance
       if (cookie) {
-        // Fresh instance with cookie — don't pollute the shared one
         meting = new Meting(source)
         meting.format(true)
         meting.cookie(cookie)
@@ -674,12 +693,10 @@ class MusicProvider {
         return null
       }
       let url = (data.url as string) || null
-      // 强制 HTTPS，避免 HTTPS 页面加载 HTTP 音频触发 Mixed Content 警告
       if (url?.startsWith('http://')) {
         url = url.replace(/^http:\/\//, 'https://')
       }
 
-      // Only cache non-cookie & successful results (null = transient failure, retry next time)
       if (!cookie && url) {
         this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
       }

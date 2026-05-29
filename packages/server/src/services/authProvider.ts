@@ -20,9 +20,10 @@ export interface UserInfoData {
  * getUserInfo 统一返回类型
  * - ok=true: 验证成功，包含用户信息
  * - ok=false + reason='expired': Cookie 已过期
+ * - ok=false + reason='no_token': 缺少 token/userid（如手动输入了无效 Cookie）
  * - ok=false + reason='error': 临时错误（网络/超时等）
  */
-export type GetUserInfoResult = { ok: true; data: UserInfoData } | { ok: false; reason: 'expired' | 'error' }
+export type GetUserInfoResult = { ok: true; data: UserInfoData } | { ok: false; reason: 'expired' | 'error' | 'no_token' }
 
 /**
  * 每个音乐平台认证服务必须实现的接口

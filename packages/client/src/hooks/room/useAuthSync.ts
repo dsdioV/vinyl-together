@@ -36,7 +36,7 @@ export function useAuthSync() {
       message: string
       platform?: MusicSource
       cookie?: string
-      reason?: 'expired' | 'error'
+      reason?: 'expired' | 'error' | 'no_token'
     }) => {
       if (data.success) {
         // 持久化 cookie

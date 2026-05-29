@@ -176,6 +176,14 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         })
         if (mapping) broadcastAuthStatus(io, socket, mapping)
         return
+      } else if (platform === 'kugou' && infoResult.reason === 'no_token') {
+        // 酷狗：缺少 token/userid 的 cookie 无法播放，拒绝保存并引导扫码登录
+        socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+          success: false,
+          message: '酷狗需要 token 和 userid，请使用扫码登录而非手动输入 Cookie',
+          platform,
+          reason: 'no_token',
+        })
       } else {
         // 酷狗/QQ 音乐：验证失败也保存（可能是 API 变动，播放时可能仍有效）
         if (mapping && mapping.roomId) {

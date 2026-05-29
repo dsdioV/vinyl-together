@@ -148,7 +148,13 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
 
       if (!url) {
         const isVip = resolved.vip
-        const hint = isVip && !cookie ? '（VIP 歌曲，需要有用户登录 VIP 账号）' : ''
+        const isKugou = resolved.source === 'kugou'
+        let hint = ''
+        if (isVip && !cookie) {
+          hint = '（VIP 歌曲，需要有用户登录 VIP 账号）'
+        } else if (isKugou && !cookie) {
+          hint = '（酷狗需要登录后才能播放，请在房间设置中扫码或粘贴 Cookie）'
+        }
         logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
 
         // -------------------------------------------------------------------

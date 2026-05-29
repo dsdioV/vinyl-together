@@ -95,7 +95,7 @@ function calculateMid(str: string): string {
 }
 
 const GUID = md5(getGuid())
-const MID = calculateMid(GUID)
+export const MID = calculateMid(GUID)
 
 // ---------------------------------------------------------------------------
 // HTTP request helper
@@ -127,16 +127,19 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
 
   const defaultParams: Record<string, unknown> = {
     dfid,
-    mid: MID,
-    uuid: '-',
+    mid: config.cookie?.mid || MID,
+    uuid: config.cookie?.mid || config.cookie?.uuid || '-',
     appid: APPID,
     clientver: CLIENTVER,
     clienttime,
   }
 
-  if (config.cookie?.token) defaultParams['token'] = config.cookie.token
-  if (config.cookie?.userid && config.cookie.userid !== '0') {
-    defaultParams['userid'] = config.cookie.userid
+  // Accept both QR-login format (token/userid) and browser-cookie format (t/KugooID)
+  const cookieToken = config.cookie?.token || config.cookie?.t
+  const cookieUserid = config.cookie?.userid || config.cookie?.KugooID
+  if (cookieToken) defaultParams['token'] = cookieToken
+  if (cookieUserid && cookieUserid !== '0') {
+    defaultParams['userid'] = cookieUserid
   }
 
   const merged = { ...defaultParams, ...config.params }
@@ -268,7 +271,18 @@ export async function checkQrStatus(key: string): Promise<{
     if (status === 803 && d?.token && d?.userid) {
       const token = String(d.token)
       const userid = String(d.userid)
-      const cookie = `token=${token};userid=${userid}`
+      // TEMP: log all fields from QR login response to identify missing auth params
+      logger.info(`Kugou QR login response keys: ${JSON.stringify(Object.keys(d))}`)
+      // Capture device identifiers from login response — the wwwapi
+      // endpoint validates mid/dfid against the token's origin session.
+      const mid = String(d.mid || d.kg_mid || '')
+      const dfid = String(d.dfid || d.kg_dfid || '')
+      logger.info(`Kugou QR login: token=${token.slice(0,8)}... userid=${userid} mid=${mid} dfid=${dfid}`)
+      // Store all auth fields in the cookie string
+      const parts = [`token=${token}`, `userid=${userid}`]
+      if (mid) parts.push(`mid=${mid}`)
+      if (dfid) parts.push(`dfid=${dfid}`)
+      const cookie = parts.join(';')
       return { status, message, cookie }
     }
 
@@ -339,12 +353,13 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
   // 使用共享的 parseCookieString（已从 cookieUtils 导入）
   try {
     const cookieObj = parseCookieString(cookie)
-    const token = cookieObj['token']
-    const userid = cookieObj['userid']
+    // Accept both QR-login format (token/userid) and browser-cookie format (t/KugooID)
+    const token = cookieObj['token'] || cookieObj['t']
+    const userid = cookieObj['userid'] || cookieObj['KugooID']
 
     if (!token || !userid) {
-      logger.warn('Kugou getUserInfo: missing token or userid in cookie')
-      return { ok: false, reason: 'expired' }
+      logger.warn('Kugou getUserInfo: missing token/t and userid/KugooID in cookie')
+      return { ok: false, reason: 'no_token' }
     }
 
     // Fetch VIP info
@@ -508,3 +523,88 @@ export async function getPlaylistTracks(
 }
 
 // parseCookieString 已移至 utils/cookieUtils.ts 统一管理
+
+// ---------------------------------------------------------------------------
+// Play URL Resolution — bypasses @meting/core for kugou
+// ---------------------------------------------------------------------------
+// The wwwapi.kugou.com endpoint expects a specific appid that must match the
+// token's origin:
+//   - Browser cookies (t/KugooID) → a_id=1014, clientver=20000 (web player)
+//   - QR login cookies (token/userid) → APPID=1005, clientver=20489 (Android)
+// Detect the format and use the matching credentials.
+
+export async function getPlayUrl(
+  hash: string,
+  cookie?: string | null,
+): Promise<{ url: string; size: number; br: number }> {
+  const empty = { url: '', size: 0, br: -1 }
+
+  try {
+    const cookieObj = cookie ? parseCookieString(cookie) : {}
+
+    // Detect cookie format to pick the correct appid
+    const isBrowserCookie = !!(cookieObj['t'] || cookieObj['KugooID'])
+    const wwwapiAppid = cookieObj['a_id']
+      ? Number(cookieObj['a_id'])
+      : isBrowserCookie ? 1014 : APPID
+    const wwwapiClientver = isBrowserCookie ? 20000 : CLIENTVER
+
+    // Step 1: get encode_album_audio_id from hash
+    const step1 = await kugouRequest({
+      baseURL: 'https://wwwapi.kugou.com',
+      url: '/play/songinfo',
+      params: {
+        hash,
+        appid: wwwapiAppid,
+        platid: '4',
+        srcappid: SRCAPPID,
+        clientver: wwwapiClientver,
+      },
+      encryptType: 'web',
+      cookie: cookieObj,
+    })
+
+    const data1 = step1?.data as Record<string, unknown> | undefined
+    const encodeId = data1?.encode_album_audio_id as string | undefined
+    if (!encodeId) {
+      const step1err = step1?.err_code || step1?.status
+      const bodyPreview = JSON.stringify(step1).slice(0, 300)
+      logger.warn(
+        `Kugou getPlayUrl: step1 failed appid=${wwwapiAppid} clientver=${wwwapiClientver} ` +
+        `err_code=${step1err} body=${bodyPreview}`,
+      )
+      return empty
+    }
+
+    // Step 2: get play_url from encode_album_audio_id
+    const step2 = await kugouRequest({
+      baseURL: 'https://wwwapi.kugou.com',
+      url: '/play/songinfo',
+      params: {
+        encode_album_audio_id: encodeId,
+        appid: wwwapiAppid,
+        platid: '4',
+        srcappid: SRCAPPID,
+        clientver: wwwapiClientver,
+      },
+      encryptType: 'web',
+      cookie: cookieObj,
+    })
+
+    const data2 = step2?.data as Record<string, unknown> | undefined
+    const playUrl = (data2?.play_url || data2?.play_backup_url || '') as string
+    const size = Number(data2?.filesize || 0)
+    const br = Number(data2?.bitrate || -1)
+
+    if (playUrl) {
+      logger.info(`Kugou getPlayUrl: resolved to ${br}kbps`)
+      return { url: playUrl, size, br }
+    }
+
+    logger.warn('Kugou getPlayUrl: step2 returned no play_url')
+    return empty
+  } catch (err) {
+    logger.error('Kugou getPlayUrl failed', err)
+    return empty
+  }
+}

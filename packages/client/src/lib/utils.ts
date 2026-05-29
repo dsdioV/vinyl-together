@@ -17,7 +17,7 @@ export const getSourceUrl = (t: Pick<Track, 'source' | 'sourceId'>): string => {
     case 'tencent':
       return `https://y.qq.com/n/ryqq/songDetail/${t.sourceId}`
     case 'kugou':
-      return `https://www.kugou.com/song/${t.sourceId}.html`
+      return `https://www.kugou.com/song/#hash=${t.sourceId}`
     default:
       return '#'
   }
