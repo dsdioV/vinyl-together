@@ -809,6 +809,14 @@ class MusicProvider {
     }
 
     try {
+      if (source === 'kugou') {
+        const cover = await kugouAuth.getCover(picId)
+        if (cover) {
+          this.coverCache.set(cacheKey, cover)
+        }
+        return cover
+      }
+
       const meting = this.getInstance(source)
       const raw = await withTimeout(meting.pic(picId, size))
       if (raw === null || raw === undefined) {
@@ -1512,6 +1520,15 @@ class MusicProvider {
           }
 
           try {
+            if (source === 'kugou') {
+              const url = await kugouAuth.getCover(track.picId!)
+              if (url) {
+                track.cover = url
+                this.coverCache.set(cacheKey, url)
+              }
+              return
+            }
+
             // Fresh instance per call to avoid shared state race conditions
             const instance = new Meting(source)
             const raw = await instance.pic(track.picId!, 300)

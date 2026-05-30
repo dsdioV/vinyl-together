@@ -110,13 +110,14 @@ interface KugouRequestConfig {
   encryptType: 'web' | 'android'
   cookie?: Record<string, string>
   headers?: Record<string, string>
+  clearDefaultParams?: boolean
 }
 
 /** Kugou API response (loosely typed — external API). */
 interface KugouApiResponse {
   status?: number
   error_code?: number
-  data?: Record<string, unknown>
+  data?: Record<string, unknown> | any[]
   [key: string]: unknown
 }
 
@@ -125,7 +126,7 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
   const dfid = config.cookie?.dfid || '-'
   const method = config.method || 'GET'
 
-  const defaultParams: Record<string, unknown> = {
+  const defaultParams: Record<string, unknown> = config.clearDefaultParams ? {} : {
     dfid,
     mid: config.cookie?.mid || MID,
     uuid: config.cookie?.mid || config.cookie?.uuid || '-',
@@ -137,9 +138,11 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
   // Accept both QR-login format (token/userid) and browser-cookie format (t/KugooID)
   const cookieToken = config.cookie?.token || config.cookie?.t
   const cookieUserid = config.cookie?.userid || config.cookie?.KugooID
-  if (cookieToken) defaultParams['token'] = cookieToken
-  if (cookieUserid && cookieUserid !== '0') {
-    defaultParams['userid'] = cookieUserid
+  if (!config.clearDefaultParams) {
+    if (cookieToken) defaultParams['token'] = cookieToken
+    if (cookieUserid && cookieUserid !== '0') {
+      defaultParams['userid'] = cookieUserid
+    }
   }
 
   const merged = { ...defaultParams, ...config.params }
@@ -154,8 +157,12 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
     merged['signature'] = signatureAndroidParams(merged, bodyStr)
   }
 
-  const qs = Object.entries(merged)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+  const qs = Object.keys(merged)
+    .sort()
+    .map((k) => {
+      const v = merged[k]
+      return `${encodeURIComponent(k)}=${encodeURIComponent(typeof v === 'object' ? JSON.stringify(v) : String(v))}`
+    })
     .join('&')
 
   const fullUrl = `${config.baseURL}${config.url}?${qs}`
@@ -541,70 +548,173 @@ export async function getPlayUrl(
 
   try {
     const cookieObj = cookie ? parseCookieString(cookie) : {}
+    hash = hash.toLowerCase()
 
     // Detect cookie format to pick the correct appid
     const isBrowserCookie = !!(cookieObj['t'] || cookieObj['KugooID'])
-    const wwwapiAppid = cookieObj['a_id']
-      ? Number(cookieObj['a_id'])
-      : isBrowserCookie ? 1014 : APPID
-    const wwwapiClientver = isBrowserCookie ? 20000 : CLIENTVER
 
-    // Step 1: get encode_album_audio_id from hash
-    const step1 = await kugouRequest({
-      baseURL: 'https://wwwapi.kugou.com',
-      url: '/play/songinfo',
-      params: {
-        hash,
-        appid: wwwapiAppid,
-        platid: '4',
-        srcappid: SRCAPPID,
-        clientver: wwwapiClientver,
-      },
-      encryptType: 'web',
-      cookie: cookieObj,
-    })
+    if (isBrowserCookie) {
+      const wwwapiAppid = cookieObj['a_id']
+        ? Number(cookieObj['a_id'])
+        : 1014
+      const wwwapiClientver = 20000
 
-    const data1 = step1?.data as Record<string, unknown> | undefined
-    const encodeId = data1?.encode_album_audio_id as string | undefined
-    if (!encodeId) {
-      const step1err = step1?.err_code || step1?.status
-      const bodyPreview = JSON.stringify(step1).slice(0, 300)
+      // Step 1: get encode_album_audio_id from hash
+      const step1 = await kugouRequest({
+        baseURL: 'https://wwwapi.kugou.com',
+        url: '/play/songinfo',
+        params: {
+          hash,
+          appid: wwwapiAppid,
+          platid: '4',
+          srcappid: SRCAPPID,
+          clientver: wwwapiClientver,
+        },
+        encryptType: 'web',
+        cookie: cookieObj,
+      })
+
+      const data1 = step1?.data as Record<string, unknown> | undefined
+      const encodeId = data1?.encode_album_audio_id as string | undefined
+      if (!encodeId) {
+        const step1err = step1?.err_code || step1?.status
+        const bodyPreview = JSON.stringify(step1).slice(0, 300)
+        logger.warn(
+          `Kugou getPlayUrl: step1 failed appid=${wwwapiAppid} clientver=${wwwapiClientver} ` +
+          `err_code=${step1err} body=${bodyPreview}`,
+        )
+        return empty
+      }
+
+      // Step 2: get play_url from encode_album_audio_id
+      const step2 = await kugouRequest({
+        baseURL: 'https://wwwapi.kugou.com',
+        url: '/play/songinfo',
+        params: {
+          encode_album_audio_id: encodeId,
+          appid: wwwapiAppid,
+          platid: '4',
+          srcappid: SRCAPPID,
+          clientver: wwwapiClientver,
+        },
+        encryptType: 'web',
+        cookie: cookieObj,
+      })
+
+      const data2 = step2?.data as Record<string, unknown> | undefined
+      const playUrl = (data2?.play_url || data2?.play_backup_url || '') as string
+      const size = Number(data2?.filesize || 0)
+      const br = Number(data2?.bitrate || -1)
+
+      if (playUrl) {
+        logger.info(`Kugou getPlayUrl: resolved to ${br}kbps`)
+        return { url: playUrl, size, br }
+      }
+
+      logger.warn('Kugou getPlayUrl: step2 returned no play_url')
+      return empty
+    } else {
+      //使用trackercdn获取Android客户端令牌
+      const mid = cookieObj?.mid || MID
+      const userid = cookieObj?.userid || '0'
+      const signKeyStr = '57ae12eb6890223e355ccfcb74edf70d'
+      const key = md5(`${hash}${signKeyStr}${APPID}${mid}${userid}`)
+
+      const res = await kugouRequest({
+        baseURL: 'https://trackercdn.kugou.com',
+        url: '/v5/url',
+        params: {
+          album_id: 0,
+          area_code: 1,
+          hash,
+          ssa_flag: 'is_fromtrack',
+          version: 11430,
+          page_id: 151369488,
+          quality: 128,
+          album_audio_id: 0,
+          behavior: 'play',
+          pid: 2,
+          cmd: 26,
+          pidversion: 3001,
+          IsFreePart: 0,
+          ppage_id: '463467626,350369493,788954147',
+          cdnBackup: 1,
+          key,
+          appid: APPID,
+          clientver: 11430,
+        },
+        encryptType: 'android',
+        cookie: cookieObj,
+        headers: {
+          'x-router': 'trackercdn.kugou.com',
+        }
+      })
+
+      if (res.status === 1 && res.url && Array.isArray(res.url) && res.url.length > 0) {
+        const br = res.bitRate ? Math.round(Number(res.bitRate) / 1000) : -1
+        logger.info(`Kugou getPlayUrl: resolved to ${br}kbps`)
+        return {
+          url: String(res.url[0]),
+          size: Number(res.fileSize) || 0,
+          br
+        }
+      }
+
+      const errCode = res.error_code || res.status
+      const bodyPreview = JSON.stringify(res).slice(0, 300)
       logger.warn(
-        `Kugou getPlayUrl: step1 failed appid=${wwwapiAppid} clientver=${wwwapiClientver} ` +
-        `err_code=${step1err} body=${bodyPreview}`,
+        `Kugou getPlayUrl: trackercdn failed appid=${APPID} err_code=${errCode} body=${bodyPreview}`,
       )
       return empty
     }
-
-    // Step 2: get play_url from encode_album_audio_id
-    const step2 = await kugouRequest({
-      baseURL: 'https://wwwapi.kugou.com',
-      url: '/play/songinfo',
-      params: {
-        encode_album_audio_id: encodeId,
-        appid: wwwapiAppid,
-        platid: '4',
-        srcappid: SRCAPPID,
-        clientver: wwwapiClientver,
-      },
-      encryptType: 'web',
-      cookie: cookieObj,
-    })
-
-    const data2 = step2?.data as Record<string, unknown> | undefined
-    const playUrl = (data2?.play_url || data2?.play_backup_url || '') as string
-    const size = Number(data2?.filesize || 0)
-    const br = Number(data2?.bitrate || -1)
-
-    if (playUrl) {
-      logger.info(`Kugou getPlayUrl: resolved to ${br}kbps`)
-      return { url: playUrl, size, br }
-    }
-
-    logger.warn('Kugou getPlayUrl: step2 returned no play_url')
-    return empty
   } catch (err) {
     logger.error('Kugou getPlayUrl failed', err)
     return empty
   }
+}
+
+export async function getCover(hash: string, cookie?: string | null): Promise<string> {
+  try {
+    const cookieObj = cookie ? parseCookieString(cookie) : {}
+    hash = hash.toLowerCase()
+
+    const data = [{ album_id: 0, hash, album_audio_id: 0 }]
+    const reqAppid = cookieObj['a_id']
+      ? Number(cookieObj['a_id'])
+      : APPID
+    const reqClientver = 11430
+
+    const res = await kugouRequest({
+      baseURL: 'https://expendablekmr.kugou.com',
+      url: '/container/v2/image',
+      params: {
+        album_image_type: '-3',
+        appid: reqAppid,
+        clientver: reqClientver,
+        author_image_type: '3,4,5',
+        count: 1,
+        data,
+        isCdn: 1,
+        publish_time: 1
+      },
+      encryptType: 'android',
+      cookie: cookieObj,
+      clearDefaultParams: true
+    })
+
+    if (res.status === 1 && res.data && Array.isArray(res.data) && res.data.length > 0) {
+      const imgData = res.data[0]
+      if (imgData.album && imgData.album[0] && imgData.album[0].sizable_cover) {
+        return imgData.album[0].sizable_cover.replace('{size}', '400')
+      }
+      if (imgData.author && imgData.author[0] && imgData.author[0].sizable_avatar) {
+        return imgData.author[0].sizable_avatar.replace('{size}', '400')
+      }
+    }
+    
+    logger.warn('Kugou getCover: expected image data missing', { res: JSON.stringify(res).slice(0, 300) })
+  } catch (err) {
+    logger.error('Kugou getCover failed', err)
+  }
+  return ''
 }
