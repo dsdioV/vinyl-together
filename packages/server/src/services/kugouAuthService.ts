@@ -110,13 +110,14 @@ interface KugouRequestConfig {
   encryptType: 'web' | 'android'
   cookie?: Record<string, string>
   headers?: Record<string, string>
+  clearDefaultParams?: boolean
 }
 
 /** Kugou API response (loosely typed — external API). */
 interface KugouApiResponse {
   status?: number
   error_code?: number
-  data?: Record<string, unknown>
+  data?: Record<string, unknown> | any[]
   [key: string]: unknown
 }
 
@@ -125,7 +126,7 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
   const dfid = config.cookie?.dfid || '-'
   const method = config.method || 'GET'
 
-  const defaultParams: Record<string, unknown> = {
+  const defaultParams: Record<string, unknown> = config.clearDefaultParams ? {} : {
     dfid,
     mid: config.cookie?.mid || MID,
     uuid: config.cookie?.mid || config.cookie?.uuid || '-',
@@ -137,9 +138,11 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
   // Accept both QR-login format (token/userid) and browser-cookie format (t/KugooID)
   const cookieToken = config.cookie?.token || config.cookie?.t
   const cookieUserid = config.cookie?.userid || config.cookie?.KugooID
-  if (cookieToken) defaultParams['token'] = cookieToken
-  if (cookieUserid && cookieUserid !== '0') {
-    defaultParams['userid'] = cookieUserid
+  if (!config.clearDefaultParams) {
+    if (cookieToken) defaultParams['token'] = cookieToken
+    if (cookieUserid && cookieUserid !== '0') {
+      defaultParams['userid'] = cookieUserid
+    }
   }
 
   const merged = { ...defaultParams, ...config.params }
@@ -154,8 +157,12 @@ async function kugouRequest(config: KugouRequestConfig): Promise<KugouApiRespons
     merged['signature'] = signatureAndroidParams(merged, bodyStr)
   }
 
-  const qs = Object.entries(merged)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+  const qs = Object.keys(merged)
+    .sort()
+    .map((k) => {
+      const v = merged[k]
+      return `${encodeURIComponent(k)}=${encodeURIComponent(typeof v === 'object' ? JSON.stringify(v) : String(v))}`
+    })
     .join('&')
 
   const fullUrl = `${config.baseURL}${config.url}?${qs}`
@@ -691,7 +698,8 @@ export async function getCover(hash: string, cookie?: string | null): Promise<st
         publish_time: 1
       },
       encryptType: 'android',
-      cookie: cookieObj
+      cookie: cookieObj,
+      clearDefaultParams: true
     })
 
     if (res.status === 1 && res.data && Array.isArray(res.data) && res.data.length > 0) {
@@ -703,6 +711,8 @@ export async function getCover(hash: string, cookie?: string | null): Promise<st
         return imgData.author[0].sizable_avatar.replace('{size}', '400')
       }
     }
+    
+    logger.warn('Kugou getCover: expected image data missing', { res: JSON.stringify(res).slice(0, 300) })
   } catch (err) {
     logger.error('Kugou getCover failed', err)
   }
