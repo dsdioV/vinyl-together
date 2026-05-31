@@ -14,6 +14,7 @@ interface CookieEntry {
   nickname: string
   /** 0 = no VIP, 1 = VIP, 11 = 黑胶 (Netease specific) */
   vipType: number
+  timestamp: number
 }
 
 /** roomId -> (platform -> list of cookie entries) */
@@ -57,8 +58,12 @@ export function addCookie(
   const entries = getPlatformEntries(roomId, platform)
   // Dedup by cookie value (same account) or by userId (same socket)
   const idx = entries.findIndex((e) => e.cookie === cookie || e.userId === userId)
-  if (idx !== -1) entries.splice(idx, 1)
-  entries.push({ cookie, userId, nickname, vipType })
+  let existingTimestamp = Date.now()
+  if (idx !== -1) {
+    existingTimestamp = entries[idx].timestamp // Preserve original login timestamp if just updating
+    entries.splice(idx, 1)
+  }
+  entries.push({ cookie, userId, nickname, vipType, timestamp: existingTimestamp })
   logger.info(`Auth: ${nickname} added cookie for ${platform} in room ${roomId} (vipType=${vipType})`)
 }
 
@@ -143,11 +148,19 @@ export function getAllPlatformStatus(roomId: string): PlatformAuthStatus[] {
   return platforms.map((platform) => {
     const entries = pool?.get(platform) ?? []
     const maxVipType = entries.reduce((max, e) => Math.max(max, e.vipType), 0)
+    
+    // Find the earliest VIP user's timestamp
+    const vipEntries = entries.filter(e => e.vipType > 0)
+    const earliestVipTimestamp = vipEntries.length > 0 
+      ? Math.min(...vipEntries.map(e => e.timestamp))
+      : undefined
+
     return {
       platform,
       loggedInCount: entries.length,
       hasVip: maxVipType > 0,
       maxVipType,
+      earliestVipTimestamp,
     }
   })
 }

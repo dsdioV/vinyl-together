@@ -2,6 +2,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuth } from '@/hooks/useAuth'
 import { usePlaylist } from '@/hooks/usePlaylist'
+import { usePlatformAutoSwitch } from '@/hooks/usePlatformAutoSwitch'
 import { PLATFORM_SHORT_LABELS, PLATFORM_COLORS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
 import { storage } from '@/lib/storage'
 import type { MusicSource, Playlist } from '@music-together/shared'
@@ -17,8 +18,20 @@ type ViewState = { type: 'list' } | { type: 'detail'; playlist: Playlist; source
 export function PlatformHub() {
   const auth = useAuth()
   const playlist = usePlaylist()
+  const { preferredSettingsPlatform } = usePlatformAutoSwitch(auth.platformStatus, auth.myStatus)
 
   const [activePlatform, setActivePlatform] = useState<MusicSource>('netease')
+
+  // Auto-switch settings platform based on VIP or login status
+  // Adjusting state during render is preferred over useEffect for this pattern
+  const [prevPreferred, setPrevPreferred] = useState(preferredSettingsPlatform)
+  if (preferredSettingsPlatform !== prevPreferred) {
+    setPrevPreferred(preferredSettingsPlatform)
+    if (preferredSettingsPlatform && preferredSettingsPlatform !== activePlatform) {
+      setActivePlatform(preferredSettingsPlatform)
+    }
+  }
+
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
   const [cookieDialogOpen, setCookieDialogOpen] = useState(false)
   const [cookieDialogPlatform, setCookieDialogPlatform] = useState<MusicSource>('netease')

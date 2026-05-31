@@ -14,6 +14,8 @@ import { cn, trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
+import { useAuth } from '@/hooks/useAuth'
+import { usePlatformAutoSwitch } from '@/hooks/usePlatformAutoSwitch'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS, LIMITS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
@@ -40,6 +42,19 @@ interface SearchDialogProps {
 
 export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCurrent }: SearchDialogProps) {
   const [source, setSource] = useState<MusicSource>('netease')
+  const { platformStatus, myStatus } = useAuth()
+  const { preferredSearchPlatform } = usePlatformAutoSwitch(platformStatus, myStatus)
+
+  // Auto-switch search platform based on VIP status rules
+  // Adjusting state during render is preferred over useEffect for this pattern
+  const [prevPreferred, setPrevPreferred] = useState(preferredSearchPlatform)
+  if (preferredSearchPlatform !== prevPreferred) {
+    setPrevPreferred(preferredSearchPlatform)
+    if (preferredSearchPlatform && preferredSearchPlatform !== source) {
+      setSource(preferredSearchPlatform)
+    }
+  }
+
   const [searchType, setSearchType] = useState<'song' | 'album' | 'playlist'>('song')
   const [keyword, setKeyword] = useState('')
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
