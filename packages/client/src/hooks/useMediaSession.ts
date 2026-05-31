@@ -2,10 +2,9 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { VoteAction } from '@music-together/shared'
-import { defineAbilityFor, EVENTS, TIMING } from '@music-together/shared'
+import { defineAbilityFor, EVENTS, TIMING, getVoteActionLabel } from '@music-together/shared'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
-import { getVoteActionLabel } from './useVote'
 
 interface MediaSessionControls {
   play: () => void

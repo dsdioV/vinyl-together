@@ -6,6 +6,8 @@ import {
   voteStartSchema,
   voteCastSchema,
   playerSetModeSchema,
+  getVoteActionLabel,
+  getVoteReasonLabel,
 } from '@music-together/shared'
 import type { Actions, Subjects, PlayMode, VoteAction } from '@music-together/shared'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -15,8 +17,21 @@ import * as voteService from '../services/voteService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
 import * as roomService from '../services/roomService.js'
+import * as chatService from '../services/chatService.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
+
+/**
+ * Helper to broadcast vote result to chat
+ */
+function broadcastVoteResultToChat(io: TypedServer, roomId: string, vote: { initiatorNickname: string, action: VoteAction, payload?: Record<string, unknown> }, passed: boolean, reason?: string) {
+  const actionLabel = getVoteActionLabel(vote.action, vote.payload)
+  const msg = passed
+    ? `${vote.initiatorNickname} 发起的操作投票已通过：${actionLabel}`
+    : `${vote.initiatorNickname} 发起的操作投票未通过：${actionLabel}${getVoteReasonLabel(reason)}`
+  const sysMsg = chatService.createSystemMessage(roomId, msg)
+  io.to(roomId).emit(EVENTS.CHAT_MESSAGE, sysMsg)
+}
 
 /**
  * Execute the voted action on the player.
@@ -150,14 +165,16 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         // Auto-pass: execute immediately
         clearTimeout(vote.timeoutHandle)
         await executeAction(io, ctx.roomId, action, vote.payload)
-        io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: true, action })
+        io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: true, action, payload: vote.payload })
+        broadcastVoteResultToChat(io, ctx.roomId, vote, true)
         voteService.cancelVote(ctx.roomId)
         return
       }
 
       // Set timeout for auto-reject
       vote.timeoutHandle = setTimeout(() => {
-        io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: false, action, reason: 'timeout' })
+        io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: false, action, reason: 'timeout', payload: vote.payload })
+        broadcastVoteResultToChat(io, ctx.roomId, vote, false, 'timeout')
         voteService.cancelVote(ctx.roomId)
         logger.info(`Vote timed out: ${action} in room ${ctx.roomId}`, { roomId: ctx.roomId })
       }, TIMING.VOTE_TIMEOUT_MS)
@@ -196,7 +213,9 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
           passed: result.passed,
           action: result.vote.action,
           reason: result.reason,
+          payload: result.vote.payload,
         })
+        broadcastVoteResultToChat(io, ctx.roomId, result.vote, result.passed, result.reason)
 
         voteService.cancelVote(ctx.roomId)
       }
