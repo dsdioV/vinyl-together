@@ -272,6 +272,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
 
       const { userId, role } = parsed.data
+      const targetUser = ctx.room.users.find(u => u.id === userId)
       const success = roomService.setUserRole(ctx.roomId, userId, role)
       if (!success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.SET_ROLE_FAILED, message: '无法设置该用户的角色' })
@@ -279,6 +280,16 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
 
       io.to(ctx.roomId).emit(EVENTS.ROOM_ROLE_CHANGED, { userId, role })
+
+      // System message for role change
+      if (targetUser) {
+        const msg = role === 'admin'
+          ? `${targetUser.nickname} 被 ${ctx.user.nickname} 升级为管理员`
+          : `${targetUser.nickname} 被 ${ctx.user.nickname} 降级为成员`
+        const sysMsg = chatService.createSystemMessage(ctx.roomId, msg)
+        io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, sysMsg)
+      }
+
       logger.info(`Role changed: ${userId} -> ${role} in room ${ctx.roomId}`, { roomId: ctx.roomId })
     }),
   )
