@@ -95,7 +95,7 @@ function calculateMid(str: string): string {
 }
 
 const GUID = md5(getGuid())
-export const MID = calculateMid(GUID)
+const MID = calculateMid(GUID)
 
 // ---------------------------------------------------------------------------
 // HTTP request helper
@@ -278,8 +278,6 @@ export async function checkQrStatus(key: string): Promise<{
     if (status === 803 && d?.token && d?.userid) {
       const token = String(d.token)
       const userid = String(d.userid)
-      // TEMP: log all fields from QR login response to identify missing auth params
-      logger.info(`Kugou QR login response keys: ${JSON.stringify(Object.keys(d))}`)
       // Capture device identifiers from login response — the wwwapi
       // endpoint validates mid/dfid against the token's origin session.
       const mid = String(d.mid || d.kg_mid || '')
