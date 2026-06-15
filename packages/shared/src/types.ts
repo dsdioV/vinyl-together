@@ -95,6 +95,8 @@ export interface RoomState {
   autoRemovePlayed: boolean
   /** 点赞模式（房主开关，需 autoRemovePlayed 开启，默认开启） */
   songLikes: boolean
+  /** 房间持久化：开启后即使无人也不会被自动删除 */
+  persistent: boolean
   /** 点赞数据：trackId → 点赞用户ID列表 */
   trackLikes: Record<string, string[]>
   /** 投票通过率 (0.01–1.0)，默认 0.67 */

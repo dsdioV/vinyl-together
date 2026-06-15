@@ -22,6 +22,8 @@ export interface RoomData {
   autoRemovePlayed: boolean
   /** 点赞模式（房主开关，需 autoRemovePlayed 开启，默认关闭） */
   songLikes: boolean
+  /** 房间持久化：开启后即使无人也不会被自动删除 */
+  persistent: boolean
   /** 点赞数据：trackId → 点赞用户ID集合 */
   trackLikes: Map<string, Set<string>>
   /** 点赞时间戳（tiebreaker）：trackId → 最近点赞时间戳 */

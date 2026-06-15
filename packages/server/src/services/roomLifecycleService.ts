@@ -52,6 +52,12 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
+      // 持久化房间不被自动删除
+      if (r.persistent) {
+        logger.info(`Room ${roomId} is persistent — skipping deletion`, { roomId })
+        roomDeletionTimers.delete(roomId)
+        return
+      }
       roomRepo.delete(roomId)
       chatRepo.deleteRoom(roomId)
       cleanupPlayerRoom(roomId)

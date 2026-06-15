@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string) => void
+  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -32,11 +32,13 @@ export function CreateRoomDialog({
   const [roomName, setRoomName] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
+  const [persistent, setPersistent] = useState(false)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
     if (open) {
       setNickname(defaultNickname)
+      setPersistent(false)
     }
   }, [open, defaultNickname])
 
@@ -49,6 +51,7 @@ export function CreateRoomDialog({
       nickname.trim(),
       roomName.trim() || undefined,
       passwordEnabled && password.trim() ? password.trim() : undefined,
+      persistent,
     )
   }
 
@@ -107,6 +110,19 @@ export function CreateRoomDialog({
                   autoFocus
                 />
               )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch id="persist-toggle" checked={persistent} onCheckedChange={setPersistent} />
+              <Label
+                htmlFor="persist-toggle"
+                className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground"
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+                房间持久化
+              </Label>
             </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={isLoading || !canSubmit}>

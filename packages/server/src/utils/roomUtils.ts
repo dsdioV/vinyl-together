@@ -18,6 +18,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     defaultQueue: data.defaultQueue,
     autoRemovePlayed: data.autoRemovePlayed,
     songLikes: data.songLikes,
+    persistent: data.persistent,
     voteThreshold: data.voteThreshold,
     playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(

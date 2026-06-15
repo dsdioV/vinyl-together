@@ -147,11 +147,11 @@ export default function HomePage() {
     }
   }, [socket, navigate, setRoom])
 
-  const handleCreateRoom = async (nickname: string, roomName?: string, password?: string) => {
+  const handleCreateRoom = async (nickname: string, roomName?: string, password?: string, persistent?: boolean) => {
     await unlockAudio()
     storage.setNickname(nickname)
     setActionLoading(true)
-    createRoom(nickname, roomName, password)
+    createRoom(nickname, roomName, password, persistent)
   }
 
   const handleRoomClick = async (room: RoomListItem) => {

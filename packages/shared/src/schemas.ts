@@ -9,6 +9,7 @@ export const roomCreateSchema = z.object({
   nickname: z.string().min(1, '昵称不能为空').max(LIMITS.NICKNAME_MAX_LENGTH, '昵称过长'),
   roomName: z.string().max(LIMITS.ROOM_NAME_MAX_LENGTH, '房间名过长').optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
+  persistent: z.boolean().optional(),
 })
 
 export const roomJoinSchema = z.object({
