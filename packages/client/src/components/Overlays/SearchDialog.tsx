@@ -285,6 +285,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               onInsertAfterCurrent={handleInsertAfterCurrent}
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
+              maxAddCount={LIMITS.QUEUE_MAX_SIZE}
             />
           ) : (
             <>
