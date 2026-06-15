@@ -355,10 +355,13 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
               <span className="text-sm text-muted-foreground">%</span>
             </div>
           </SettingRow>
+        </div>
+      )}
 
-          <div className="mt-6">
-            <DefaultPlaylistSection />
-          </div>
+      {/* 默认播放列表：房主和管理员均可设置 */}
+      {(isOwner || isAdmin) && (
+        <div className="mt-6">
+          <DefaultPlaylistSection />
         </div>
       )}
 
