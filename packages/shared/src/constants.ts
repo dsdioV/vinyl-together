@@ -12,6 +12,8 @@ export const LIMITS = {
   SEARCH_PAGE_MAX: 100,
   PLAYLIST_ID_MAX_LENGTH: 200,
   PLAYED_HISTORY_MAX_SIZE: 200,
+  /** 持久化房间无人自动清理上限（小时） */
+  PERSISTENT_TTL_MAX_HOURS: 168,
 } as const
 
 export const TIMING = {

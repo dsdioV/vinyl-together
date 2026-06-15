@@ -41,10 +41,48 @@ let pendingIO: TypedServer | null = null
 // Room deletion timer
 // ---------------------------------------------------------------------------
 
+/** 清理房间所有关联数据 */
+function deleteRoomData(roomId: string): void {
+  roomRepo.delete(roomId)
+  chatRepo.deleteRoom(roomId)
+  cleanupPlayerRoom(roomId)
+  cleanupVoteRoom(roomId)
+  cleanupAuthRoom(roomId)
+  cleanupRoomRejoinTickets(roomId)
+}
+
 export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   // Prevent duplicate timers if called multiple times for the same room
   cancelDeletionTimer(roomId)
 
+  const room = roomRepo.get(roomId)
+  if (!room) return
+
+  // 持久化房间：TTL=0 永不清除，TTL>0 按小时计
+  if (room.persistent) {
+    if (room.persistentTtlHours <= 0) {
+      logger.info(`Room ${roomId} is persistent — skipping deletion`, { roomId })
+      return
+    }
+    const ttlMs = room.persistentTtlHours * 3_600_000
+    logger.info(
+      `Room ${roomId} is persistent, will be deleted in ${room.persistentTtlHours}h unless someone rejoins`,
+      { roomId },
+    )
+    const timer = setTimeout(() => {
+      const r = roomRepo.get(roomId)
+      if (r && r.users.length === 0) {
+        deleteRoomData(roomId)
+        logger.info(`Room ${roomId} deleted after ${room!.persistentTtlHours}h TTL (persistent)`, { roomId })
+        if (io) broadcastRoomList(io)
+      }
+      roomDeletionTimers.delete(roomId)
+    }, ttlMs)
+    roomDeletionTimers.set(roomId, timer)
+    return
+  }
+
+  // 非持久化房间：短时间断线重连窗口
   logger.info(
     `Room ${roomId} is empty, will be deleted in ${config.room.gracePeriodMs / 1000}s unless someone rejoins`,
     { roomId },
@@ -52,23 +90,11 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
   const timer = setTimeout(() => {
     const r = roomRepo.get(roomId)
     if (r && r.users.length === 0) {
-      // 持久化房间不被自动删除
-      if (r.persistent) {
-        logger.info(`Room ${roomId} is persistent — skipping deletion`, { roomId })
-        roomDeletionTimers.delete(roomId)
-        return
-      }
-      roomRepo.delete(roomId)
-      chatRepo.deleteRoom(roomId)
-      cleanupPlayerRoom(roomId)
-      cleanupVoteRoom(roomId)
-      cleanupAuthRoom(roomId)
-      cleanupRoomRejoinTickets(roomId)
-      roomDeletionTimers.delete(roomId)
+      deleteRoomData(roomId)
       logger.info(`Room ${roomId} deleted after grace period`, { roomId })
-      // Notify lobby users that the room is gone
       if (io) broadcastRoomList(io)
     }
+    roomDeletionTimers.delete(roomId)
   }, config.room.gracePeriodMs)
   roomDeletionTimers.set(roomId, timer)
 }

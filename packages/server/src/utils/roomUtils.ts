@@ -19,6 +19,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     autoRemovePlayed: data.autoRemovePlayed,
     songLikes: data.songLikes,
     persistent: data.persistent,
+    persistentTtlHours: data.persistentTtlHours,
     voteThreshold: data.voteThreshold,
     playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(

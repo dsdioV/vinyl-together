@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean) => void
+  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -33,12 +33,14 @@ export function CreateRoomDialog({
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
   const [persistent, setPersistent] = useState(false)
+  const [persistentTtlHours, setPersistentTtlHours] = useState(24)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
     if (open) {
       setNickname(defaultNickname)
       setPersistent(false)
+      setPersistentTtlHours(24)
     }
   }, [open, defaultNickname])
 
@@ -52,6 +54,7 @@ export function CreateRoomDialog({
       roomName.trim() || undefined,
       passwordEnabled && password.trim() ? password.trim() : undefined,
       persistent,
+      persistent ? persistentTtlHours : undefined,
     )
   }
 
@@ -124,6 +127,29 @@ export function CreateRoomDialog({
                 房间持久化
               </Label>
             </div>
+
+            {persistent && (
+              <div className="flex items-center gap-3 pl-7">
+                <Label htmlFor="persist-ttl" className="text-xs text-muted-foreground shrink-0">
+                  无人后自动清理
+                </Label>
+                <div className="flex items-center gap-1">
+                  <Input
+                    id="persist-ttl"
+                    type="number"
+                    min={1}
+                    max={168}
+                    value={persistentTtlHours}
+                    onChange={(e) => {
+                      const v = Math.min(168, Math.max(1, Number(e.target.value) || 1))
+                      setPersistentTtlHours(v)
+                    }}
+                    className="h-7 w-16 text-sm text-center"
+                  />
+                  <span className="text-xs text-muted-foreground">小时后</span>
+                </div>
+              </div>
+            )}
 
             <Button type="submit" className="w-full" size="lg" disabled={isLoading || !canSubmit}>
               {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

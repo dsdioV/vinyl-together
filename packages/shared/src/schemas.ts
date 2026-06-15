@@ -10,6 +10,7 @@ export const roomCreateSchema = z.object({
   roomName: z.string().max(LIMITS.ROOM_NAME_MAX_LENGTH, '房间名过长').optional(),
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
   persistent: z.boolean().optional(),
+  persistentTtlHours: z.number().int().min(0).max(LIMITS.PERSISTENT_TTL_MAX_HOURS).optional(),
 })
 
 export const roomJoinSchema = z.object({

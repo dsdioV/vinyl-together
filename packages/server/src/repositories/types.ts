@@ -24,6 +24,8 @@ export interface RoomData {
   songLikes: boolean
   /** 房间持久化：开启后即使无人也不会被自动删除 */
   persistent: boolean
+  /** 持久化房间的 TTL（小时），0 = 永不清除，上限 168 小时 */
+  persistentTtlHours: number
   /** 点赞数据：trackId → 点赞用户ID集合 */
   trackLikes: Map<string, Set<string>>
   /** 点赞时间戳（tiebreaker）：trackId → 最近点赞时间戳 */

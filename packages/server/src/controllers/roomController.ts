@@ -41,7 +41,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { nickname, roomName, password, persistent } = parsed.data
+      const { nickname, roomName, password, persistent, persistentTtlHours } = parsed.data
 
       // Auto-leave any previous room before creating a new one
       handleLeave(io, socket, 'auto-leave before create', true)
@@ -53,6 +53,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         password,
         socket.data.identityUserId,
         persistent,
+        persistentTtlHours,
       )
 
       socket.leave('lobby')

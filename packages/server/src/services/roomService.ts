@@ -57,6 +57,7 @@ export function createRoom(
   password?: string | null,
   persistentUserId?: string,
   persistent: boolean = false,
+  persistentTtlHours: number = 0,
 ): { room: RoomData; user: User } {
   const roomId = nanoid(6).toUpperCase()
   const userId = persistentUserId || socketId
@@ -76,6 +77,7 @@ export function createRoom(
     defaultQueue: [],
     songLikes: true,
     persistent,
+    persistentTtlHours,
     trackLikes: new Map(),
     trackLikeTimestamps: new Map(),
     currentTrack: null,
