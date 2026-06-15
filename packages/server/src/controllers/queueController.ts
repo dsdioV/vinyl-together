@@ -41,7 +41,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [track], atIndex: ctx.room.queue.length - 1 })
 
       // System message
       const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 点了一首「${track.title}」`)
@@ -68,12 +68,12 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
 
-      const added = queueService.insertAfterCurrent(ctx.roomId, track)
-      if (!added) {
+      const insertIndex = queueService.insertAfterCurrent(ctx.roomId, track)
+      if (insertIndex < 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [track], atIndex: insertIndex })
 
       // System message
       const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 置顶了一首「${track.title}」`)
@@ -103,7 +103,12 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      const addedTracks = tracks.slice(0, addedCount)
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, {
+        type: 'insert',
+        tracks: addedTracks,
+        atIndex: ctx.room.queue.length - addedCount,
+      })
 
       const label = playlistName ? `歌单「${playlistName}」` : '歌单'
       const msg = chatService.createSystemMessage(
@@ -133,7 +138,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const isCurrentTrack = ctx.room.currentTrack?.id === trackId
 
       queueService.removeTrack(ctx.roomId, trackId)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [trackId] })
 
       // If the removed track was currently playing, skip to next or stop.
       // skipDebounce: removing current track must always advance, regardless
@@ -156,7 +161,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
       const { trackIds } = parsed.data
       queueService.reorderTracks(ctx.roomId, trackIds)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'reorder', trackIds })
       logger.info(`Queue reordered`, { roomId: ctx.roomId })
     }),
   )
@@ -165,7 +170,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     EVENTS.QUEUE_CLEAR,
     withPermission('remove', 'Queue', async (ctx) => {
       queueService.clearQueue(ctx.roomId)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: [] })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'clear' })
 
       // Stop playback via mutex-protected variant to prevent races with
       // concurrent autoPlayIfEmpty from a simultaneous QUEUE_ADD.

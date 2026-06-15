@@ -51,7 +51,7 @@ export interface ServerToClientEvents {
   // NTP clock sync
   [EVENTS.NTP_PONG]: (data: { clientPingId: number; serverTime: number }) => void
 
-  [EVENTS.QUEUE_UPDATED]: (data: { queue: Track[] }) => void
+  [EVENTS.QUEUE_UPDATED]: (data: import('./types.js').QueueDelta) => void
 
   [EVENTS.CHAT_MESSAGE]: (message: ChatMessage) => void
   [EVENTS.CHAT_HISTORY]: (messages: ChatMessage[]) => void

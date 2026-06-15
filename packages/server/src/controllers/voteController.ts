@@ -84,7 +84,7 @@ async function executeAction(
       if (!room) break
       const isCurrentTrack = room.currentTrack?.id === trackId
       queueService.removeTrack(roomId, trackId)
-      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [trackId] })
       if (isCurrentTrack) {
         await playerService.playNextTrackInRoom(io, roomId, room.playMode, { skipDebounce: true })
       }

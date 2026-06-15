@@ -193,3 +193,14 @@ export interface Playlist {
   creator?: string
   description?: string
 }
+
+/**
+ * Queue delta sent via QUEUE_UPDATED — the client applies this incrementally
+ * instead of replacing the entire queue array, saving bandwidth on large queues.
+ */
+export type QueueDelta =
+  | { type: 'clear' }
+  | { type: 'insert'; tracks: Track[]; atIndex: number }
+  | { type: 'remove'; trackIds: string[] }
+  | { type: 'replace'; track: Track; atIndex: number }
+  | { type: 'reorder'; trackIds: string[] }
