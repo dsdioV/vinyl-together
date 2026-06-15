@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { EVENTS } from '@music-together/shared'
 import type { PlayMode, VoteAction, VoteState } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { storage } from '@/lib/storage'
 import { useSocketEvent } from './useSocketEvent'
 import { toast } from 'sonner'
 
@@ -45,9 +44,7 @@ export function useVote() {
   useSocketEvent(
     EVENTS.VOTE_STARTED,
     useCallback((vote: VoteState) => {
-      // 若当前用户已投过票（如重连场景），不显示横幅
-      const myUserId = storage.getUserId()
-      if (myUserId in vote.votes) return
+      // 所有用户都显示投票横幅（包括发起者，以便 owner/admin 使用强制按钮）
       setActiveVote(vote)
     }, []),
   )
@@ -86,8 +83,7 @@ export function useVote() {
   const castVote = useCallback(
     (approve: boolean) => {
       socket.emit(EVENTS.VOTE_CAST, { approve })
-      // 立即隐藏横幅，不再遮挡播放按钮；结果通过 toast 通知
-      setActiveVote(null)
+      // 不自动隐藏横幅，让用户手动关闭（方便 owner/admin 使用强制按钮）
     },
     [socket],
   )
@@ -100,5 +96,9 @@ export function useVote() {
     socket.emit(EVENTS.VOTE_FORCE_REJECT)
   }, [socket])
 
-  return { activeVote, startVote, castVote, forceApprove, forceReject }
+  const dismissVote = useCallback(() => {
+    setActiveVote(null)
+  }, [])
+
+  return { activeVote, startVote, castVote, forceApprove, forceReject, dismissVote }
 }

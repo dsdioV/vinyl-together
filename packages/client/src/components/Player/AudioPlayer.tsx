@@ -62,7 +62,7 @@ export function AudioPlayer({
   chatUnreadCount,
 }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
-  const { activeVote, castVote, startVote, forceApprove, forceReject } = useVote()
+  const { activeVote, castVote, startVote, forceApprove, forceReject, dismissVote } = useVote()
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
@@ -126,6 +126,13 @@ export function AudioPlayer({
           {isPortrait ? (
             <LayoutGroup>
               <div className="relative mx-auto flex h-full w-full max-w-md flex-col items-center gap-[clamp(12px,3vh,32px)]">
+                {/* Vote banner: top of player, doesn't block controls */}
+                {activeVote && (
+                  <div className="w-full shrink-0 px-2 pt-2">
+                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} onDismiss={dismissVote} />
+                  </div>
+                )}
+
                 {/* 1. Cover — fills remaining space in cover mode, centered within */}
                 <div
                   ref={coverAreaRef}
@@ -163,16 +170,11 @@ export function AudioPlayer({
                 <div className="relative z-10 w-full shrink-0 mx-auto" style={coverMaxStyleUnlessExpanded}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
-
-                {/* Vote banner: absolute overlay at the bottom */}
-                {activeVote && (
-                  <div className="absolute bottom-0 left-1/2 z-20 w-full -translate-x-1/2 px-2 pb-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} />
-                  </div>
-                )}
               </div>
             </LayoutGroup>
-          ) : (
+          )
+
+          : (
             // ---------------------------------------------------------------
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
@@ -180,6 +182,12 @@ export function AudioPlayer({
               <div
                 className="relative flex w-[40%] flex-col items-center gap-[clamp(12px,3vh,32px)] transition-all duration-300"
               >
+                {/* Vote banner: top of player, doesn't block controls */}
+                {activeVote && (
+                  <div className="w-full shrink-0 px-2 pt-2">
+                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} onDismiss={dismissVote} />
+                  </div>
+                )}
                 {/* 1. Cover — flex-1 fills remaining space, centered */}
                 <div ref={coverAreaRef} className="min-h-0 w-full flex-1 flex items-center justify-center" style={{ containerType: 'size' }}>
                   <NowPlaying />
@@ -192,13 +200,6 @@ export function AudioPlayer({
                 <div className="w-full shrink-0 mx-auto" style={coverMaxStyle}>
                   <PlayerControls {...playerControlsProps} />
                 </div>
-                {activeVote && (
-                  <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-2">
-                    <div className="w-full">
-                      <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} />
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="min-h-0 w-[60%] overflow-hidden" style={LYRIC_MASK_STYLE}>
                 <LyricDisplay />
