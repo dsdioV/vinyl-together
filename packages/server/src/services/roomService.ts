@@ -73,7 +73,7 @@ export function createRoom(
     users: [user],
     queue: [],
     defaultQueue: [],
-    songLikes: false,
+    songLikes: true,
     trackLikes: new Map(),
     trackLikeTimestamps: new Map(),
     currentTrack: null,
@@ -83,7 +83,7 @@ export function createRoom(
       serverTimestamp: Date.now(),
     },
     playMode: 'loop-all',
-    autoRemovePlayed: false,
+    autoRemovePlayed: true,
     voteThreshold: VOTE.DEFAULT_THRESHOLD,
     playedHistory: [],
   }
