@@ -21,6 +21,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     persistent: data.persistent,
     persistentTtlHours: data.persistentTtlHours,
     voteThreshold: data.voteThreshold,
+    maxQueueSize: data.maxQueueSize,
     playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(
       Array.from(data.trackLikes.entries()).map(([trackId, userIds]) => [trackId, Array.from(userIds)]),

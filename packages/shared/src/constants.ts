@@ -7,6 +7,12 @@ export const LIMITS = {
   CHAT_RATE_LIMIT_PER_SECOND: 5,
   QUEUE_MAX_SIZE: 500,
   QUEUE_BATCH_MAX_SIZE: 500,
+  /** 新建房间时主队列默认上限（房主可在设置中调整） */
+  QUEUE_MAX_SIZE_DEFAULT: 200,
+  /** 主队列上限可设置的最小值 */
+  QUEUE_MAX_SIZE_MIN: 10,
+  /** 主队列上限可设置的最大值 */
+  QUEUE_MAX_SIZE_MAX: 65535,
   SEARCH_KEYWORD_MAX_LENGTH: 500,
   SEARCH_PAGE_SIZE_MAX: 50,
   SEARCH_PAGE_MAX: 100,

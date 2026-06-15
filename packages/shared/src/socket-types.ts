@@ -37,6 +37,7 @@ export interface ServerToClientEvents {
     autoRemovePlayed: boolean
     songLikes: boolean
     voteThreshold?: number
+    maxQueueSize: number
   }) => void
   [EVENTS.ROOM_LIST_UPDATE]: (rooms: RoomListItem[]) => void
   [EVENTS.ROOM_ROLE_CHANGED]: (data: { userId: string; role: UserRole }) => void
@@ -100,6 +101,7 @@ export interface ClientToServerEvents {
     autoRemovePlayed?: boolean
     songLikes?: boolean
     voteThreshold?: number
+    maxQueueSize?: number
   }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 

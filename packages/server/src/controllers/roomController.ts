@@ -223,6 +223,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         const hasRestrictedKeys = parsed.data.name !== undefined
           || parsed.data.password !== undefined
           || parsed.data.audioQuality !== undefined
+          || parsed.data.maxQueueSize !== undefined
         if (hasRestrictedKeys) {
           ctx.socket.emit(EVENTS.ROOM_ERROR, {
             code: ERROR_CODE.NO_PERMISSION,
@@ -248,6 +249,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         autoRemovePlayed: parsed.data.autoRemovePlayed,
         songLikes: parsed.data.songLikes,
         voteThreshold: parsed.data.voteThreshold,
+        maxQueueSize: parsed.data.maxQueueSize,
       })
 
       const updatedRoom = roomRepo.get(ctx.roomId)
@@ -261,6 +263,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         autoRemovePlayed: updatedRoom.autoRemovePlayed,
         songLikes: updatedRoom.songLikes,
         voteThreshold: updatedRoom.voteThreshold,
+        maxQueueSize: updatedRoom.maxQueueSize,
       }
       // 给 owner 发送含密码的设置
       ctx.socket.emit(EVENTS.ROOM_SETTINGS, {
@@ -269,6 +272,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         autoRemovePlayed: updatedRoom.autoRemovePlayed,
         songLikes: updatedRoom.songLikes,
         voteThreshold: updatedRoom.voteThreshold,
+        maxQueueSize: updatedRoom.maxQueueSize,
       })
       // 给房间内其他成员发送不含密码的设置
       ctx.socket.to(ctx.roomId).emit(EVENTS.ROOM_SETTINGS, baseSettings)

@@ -64,6 +64,7 @@ export function useRoomState() {
       autoRemovePlayed?: boolean
       songLikes?: boolean
       voteThreshold?: number
+      maxQueueSize: number
     }) => {
       useRoomStore.getState().updateRoom(settings)
       // 存储密码明文（服务端广播）

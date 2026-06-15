@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { AudioQuality, RoomListItem, User } from '@music-together/shared'
-import { VOTE } from '@music-together/shared'
+import { LIMITS, VOTE } from '@music-together/shared'
 import { nanoid } from 'nanoid'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -89,6 +89,7 @@ export function createRoom(
     playMode: 'loop-all',
     autoRemovePlayed: true,
     voteThreshold: VOTE.DEFAULT_THRESHOLD,
+    maxQueueSize: LIMITS.QUEUE_MAX_SIZE_DEFAULT,
     playedHistory: [],
   }
 
@@ -214,6 +215,7 @@ export function updateSettings(
     autoRemovePlayed?: boolean
     songLikes?: boolean
     voteThreshold?: number
+    maxQueueSize?: number
   },
 ): void {
   const room = roomRepo.get(roomId)
@@ -242,6 +244,10 @@ export function updateSettings(
 
   if (settings.voteThreshold !== undefined) {
     room.voteThreshold = settings.voteThreshold
+  }
+
+  if (settings.maxQueueSize !== undefined) {
+    room.maxQueueSize = settings.maxQueueSize
   }
 }
 

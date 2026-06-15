@@ -32,6 +32,8 @@ export interface RoomData {
   trackLikeTimestamps: Map<string, number>
   /** 投票通过率 (0.01–1.0)，默认 0.67 */
   voteThreshold: number
+  /** 主队列最大歌曲数（房主可调，默认 200） */
+  maxQueueSize: number
   /** 已播放歌曲历史记录 */
   playedHistory: PlayedTrack[]
 }
