@@ -85,7 +85,7 @@ export interface ServerToClientEvents {
 
 /** 客户端 → 服务端 事件接口 */
 export interface ClientToServerEvents {
-  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string }) => void
+  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string; persistent?: boolean; persistentTtlHours?: number }) => void
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_LIST]: () => void
