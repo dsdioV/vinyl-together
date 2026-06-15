@@ -109,29 +109,8 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
 
       const { action, payload } = parsed.data
 
-      // Check if user has direct permission (owner/admin don't need to vote).
-      // VoteAction includes 'resume' which is not in CASL Actions — cast is intentional.
-      // Some vote actions map to a different CASL action for permission checks
-      // (e.g. 'play-track' requires the same 'play' permission as normal playback).
-      // Safety net: if the client mistakenly routes through VOTE_START (e.g. due to
-      // client-server role desync), execute the action directly instead of returning an error.
-      const PERM_MAP: Partial<Record<VoteAction, { action: string; subject: string }>> = {
-        'play-track': { action: 'play', subject: 'Player' },
-        'remove-track': { action: 'remove', subject: 'Queue' },
-      }
+      // 验证：所有用户都必须有投票权限才能发起投票
       const ability = defineAbilityFor(ctx.user.role)
-      const perm = PERM_MAP[action]
-      const permAction = perm?.action ?? action
-      const permSubject = perm?.subject ?? 'Player'
-      if (ability.can(permAction as Actions, permSubject as Subjects)) {
-        await executeAction(io, ctx.roomId, action, payload)
-        logger.info(`Direct-executed ${action} for privileged user ${ctx.user.nickname} (role: ${ctx.user.role})`, {
-          roomId: ctx.roomId,
-        })
-        return
-      }
-
-      // Check if user can vote
       if (!ability.can('vote', 'Player')) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '你没有投票权限' })
         return
@@ -199,6 +178,38 @@ export function registerVoteController(io: TypedServer, socket: TypedSocket) {
         })
 
         voteService.cancelVote(ctx.roomId)
+      }
+    }),
+  )
+
+  // ---- Force approve / reject vote (owner/admin only) ----
+  socket.on(
+    EVENTS.VOTE_FORCE_APPROVE,
+    withRoom(async (ctx) => {
+      if (ctx.user.role === 'owner' || ctx.user.role === 'admin') {
+        const result = voteService.forceApprove(ctx.roomId)
+        if (result) {
+          await executeAction(io, ctx.roomId, result.action, result.payload)
+          io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: true, action: result.action, reason: 'force_approved' })
+          logger.info(`Vote force-approved by ${ctx.user.nickname} (role: ${ctx.user.role})`, { roomId: ctx.roomId })
+        }
+      } else {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '只有房主和管理员可以强制通过' })
+      }
+    }),
+  )
+
+  socket.on(
+    EVENTS.VOTE_FORCE_REJECT,
+    withRoom(async (ctx) => {
+      if (ctx.user.role === 'owner' || ctx.user.role === 'admin') {
+        const vote = voteService.getActiveVote(ctx.roomId)
+        if (vote && voteService.forceReject(ctx.roomId)) {
+          io.to(ctx.roomId).emit(EVENTS.VOTE_RESULT, { passed: false, action: vote.action, reason: 'force_rejected' })
+          logger.info(`Vote force-rejected by ${ctx.user.nickname} (role: ${ctx.user.role})`, { roomId: ctx.roomId })
+        }
+      } else {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.NO_PERMISSION, message: '只有房主和管理员可以强制否决' })
       }
     }),
   )

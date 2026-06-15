@@ -60,7 +60,7 @@ export function useVote() {
       if (data.passed) {
         toast.success(`投票通过：${label}`)
       } else {
-        const reasonText = data.reason === 'host_veto' ? '（房主否决）' : data.reason === 'timeout' ? '（超时）' : ''
+        const reasonText = data.reason === 'timeout' ? '（超时）' : data.reason === 'force_rejected' ? '（管理员否决）' : data.reason === 'force_approved' ? '（管理员强制通过）' : ''
         toast.error(`投票未通过：${label}${reasonText}`)
       }
     }, []),
@@ -92,5 +92,13 @@ export function useVote() {
     [socket],
   )
 
-  return { activeVote, startVote, castVote }
+  const forceApprove = useCallback(() => {
+    socket.emit(EVENTS.VOTE_FORCE_APPROVE)
+  }, [socket])
+
+  const forceReject = useCallback(() => {
+    socket.emit(EVENTS.VOTE_FORCE_REJECT)
+  }, [socket])
+
+  return { activeVote, startVote, castVote, forceApprove, forceReject }
 }

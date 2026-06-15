@@ -57,6 +57,8 @@ export interface ServerToClientEvents {
 
   [EVENTS.VOTE_STARTED]: (vote: VoteState) => void
   [EVENTS.VOTE_RESULT]: (data: { passed: boolean; action: VoteAction; reason?: string }) => void
+  [EVENTS.VOTE_FORCE_APPROVE]: () => void
+  [EVENTS.VOTE_FORCE_REJECT]: () => void
 
   // Auth
   [EVENTS.AUTH_QR_GENERATED]: (data: { key: string; qrimg: string }) => void
@@ -132,6 +134,8 @@ export interface ClientToServerEvents {
 
   [EVENTS.VOTE_START]: (data: { action: VoteAction; payload?: Record<string, unknown> }) => void
   [EVENTS.VOTE_CAST]: (data: { approve: boolean }) => void
+  [EVENTS.VOTE_FORCE_APPROVE]: () => void
+  [EVENTS.VOTE_FORCE_REJECT]: () => void
 
   // Auth
   [EVENTS.AUTH_REQUEST_QR]: (data: { platform: MusicSource }) => void

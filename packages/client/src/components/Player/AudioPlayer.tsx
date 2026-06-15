@@ -47,11 +47,7 @@ function getProxiedCoverUrl(coverUrl: string): string {
 }
 
 interface AudioPlayerProps {
-  onPlay: () => void
-  onPause: () => void
   onSeek: (time: number) => void
-  onNext: () => void
-  onPrev: () => void
   onOpenChat: () => void
   onOpenQueue: () => void
   onOpenHistory: () => void
@@ -59,18 +55,14 @@ interface AudioPlayerProps {
 }
 
 export function AudioPlayer({
-  onPlay,
-  onPause,
   onSeek,
-  onNext,
-  onPrev,
   onOpenChat,
   onOpenQueue,
   onOpenHistory,
   chatUnreadCount,
 }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
-  const { activeVote, castVote, startVote } = useVote()
+  const { activeVote, castVote, startVote, forceApprove, forceReject } = useVote()
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
@@ -95,11 +87,7 @@ export function AudioPlayer({
   const coverMaxStyleUnlessExpanded = lyricExpanded ? undefined : coverMaxStyle
 
   const playerControlsProps = {
-    onPlay,
-    onPause,
     onSeek,
-    onNext,
-    onPrev,
     onOpenQueue,
     onOpenHistory,
     onStartVote: startVote,
@@ -179,7 +167,7 @@ export function AudioPlayer({
                 {/* Vote banner: absolute overlay at the bottom */}
                 {activeVote && (
                   <div className="absolute bottom-0 left-1/2 z-20 w-full -translate-x-1/2 px-2 pb-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} />
+                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} />
                   </div>
                 )}
               </div>
@@ -207,7 +195,7 @@ export function AudioPlayer({
                 {activeVote && (
                   <div className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-2">
                     <div className="w-full">
-                      <VoteBanner vote={activeVote} onCastVote={castVote} />
+                      <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} />
                     </div>
                   </div>
                 )}

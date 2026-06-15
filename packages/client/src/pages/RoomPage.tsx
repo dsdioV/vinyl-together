@@ -45,7 +45,7 @@ export default function RoomPage() {
   const navigate = useNavigate()
   const { socket, isConnected } = useSocketContext()
   const { leaveRoom, updateSettings, setUserRole } = useRoom()
-  const { play, pause, seek, next, prev } = usePlayer()
+  const { seek } = usePlayer()
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
@@ -323,11 +323,7 @@ export default function RoomPage() {
           <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3 lg:p-4">
             <div className="min-w-0 flex-1 overflow-hidden rounded-2xl">
               <AudioPlayer
-                onPlay={play}
-                onPause={pause}
                 onSeek={seek}
-                onNext={next}
-                onPrev={prev}
                 onOpenChat={toggleChat}
                 onOpenQueue={() => setQueueOpen(true)}
                 onOpenHistory={() => setHistoryOpen(true)}

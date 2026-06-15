@@ -67,7 +67,6 @@ export function createVote(
 
 /**
  * Cast a vote. Returns the result or null if no active vote.
- * Conductor veto: if conductor (hostId) votes reject, immediately decided as failed.
  */
 export function castVote(roomId: string, userId: string, approve: boolean): CastResult | null {
   const vote = activeVotes.get(roomId)
@@ -77,11 +76,6 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
   if (userId in vote.votes) return null
 
   vote.votes[userId] = approve
-
-  // Conductor veto check
-  if (userId === vote.hostId && !approve) {
-    return { vote, decided: true, passed: false, reason: 'host_veto' }
-  }
 
   const approveCount = Object.values(vote.votes).filter(Boolean).length
   const rejectCount = Object.values(vote.votes).filter((v) => !v).length
@@ -137,6 +131,30 @@ export function cancelVote(roomId: string): void {
 
 export function cleanupRoom(roomId: string): void {
   cancelVote(roomId)
+}
+
+/**
+ * Force-approve an active vote (owner/admin override).
+ * Returns the action that should be executed, or null if no active vote.
+ */
+export function forceApprove(roomId: string): { action: VoteAction; payload?: Record<string, unknown> } | null {
+  const vote = activeVotes.get(roomId)
+  if (!vote) return null
+  const action = vote.action
+  const payload = vote.payload
+  cancelVote(roomId)
+  return { action, payload }
+}
+
+/**
+ * Force-reject an active vote (owner/admin override).
+ * Returns true if there was an active vote to reject.
+ */
+export function forceReject(roomId: string): boolean {
+  const vote = activeVotes.get(roomId)
+  if (!vote) return false
+  cancelVote(roomId)
+  return true
 }
 
 /** Convert internal Vote to client-safe VoteState */

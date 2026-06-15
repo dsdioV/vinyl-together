@@ -3,16 +3,19 @@ import { getVoteActionLabel } from '@/hooks/useVote'
 import { storage } from '@/lib/storage'
 import { TIMING } from '@music-together/shared'
 import type { VoteState } from '@music-together/shared'
-import { Check, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AbilityContext } from '@/providers/AbilityProvider'
+import { Check, ShieldCheck, ShieldX, X } from 'lucide-react'
+import { useCallback, useContext, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 
 interface VoteBannerProps {
   vote: VoteState
   onCastVote: (approve: boolean) => void
+  onForceApprove?: () => void
+  onForceReject?: () => void
 }
 
-export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
+export function VoteBanner({ vote, onCastVote, onForceApprove, onForceReject }: VoteBannerProps) {
   const [remainingMs, setRemainingMs] = useState(() => Math.max(0, vote.expiresAt - Date.now()))
 
   const myUserId = storage.getUserId()
@@ -20,6 +23,11 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
   const approveCount = Object.values(vote.votes).filter(Boolean).length
   const rejectCount = Object.values(vote.votes).filter((v) => !v).length
   const progressPercent = Math.max(0, (remainingMs / TIMING.VOTE_TIMEOUT_MS) * 100)
+  const ability = useContext(AbilityContext)
+  const canForce = ability?.can('manage', 'all') || ability?.can('play', 'Player')
+
+  const handleForceApprove = useCallback(() => onForceApprove?.(), [onForceApprove])
+  const handleForceReject = useCallback(() => onForceReject?.(), [onForceReject])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -79,6 +87,29 @@ export function VoteBanner({ vote, onCastVote }: VoteBannerProps) {
                 <X className="h-3.5 w-3.5" />
                 反对
               </Button>
+              {canForce && (
+                <>
+                  <div className="mx-1 w-px bg-white/10" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 min-h-11 sm:min-h-0 gap-1 bg-green-500/40 px-2 text-xs text-green-200 hover:bg-green-500/60 hover:text-green-100"
+                    onClick={handleForceApprove}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    强制通过
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 min-h-11 sm:min-h-0 gap-1 bg-red-500/40 px-2 text-xs text-red-200 hover:bg-red-500/60 hover:text-red-100"
+                    onClick={handleForceReject}
+                  >
+                    <ShieldX className="h-3.5 w-3.5" />
+                    强制否决
+                  </Button>
+                </>
+              )}
             </div>
           ) : (
             <span className="text-xs text-white/40">已投票</span>

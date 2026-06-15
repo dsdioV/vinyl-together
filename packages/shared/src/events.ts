@@ -50,6 +50,8 @@ export const EVENTS = {
   VOTE_STARTED: 'vote:started',
   VOTE_CAST: 'vote:cast',
   VOTE_RESULT: 'vote:result',
+  VOTE_FORCE_APPROVE: 'vote:force_approve',
+  VOTE_FORCE_REJECT: 'vote:force_reject',
 
   // NTP clock synchronisation
   NTP_PING: 'ntp:ping',
