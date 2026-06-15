@@ -42,7 +42,7 @@ let pendingIO: TypedServer | null = null
 // ---------------------------------------------------------------------------
 
 /** 清理房间所有关联数据 */
-function deleteRoomData(roomId: string): void {
+export function deleteRoomData(roomId: string): void {
   roomRepo.delete(roomId)
   chatRepo.deleteRoom(roomId)
   cleanupPlayerRoom(roomId)

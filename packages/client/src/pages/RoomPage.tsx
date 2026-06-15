@@ -217,11 +217,15 @@ export default function RoomPage() {
 
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.ROOM_DELETED, () => {
+      navigate('/')
+    })
     return () => {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.ROOM_DELETED)
     }
-  }, [socket, passwordNeeded, gateOpen])
+  }, [socket, passwordNeeded, gateOpen, navigate])
 
   // No unmount cleanup needed — the server handles room membership:
   // - On disconnect: server's disconnect handler removes user

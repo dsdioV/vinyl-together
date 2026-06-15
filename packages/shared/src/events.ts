@@ -9,6 +9,8 @@ export const EVENTS = {
   ROOM_USER_JOINED: 'room:user_joined',
   ROOM_USER_LEFT: 'room:user_left',
   ROOM_SETTINGS: 'room:settings',
+  ROOM_DELETE: 'room:delete',
+  ROOM_DELETED: 'room:deleted',
   ROOM_ERROR: 'room:error',
   ROOM_AUTO_FALLBACK: 'room:auto_fallback',
 
