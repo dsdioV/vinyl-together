@@ -45,7 +45,7 @@ export default function RoomPage() {
   const navigate = useNavigate()
   const { socket, isConnected } = useSocketContext()
   const { leaveRoom, updateSettings, setUserRole } = useRoom()
-  const { play, pause, seek, next, prev } = usePlayer()
+  const { seek } = usePlayer()
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
@@ -217,11 +217,15 @@ export default function RoomPage() {
 
     socket.on(EVENTS.ROOM_ERROR, onRoomError)
     socket.on(EVENTS.ROOM_STATE, onRoomState)
+    socket.on(EVENTS.ROOM_DELETED, () => {
+      navigate('/')
+    })
     return () => {
       socket.off(EVENTS.ROOM_ERROR, onRoomError)
       socket.off(EVENTS.ROOM_STATE, onRoomState)
+      socket.off(EVENTS.ROOM_DELETED)
     }
-  }, [socket, passwordNeeded, gateOpen])
+  }, [socket, passwordNeeded, gateOpen, navigate])
 
   // No unmount cleanup needed — the server handles room membership:
   // - On disconnect: server's disconnect handler removes user
@@ -319,11 +323,7 @@ export default function RoomPage() {
           <div className="flex min-h-0 flex-1 overflow-hidden p-2 md:p-3 lg:p-4">
             <div className="min-w-0 flex-1 overflow-hidden rounded-2xl">
               <AudioPlayer
-                onPlay={play}
-                onPause={pause}
                 onSeek={seek}
-                onNext={next}
-                onPrev={prev}
                 onOpenChat={toggleChat}
                 onOpenQueue={() => setQueueOpen(true)}
                 onOpenHistory={() => setHistoryOpen(true)}

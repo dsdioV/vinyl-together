@@ -4,11 +4,10 @@ import { Slider } from '@/components/ui/slider'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTime } from '@/lib/format'
 import { AbilityContext } from '@/providers/AbilityProvider'
-import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import type { PlayMode, VoteAction } from '@music-together/shared'
-import { EVENTS, TIMING } from '@music-together/shared'
+import { TIMING } from '@music-together/shared'
 import { ArrowRightToLine, Clock, ListMusic, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -26,27 +25,18 @@ const PLAY_MODE_CONFIG: Record<PlayMode, { icon: typeof Repeat; label: string }>
 }
 
 interface PlayerControlsProps {
-  onPlay: () => void
-  onPause: () => void
   onSeek: (time: number) => void
-  onNext: () => void
-  onPrev: () => void
   onOpenQueue: () => void
   onOpenHistory: () => void
   onStartVote: (action: VoteAction, payload?: Record<string, unknown>) => void
 }
 
 export const PlayerControls = memo(function PlayerControls({
-  onPlay,
-  onPause,
   onSeek,
-  onNext,
-  onPrev,
   onOpenQueue,
   onOpenHistory,
   onStartVote,
 }: PlayerControlsProps) {
-  const { socket } = useSocketContext()
   const isPlaying = usePlayerStore((s) => s.isPlaying)
   const currentTime = usePlayerStore((s) => s.currentTime)
   const duration = usePlayerStore((s) => s.duration)
@@ -55,9 +45,6 @@ export const PlayerControls = memo(function PlayerControls({
   const playMode = useRoomStore((s) => s.room?.playMode ?? 'sequential')
   const ability = useContext(AbilityContext)
   const canSeek = ability.can('seek', 'Player')
-  const canPlay = ability.can('play', 'Player')
-  const canSetMode = ability.can('set-mode', 'Player')
-  const canVote = ability.can('vote', 'Player')
   const [skipCooldown, setSkipCooldown] = useState(false)
   const [playCooldown, setPlayCooldown] = useState(false)
   const [isSeeking, setIsSeeking] = useState(false)
@@ -92,13 +79,9 @@ export const PlayerControls = memo(function PlayerControls({
     return () => ro.disconnect()
   }, [])
 
-  const handleSkip = (action: () => void, voteAction: 'next' | 'prev') => {
+  const handleSkip = (voteAction: 'next' | 'prev') => {
     if (skipCooldown) return
-    if (ability.can(voteAction, 'Player')) {
-      action()
-    } else if (canVote) {
-      onStartVote(voteAction)
-    }
+    onStartVote(voteAction)
     setSkipCooldown(true)
     if (cooldownTimer.current) clearTimeout(cooldownTimer.current)
     cooldownTimer.current = setTimeout(() => setSkipCooldown(false), TIMING.PLAYER_NEXT_DEBOUNCE_MS)
@@ -106,11 +89,7 @@ export const PlayerControls = memo(function PlayerControls({
 
   const handlePlayPause = () => {
     if (playCooldown) return
-    if (canPlay) {
-      isPlaying ? onPause() : onPlay()
-    } else if (canVote) {
-      onStartVote(isPlaying ? 'pause' : 'resume')
-    }
+    onStartVote(isPlaying ? 'pause' : 'resume')
     setPlayCooldown(true)
     if (playCooldownTimer.current) clearTimeout(playCooldownTimer.current)
     playCooldownTimer.current = setTimeout(() => setPlayCooldown(false), TIMING.PLAYER_NEXT_DEBOUNCE_MS)
@@ -119,11 +98,7 @@ export const PlayerControls = memo(function PlayerControls({
   const handleSelectMode = (mode: PlayMode) => {
     setModePopoverOpen(false)
     if (mode === playMode) return
-    if (canSetMode) {
-      socket.emit(EVENTS.PLAYER_SET_MODE, { mode })
-    } else if (canVote) {
-      onStartVote('set-mode', { mode })
-    }
+    onStartVote('set-mode', { mode })
   }
 
   const modeConfig = PLAY_MODE_CONFIG[playMode]
@@ -172,7 +147,6 @@ export const PlayerControls = memo(function PlayerControls({
                         variant="ghost"
                         size="icon"
                         className="h-9 w-9 text-white/70 hover:bg-white/10"
-                        disabled={!canSetMode && !canVote}
                         aria-label={modeConfig.label}
                       >
                         <AnimatePresence mode="wait" initial={false}>
@@ -230,7 +204,7 @@ export const PlayerControls = memo(function PlayerControls({
                     size="icon"
                     className="h-9 w-9 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
-                    onClick={() => handleSkip(onPrev, 'prev')}
+                    onClick={() => handleSkip('prev')}
                     aria-label="上一首"
                   >
                     <SkipBack className="size-5" fill="currentColor" />
@@ -270,7 +244,7 @@ export const PlayerControls = memo(function PlayerControls({
                     size="icon"
                     className="h-9 w-9 text-white/70 hover:bg-white/10"
                     disabled={disabled || skipCooldown}
-                    onClick={() => handleSkip(onNext, 'next')}
+                    onClick={() => handleSkip('next')}
                     aria-label="下一首"
                   >
                     <SkipForward className="size-5" fill="currentColor" />

@@ -28,6 +28,7 @@ export interface ServerToClientEvents {
   [EVENTS.ROOM_AUTO_FALLBACK]: (data: RoomAutoFallbackEvent) => void
   [EVENTS.ROOM_USER_JOINED]: (user: User) => void
   [EVENTS.ROOM_USER_LEFT]: (user: User) => void
+  [EVENTS.ROOM_DELETED]: (data: { roomId: string }) => void
   [EVENTS.ROOM_SETTINGS]: (settings: {
     name: string
     hasPassword: boolean
@@ -56,6 +57,8 @@ export interface ServerToClientEvents {
 
   [EVENTS.VOTE_STARTED]: (vote: VoteState) => void
   [EVENTS.VOTE_RESULT]: (data: { passed: boolean; action: VoteAction; reason?: string }) => void
+  [EVENTS.VOTE_FORCE_APPROVE]: () => void
+  [EVENTS.VOTE_FORCE_REJECT]: () => void
 
   // Auth
   [EVENTS.AUTH_QR_GENERATED]: (data: { key: string; qrimg: string }) => void
@@ -85,9 +88,10 @@ export interface ServerToClientEvents {
 
 /** 客户端 → 服务端 事件接口 */
 export interface ClientToServerEvents {
-  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string }) => void
+  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string; persistent?: boolean; persistentTtlHours?: number }) => void
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
+  [EVENTS.ROOM_DELETE]: () => void
   [EVENTS.ROOM_LIST]: () => void
   [EVENTS.ROOM_SETTINGS]: (data: {
     name?: string
@@ -130,6 +134,8 @@ export interface ClientToServerEvents {
 
   [EVENTS.VOTE_START]: (data: { action: VoteAction; payload?: Record<string, unknown> }) => void
   [EVENTS.VOTE_CAST]: (data: { approve: boolean }) => void
+  [EVENTS.VOTE_FORCE_APPROVE]: () => void
+  [EVENTS.VOTE_FORCE_REJECT]: () => void
 
   // Auth
   [EVENTS.AUTH_REQUEST_QR]: (data: { platform: MusicSource }) => void

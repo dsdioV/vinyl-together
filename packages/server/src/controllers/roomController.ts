@@ -15,6 +15,7 @@ import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
 import * as roomService from '../services/roomService.js'
+import { cancelDeletionTimer, deleteRoomData } from '../services/roomLifecycleService.js'
 import * as voteService from '../services/voteService.js'
 import { logger } from '../utils/logger.js'
 
@@ -41,7 +42,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const { nickname, roomName, password } = parsed.data
+      const { nickname, roomName, password, persistent, persistentTtlHours } = parsed.data
 
       // Auto-leave any previous room before creating a new one
       handleLeave(io, socket, 'auto-leave before create', true)
@@ -52,6 +53,8 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
         roomName,
         password,
         socket.data.identityUserId,
+        persistent,
+        persistentTtlHours,
       )
 
       socket.leave('lobby')
@@ -168,6 +171,25 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       logger.error('ROOM_LEAVE handler error', err, { socketId: socket.id })
     }
   })
+
+  // ---- Delete room (owner only) ----
+  const withOwnerDelete = createWithOwnerOnly(io)
+  socket.on(
+    EVENTS.ROOM_DELETE,
+    withOwnerDelete(async (ctx) => {
+      try {
+        const { roomId } = ctx
+        io.to(roomId).emit(EVENTS.ROOM_DELETED, { roomId })
+        handleLeave(io, socket, 'room deleted by owner')
+        cancelDeletionTimer(roomId)
+        deleteRoomData(roomId)
+        roomService.broadcastRoomList(io)
+        logger.info(`Room ${roomId} deleted by owner`, { roomId })
+      } catch (err) {
+        logger.error('ROOM_DELETE handler error', err, { socketId: socket.id })
+      }
+    }),
+  )
 
   // ---- Room settings ----
   // Owner：全部设置；Admin：仅可切换 autoRemovePlayed；Member：无权限

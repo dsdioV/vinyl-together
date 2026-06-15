@@ -9,8 +9,9 @@ import { DefaultPlaylistSection } from './DefaultPlaylistSection'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
+import { useSocketContext } from '@/providers/SocketProvider'
 import type { AudioQuality } from '@music-together/shared'
-import { LIMITS, VOTE } from '@music-together/shared'
+import { EVENTS, LIMITS, VOTE } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -43,6 +44,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const currentUser = useRoomStore((s) => s.currentUser)
   const roomPassword = useRoomStore((s) => s.roomPassword)
   const syncDrift = usePlayerStore((s) => s.syncDrift)
+  const { socket } = useSocketContext()
   const isOwner = currentUser?.role === 'owner'
   const isAdmin = currentUser?.role === 'admin'
 
@@ -356,9 +358,32 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             </div>
           </SettingRow>
 
-          <div className="mt-6">
-            <DefaultPlaylistSection />
+          <Separator className="mt-6 mb-4" />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-destructive">删除房间</p>
+              <p className="text-xs text-muted-foreground">将所有人移出并永久删除此房间（不可撤销）</p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                const confirmed = window.confirm('确定要删除此房间吗？此操作不可撤销。')
+                if (confirmed) {
+                  socket.emit(EVENTS.ROOM_DELETE)
+                }
+              }}
+            >
+              删除房间
+            </Button>
           </div>
+        </div>
+      )}
+
+      {/* 默认播放列表：房主和管理员均可设置 */}
+      {(isOwner || isAdmin) && (
+        <div className="mt-6">
+          <DefaultPlaylistSection />
         </div>
       )}
 
