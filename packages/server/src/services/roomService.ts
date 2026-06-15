@@ -14,7 +14,7 @@ import type { TypedServer } from '../middleware/types.js'
 
 // Re-export from their new homes so existing `roomService.xxx()` callers
 // in controllers don't need import changes.
-export { toPublicRoomState, toPublicRoomStateForOwner } from '../utils/roomUtils.js'
+export { toPublicRoomState, toPublicRoomStateForOwner, toPublicRoomStateForMember } from '../utils/roomUtils.js'
 export { broadcastRoomList } from './roomLifecycleService.js'
 
 // ---------------------------------------------------------------------------

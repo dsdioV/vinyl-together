@@ -7,6 +7,7 @@ import {
   setRoleSchema,
 } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
+import type { RoomData } from '../repositories/types.js'
 import { createWithOwnerOnly } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
 import { cleanupSocketRateLimit } from '../middleware/socketRateLimiter.js'
@@ -121,16 +122,19 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       socket.join(roomId)
 
       // Send full room state + chat history
-      // Owner 收到含密码版本，其他成员收到不含密码版本
+      // Owner 收到含密码版本，Admin 收到完整 defaultQueue，Member 收到空 defaultQueue
       const isOwner = user.role === 'owner'
+      const isAdmin = user.role === 'admin'
       const stateForJoiner = isOwner
         ? roomService.toPublicRoomStateForOwner(updatedRoom)
-        : roomService.toPublicRoomState(updatedRoom)
+        : isAdmin
+          ? roomService.toPublicRoomState(updatedRoom)
+          : roomService.toPublicRoomStateForMember(updatedRoom)
       socket.emit(EVENTS.ROOM_STATE, stateForJoiner)
 
       // If conductor changed (owner joined, etc.), broadcast to ALL OTHER clients.
       if (hostChanged) {
-        socket.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(updatedRoom))
+        broadcastRoomStateToAll(io, roomId, updatedRoom, socket.id)
       }
       socket.emit(EVENTS.ROOM_REJOIN_TOKEN, { roomId, token: rejoin.token, expiresAt: rejoin.expiresAt })
       socket.emit(EVENTS.CHAT_HISTORY, chatService.getHistory(roomId))
@@ -305,6 +309,18 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
 
       io.to(ctx.roomId).emit(EVENTS.ROOM_ROLE_CHANGED, { userId, role })
+
+      // 晋升为 admin 时，把当前默认歌单数据发给他（之前作为 member 时收不到）
+      if (role === 'admin') {
+        const updatedRoom = roomRepo.get(ctx.roomId)
+        if (updatedRoom) {
+          const adminSocketId = roomRepo.getSocketIdForUser(ctx.roomId, userId)
+          if (adminSocketId) {
+            io.to(adminSocketId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: updatedRoom.defaultQueue })
+          }
+        }
+      }
+
       logger.info(`Role changed: ${userId} -> ${role} in room ${ctx.roomId}`, { roomId: ctx.roomId })
     }),
   )
@@ -330,6 +346,40 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Broadcast RoomState to all users in a room, sending the appropriate
+ * payload based on each user's role:
+ * - owner / admin → full state (includes defaultQueue)
+ * - member → slim state (defaultQueue = [])
+ * Optionally excludes a specific socket (e.g. the joining user).
+ */
+function broadcastRoomStateToAll(
+  io: TypedServer,
+  roomId: string,
+  room: RoomData,
+  excludeSocketId?: string,
+): void {
+  const adminSids: string[] = []
+  const memberSids: string[] = []
+
+  for (const user of room.users) {
+    const sid = roomRepo.getSocketIdForUser(roomId, user.id)
+    if (!sid || sid === excludeSocketId) continue
+    if (user.role === 'owner' || user.role === 'admin') {
+      adminSids.push(sid)
+    } else {
+      memberSids.push(sid)
+    }
+  }
+
+  if (adminSids.length > 0) {
+    io.to(adminSids).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+  }
+  if (memberSids.length > 0) {
+    io.to(memberSids).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForMember(room))
+  }
+}
+
+/**
  * Leave the current room (if any), notify other users, and update lobby.
  * Used by ROOM_LEAVE, disconnect, and auto-leave before create/join.
  */
@@ -352,15 +402,15 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revo
   }
 
   // 房主变更时广播完整状态，确保所有客户端更新 hostId
-  // 新 owner 收到含密码版本，其他成员不含密码
+  // 新 owner 收到含密码版本，其他成员按角色接收
   if (hostChanged && room && room.users.length > 0) {
     const newOwner = room.users.find((u) => u.role === 'owner')
     const ownerSocketId = newOwner ? roomRepo.getSocketIdForUser(roomId, newOwner.id) : null
     if (ownerSocketId) {
       io.to(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomStateForOwner(room))
-      io.to(roomId).except(ownerSocketId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+      broadcastRoomStateToAll(io, roomId, room, ownerSocketId)
     } else {
-      io.to(roomId).emit(EVENTS.ROOM_STATE, roomService.toPublicRoomState(room))
+      broadcastRoomStateToAll(io, roomId, room)
     }
   }
 

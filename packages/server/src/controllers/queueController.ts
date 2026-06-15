@@ -20,10 +20,37 @@ import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
+
+  /**
+   * Broadcast defaultQueue update to admin/owner with full data,
+   * send empty array to members to save bandwidth.
+   */
+  function broadcastDefaultQueueUpdate(roomId: string, defaultQueue: Track[]) {
+    const adminSids: string[] = []
+    const memberSids: string[] = []
+    const room = roomRepo.get(roomId)
+    if (!room) return
+    for (const user of room.users) {
+      const sid = roomRepo.getSocketIdForUser(roomId, user.id)
+      if (!sid) continue
+      if (user.role === 'owner' || user.role === 'admin') {
+        adminSids.push(sid)
+      } else {
+        memberSids.push(sid)
+      }
+    }
+    if (adminSids.length > 0) {
+      io.to(adminSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue })
+    }
+    if (memberSids.length > 0) {
+      io.to(memberSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: [] })
+    }
+  }
 
   socket.on(
     EVENTS.QUEUE_ADD,
@@ -195,7 +222,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
 
       ctx.room.defaultQueue.push(track)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -219,7 +246,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
 
       ctx.room.defaultQueue.push(...tracks)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -242,7 +269,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const { trackId } = parsed.data
 
       ctx.room.defaultQueue = ctx.room.defaultQueue.filter((t) => t.id !== trackId)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       logger.info(`Default queue remove`, { roomId: ctx.roomId })
     }),

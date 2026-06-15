@@ -36,3 +36,11 @@ export function toPublicRoomStateForOwner(data: RoomData): RoomState {
     password: data.password ?? null,
   }
 }
+
+/** 普通成员可见的房间状态（不含 defaultQueue，节省带宽） */
+export function toPublicRoomStateForMember(data: RoomData): RoomState {
+  return {
+    ...toPublicRoomState(data),
+    defaultQueue: [],
+  }
+}
