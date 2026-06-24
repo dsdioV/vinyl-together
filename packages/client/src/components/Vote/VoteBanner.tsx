@@ -1,7 +1,6 @@
 import { Button } from '@/components/ui/button'
-import { getVoteActionLabel } from '@/hooks/useVote'
 import { storage } from '@/lib/storage'
-import { TIMING } from '@music-together/shared'
+import { TIMING, getVoteActionLabel } from '@music-together/shared'
 import type { VoteState } from '@music-together/shared'
 import { AbilityContext } from '@/providers/AbilityProvider'
 import { Check, ShieldCheck, ShieldX, X } from 'lucide-react'
