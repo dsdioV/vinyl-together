@@ -57,7 +57,7 @@ export interface ServerToClientEvents {
   [EVENTS.CHAT_HISTORY]: (messages: ChatMessage[]) => void
 
   [EVENTS.VOTE_STARTED]: (vote: VoteState) => void
-  [EVENTS.VOTE_RESULT]: (data: { passed: boolean; action: VoteAction; reason?: string }) => void
+  [EVENTS.VOTE_RESULT]: (data: { passed: boolean; action: VoteAction; reason?: string; payload?: Record<string, unknown> }) => void
   [EVENTS.VOTE_FORCE_APPROVE]: () => void
   [EVENTS.VOTE_FORCE_REJECT]: () => void
 
