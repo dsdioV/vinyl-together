@@ -91,6 +91,8 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  // 只使用 WebSocket 传输, 跳过 HTTP polling -> WebSocket 的升级过程
+  transports: ['websocket'],
 })
 
 attachSocketIdentity(io)
