@@ -2,7 +2,37 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
-/* Fonts are loaded via <link> in index.html */
+/* 自托管字体：Plus Jakarta Sans (SIL Open Font License) */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 300;
+  src: url('/fonts/PlusJakartaSans-Light.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400;
+  src: url('/fonts/PlusJakartaSans-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 500;
+  src: url('/fonts/PlusJakartaSans-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 600;
+  src: url('/fonts/PlusJakartaSans-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 700;
+  src: url('/fonts/PlusJakartaSans-Bold.woff2') format('woff2');
+}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
