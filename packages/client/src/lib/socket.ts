@@ -11,6 +11,7 @@ export function getSocket(): TypedSocket {
     socket = io(SERVER_URL, {
       autoConnect: false,
       withCredentials: true,
+      transports: ['websocket'],
     }) as TypedSocket
   }
   return socket

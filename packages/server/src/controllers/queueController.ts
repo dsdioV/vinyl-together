@@ -20,10 +20,37 @@ import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
+import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
+
+  /**
+   * Broadcast defaultQueue update to admin/owner with full data,
+   * send empty array to members to save bandwidth.
+   */
+  function broadcastDefaultQueueUpdate(roomId: string, defaultQueue: Track[]) {
+    const adminSids: string[] = []
+    const memberSids: string[] = []
+    const room = roomRepo.get(roomId)
+    if (!room) return
+    for (const user of room.users) {
+      const sid = roomRepo.getSocketIdForUser(roomId, user.id)
+      if (!sid) continue
+      if (user.role === 'owner' || user.role === 'admin') {
+        adminSids.push(sid)
+      } else {
+        memberSids.push(sid)
+      }
+    }
+    if (adminSids.length > 0) {
+      io.to(adminSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue })
+    }
+    if (memberSids.length > 0) {
+      io.to(memberSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: [] })
+    }
+  }
 
   socket.on(
     EVENTS.QUEUE_ADD,
@@ -41,7 +68,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [track], atIndex: ctx.room.queue.length - 1 })
 
       // System message
       const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 点了一首「${track.title}」`)
@@ -68,12 +95,12 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
 
-      const added = queueService.insertAfterCurrent(ctx.roomId, track)
-      if (!added) {
+      const insertIndex = queueService.insertAfterCurrent(ctx.roomId, track)
+      if (insertIndex < 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [track], atIndex: insertIndex })
 
       // System message
       const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 置顶了一首「${track.title}」`)
@@ -103,7 +130,12 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      const addedTracks = tracks.slice(0, addedCount)
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, {
+        type: 'insert',
+        tracks: addedTracks,
+        atIndex: ctx.room.queue.length - addedCount,
+      })
 
       const label = playlistName ? `歌单「${playlistName}」` : '歌单'
       const msg = chatService.createSystemMessage(
@@ -133,7 +165,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const isCurrentTrack = ctx.room.currentTrack?.id === trackId
 
       queueService.removeTrack(ctx.roomId, trackId)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [trackId] })
 
       // If the removed track was currently playing, skip to next or stop.
       // skipDebounce: removing current track must always advance, regardless
@@ -156,7 +188,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
       const { trackIds } = parsed.data
       queueService.reorderTracks(ctx.roomId, trackIds)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: ctx.room.queue })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'reorder', trackIds })
       logger.info(`Queue reordered`, { roomId: ctx.roomId })
     }),
   )
@@ -165,7 +197,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     EVENTS.QUEUE_CLEAR,
     withPermission('remove', 'Queue', async (ctx) => {
       queueService.clearQueue(ctx.roomId)
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { queue: [] })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'clear' })
 
       // Stop playback via mutex-protected variant to prevent races with
       // concurrent autoPlayIfEmpty from a simultaneous QUEUE_ADD.
@@ -190,7 +222,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
 
       ctx.room.defaultQueue.push(track)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -214,7 +246,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
 
       ctx.room.defaultQueue.push(...tracks)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -237,7 +269,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const { trackId } = parsed.data
 
       ctx.room.defaultQueue = ctx.room.defaultQueue.filter((t) => t.id !== trackId)
-      io.to(ctx.roomId).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: ctx.room.defaultQueue })
+      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
 
       logger.info(`Default queue remove`, { roomId: ctx.roomId })
     }),

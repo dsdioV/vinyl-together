@@ -29,6 +29,7 @@ export const roomSettingsSchema = z.object({
   autoRemovePlayed: z.boolean().optional(),
   songLikes: z.boolean().optional(),
   voteThreshold: z.number().min(0.01).max(1).optional(),
+  maxQueueSize: z.number().int().min(LIMITS.QUEUE_MAX_SIZE_MIN).max(LIMITS.QUEUE_MAX_SIZE_MAX).optional(),
 })
 
 export const setRoleSchema = z.object({

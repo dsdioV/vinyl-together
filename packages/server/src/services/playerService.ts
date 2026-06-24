@@ -203,8 +203,11 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                   // Replace in queue (if present) before playing
                   const roomBefore = roomRepo.get(roomId)
                   if (roomBefore) {
-                    roomBefore.queue = roomBefore.queue.map((t) => (t.id === resolved.id ? replacement : t))
-                    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: roomBefore.queue })
+                    const replaceIndex = roomBefore.queue.findIndex((t) => t.id === resolved.id)
+                    if (replaceIndex >= 0) {
+                      roomBefore.queue[replaceIndex] = replacement
+                      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'replace', track: replacement, atIndex: replaceIndex })
+                    }
                   }
 
                   io.to(roomId).emit(EVENTS.ROOM_AUTO_FALLBACK, {
@@ -250,8 +253,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
         if (!resolved.streamUrl) {
           // Auto-remove the invalid track from the queue
           queueService.removeTrack(roomId, resolved.id)
-          const room2 = roomRepo.get(roomId)
-          if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
+          io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [resolved.id] })
           io.to(roomId).emit(EVENTS.ROOM_ERROR, {
             code: ERROR_CODE.STREAM_FAILED,
             message: `无法获取「${resolved.title}」的播放链接${hint}，已从列表移除`,
@@ -264,8 +266,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
       // Auto-remove on unexpected failure too
       queueService.removeTrack(roomId, resolved.id)
-      const room2 = roomRepo.get(roomId)
-      if (room2) io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room2.queue })
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [resolved.id] })
       return false
     }
   }
@@ -466,7 +467,7 @@ async function _executePlayNext(
   const autoRemoved = !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)
   if (autoRemoved) {
     room.queue = room.queue.filter((t) => t.id !== currentTrack.id)
-    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+    io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [currentTrack.id] })
   }
 
   // In like mode, bypass index-based selection and pick by popularity.
@@ -490,7 +491,7 @@ async function _executePlayNext(
       const picked = room.defaultQueue[randomIndex]
       const added = queueService.addTrack(roomId, picked)
       if (added) {
-        io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+        io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
         const newTrack = room.queue.length > 0 ? room.queue[room.queue.length - 1] : null
         if (newTrack) {
           const success = await _playTrackInRoom(io, roomId, newTrack)
@@ -595,7 +596,7 @@ export async function syncPlaybackToSocket(
     const picked = room.defaultQueue[randomIndex]
     const added = queueService.addTrack(roomId, picked)
     if (added) {
-      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { queue: room.queue })
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
       await playTrackInRoom(io, roomId, picked)
     }
   }

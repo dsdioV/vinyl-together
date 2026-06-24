@@ -21,6 +21,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     persistent: data.persistent,
     persistentTtlHours: data.persistentTtlHours,
     voteThreshold: data.voteThreshold,
+    maxQueueSize: data.maxQueueSize,
     playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(
       Array.from(data.trackLikes.entries()).map(([trackId, userIds]) => [trackId, Array.from(userIds)]),
@@ -33,5 +34,13 @@ export function toPublicRoomStateForOwner(data: RoomData): RoomState {
   return {
     ...toPublicRoomState(data),
     password: data.password ?? null,
+  }
+}
+
+/** 普通成员可见的房间状态（不含 defaultQueue，节省带宽） */
+export function toPublicRoomStateForMember(data: RoomData): RoomState {
+  return {
+    ...toPublicRoomState(data),
+    defaultQueue: [],
   }
 }

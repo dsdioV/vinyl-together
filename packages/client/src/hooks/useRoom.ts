@@ -41,6 +41,7 @@ export function useRoom() {
       autoRemovePlayed?: boolean
       songLikes?: boolean
       voteThreshold?: number
+      maxQueueSize?: number
     }) => {
       socket.emit(EVENTS.ROOM_SETTINGS, settings)
     },

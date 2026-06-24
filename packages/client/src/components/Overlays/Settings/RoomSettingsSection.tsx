@@ -36,6 +36,7 @@ interface RoomSettingsSectionProps {
     autoRemovePlayed?: boolean
     songLikes?: boolean
     voteThreshold?: number
+    maxQueueSize?: number
   }) => void
 }
 
@@ -81,6 +82,16 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
       setVoteThresholdPercent(Math.round(room.voteThreshold * 100))
     }
   }, [room?.voteThreshold])
+
+  // 主队列上限
+  const [maxQueueSize, setMaxQueueSize] = useState(
+    () => room?.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE_DEFAULT,
+  )
+  useEffect(() => {
+    if (room?.maxQueueSize !== undefined) {
+      setMaxQueueSize(room.maxQueueSize)
+    }
+  }, [room?.maxQueueSize])
 
   useEffect(() => {
     setPasswordEnabled(room?.hasPassword ?? false)
@@ -355,6 +366,44 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                 className="h-7 w-16 text-sm text-center"
               />
               <span className="text-sm text-muted-foreground">%</span>
+            </div>
+          </SettingRow>
+
+          <SettingRow
+            label="队列上限"
+            description={`当前队列 ${room?.queue.length ?? 0} 首，新歌超过上限将无法添加`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                min={LIMITS.QUEUE_MAX_SIZE_MIN}
+                max={LIMITS.QUEUE_MAX_SIZE_MAX}
+                value={maxQueueSize}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  if (raw === '') {
+                    setMaxQueueSize(0)
+                    return
+                  }
+                  const v = Number(raw)
+                  if (isNaN(v)) return
+                  setMaxQueueSize(v)
+                }}
+                onBlur={() => {
+                  const clamped = Math.min(LIMITS.QUEUE_MAX_SIZE_MAX, Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT))
+                  setMaxQueueSize(clamped)
+                  onUpdateSettings({ maxQueueSize: clamped })
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const clamped = Math.min(LIMITS.QUEUE_MAX_SIZE_MAX, Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT))
+                    setMaxQueueSize(clamped)
+                    onUpdateSettings({ maxQueueSize: clamped })
+                  }
+                }}
+                className="h-7 w-20 text-sm text-center"
+              />
+              <span className="text-sm text-muted-foreground">首</span>
             </div>
           </SettingRow>
 

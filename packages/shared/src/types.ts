@@ -103,6 +103,8 @@ export interface RoomState {
   trackLikes: Record<string, string[]>
   /** 投票通过率 (0.01–1.0)，默认 0.67 */
   voteThreshold: number
+  /** 主队列最大歌曲数（房主可调，默认 200） */
+  maxQueueSize: number
   /** 已播放歌曲历史记录 */
   playedHistory: PlayedTrack[]
 }
@@ -191,3 +193,14 @@ export interface Playlist {
   creator?: string
   description?: string
 }
+
+/**
+ * Queue delta sent via QUEUE_UPDATED — the client applies this incrementally
+ * instead of replacing the entire queue array, saving bandwidth on large queues.
+ */
+export type QueueDelta =
+  | { type: 'clear' }
+  | { type: 'insert'; tracks: Track[]; atIndex: number }
+  | { type: 'remove'; trackIds: string[] }
+  | { type: 'replace'; track: Track; atIndex: number }
+  | { type: 'reorder'; trackIds: string[] }

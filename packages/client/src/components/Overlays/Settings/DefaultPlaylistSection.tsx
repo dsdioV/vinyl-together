@@ -11,7 +11,7 @@ import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS, LIMITS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
-import { Loader2, Music2, Search, ListMusic, Hash } from 'lucide-react'
+import { Loader2, Music2, Search, ListMusic, Hash, ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -38,6 +38,27 @@ export function DefaultPlaylistSection() {
   const listRef = useRef<VirtualTrackListRef>(null)
   const sourceContainerRef = useRef<HTMLDivElement>(null)
   const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 })
+
+  // 默认列表：搜索 + 分页
+  const [defaultSearchQuery, setDefaultSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 50
+  const filteredDefaultTracks = useMemo(() => {
+    if (!defaultSearchQuery.trim()) return defaultQueue
+    const q = defaultSearchQuery.trim().toLowerCase()
+    return defaultQueue.filter(
+      (t) => t.title.toLowerCase().includes(q) || t.artist.some((a) => a.toLowerCase().includes(q)),
+    )
+  }, [defaultQueue, defaultSearchQuery])
+  const totalPages = Math.max(1, Math.ceil(filteredDefaultTracks.length / PAGE_SIZE))
+  const pageTracks = useMemo(
+    () => filteredDefaultTracks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [filteredDefaultTracks, currentPage],
+  )
+  const handleDefaultSearchChange = useCallback((value: string) => {
+    setDefaultSearchQuery(value)
+    setCurrentPage(1)
+  }, [])
 
   const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
 
@@ -365,27 +386,81 @@ export function DefaultPlaylistSection() {
       {/* Current default playlist tracks */}
       <p className="text-muted-foreground mb-2 text-xs">
         默认列表 · {defaultQueue.length} 首歌
+        {defaultSearchQuery.trim() && `（筛选出 ${filteredDefaultTracks.length} 首）`}
       </p>
+
+      {/* Search inside default playlist */}
+      {defaultQueue.length > 0 && (
+        <div className="relative mb-2">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="在当前列表中搜索歌名或歌手..."
+            value={defaultSearchQuery}
+            onChange={(e) => handleDefaultSearchChange(e.target.value)}
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+      )}
+
       {defaultQueue.length === 0 ? (
         <div className="flex h-24 flex-col items-center justify-center gap-2 rounded-md border text-muted-foreground">
           <Music2 className="h-6 w-6" />
           <span className="text-xs">尚未添加歌曲到默认列表</span>
         </div>
-      ) : (
-        <div className="max-h-64 overflow-x-hidden overflow-y-auto rounded-md border">
-          <div className="grid grid-cols-1 divide-y">
-            {defaultQueue.map((track, index) => (
-              <TrackListItem
-                key={track.id}
-                track={track}
-                index={index}
-                isAdded={false}
-                onAdd={() => {}}
-                onRemove={handleRemoveFromDefault}
-              />
-            ))}
-          </div>
+      ) : filteredDefaultTracks.length === 0 ? (
+        <div className="flex h-24 flex-col items-center justify-center gap-2 rounded-md border text-muted-foreground">
+          <Music2 className="h-6 w-6" />
+          <span className="text-xs">未找到匹配的歌曲</span>
         </div>
+      ) : (
+        <>
+          <div className="max-h-64 overflow-x-hidden overflow-y-auto rounded-md border">
+            <div className="grid grid-cols-1 divide-y">
+              {pageTracks.map((track) => {
+                const globalIndex = defaultQueue.indexOf(track)
+                return (
+                  <TrackListItem
+                    key={track.id}
+                    track={track}
+                    index={globalIndex}
+                    isAdded={false}
+                    onAdd={() => {}}
+                    onRemove={handleRemoveFromDefault}
+                  />
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-3 mt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="gap-1"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                上一页
+              </Button>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {currentPage} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="gap-1"
+              >
+                下一页
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

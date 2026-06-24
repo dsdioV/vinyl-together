@@ -4,7 +4,6 @@ import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Playlist, Track } from '@music-together/shared'
-import { LIMITS } from '@music-together/shared'
 import { ArrowLeft, ListPlus, Music } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -23,6 +22,8 @@ interface PlaylistDetailProps {
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
+  /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
+  maxAddCount?: number
 }
 
 export function PlaylistDetail({
@@ -37,6 +38,7 @@ export function PlaylistDetail({
   onInsertAfterCurrent,
   onAddAll,
   onLoadMore,
+  maxAddCount,
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
@@ -77,7 +79,10 @@ export function PlaylistDetail({
   )
 
   // Dynamic "add all" logic — filter duplicates
-  const availableSlots = LIMITS.QUEUE_MAX_SIZE - queue.length
+  // maxAddCount limits how many tracks can be added (e.g. main queue capacity).
+  // When omitted, no limit is enforced (e.g. default playlist which has no server-side cap).
+  const effectiveMax = maxAddCount ?? Infinity
+  const availableSlots = effectiveMax - queue.length
   const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
   const addCount = Math.min(availableSlots, uniqueTracks.length)
   const isQueueFull = availableSlots <= 0

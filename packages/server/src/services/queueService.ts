@@ -5,7 +5,8 @@ import { roomRepo } from '../repositories/roomRepository.js'
 export function addTrack(roomId: string, track: Track): boolean {
   const room = roomRepo.get(roomId)
   if (!room) return false
-  if (room.queue.length >= LIMITS.QUEUE_MAX_SIZE) return false
+  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  if (room.queue.length >= maxSize) return false
   room.queue.push(track)
   return true
 }
@@ -18,7 +19,8 @@ export function addTrack(roomId: string, track: Track): boolean {
 export function addBatchTracks(roomId: string, tracks: Track[]): number {
   const room = roomRepo.get(roomId)
   if (!room) return 0
-  const available = LIMITS.QUEUE_MAX_SIZE - room.queue.length
+  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  const available = maxSize - room.queue.length
   if (available <= 0) return 0
   const toAdd = tracks.slice(0, available)
   room.queue.push(...toAdd)
@@ -28,17 +30,19 @@ export function addBatchTracks(roomId: string, tracks: Track[]): number {
 /**
  * Insert a new track right after the current playing track.
  * If current track is missing from the queue (edge race), insert to the front.
+ * @returns The index where the track was inserted, or -1 if the queue is full.
  */
-export function insertAfterCurrent(roomId: string, track: Track): boolean {
+export function insertAfterCurrent(roomId: string, track: Track): number {
   const room = roomRepo.get(roomId)
-  if (!room) return false
-  if (room.queue.length >= LIMITS.QUEUE_MAX_SIZE) return false
+  if (!room) return -1
+  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  if (room.queue.length >= maxSize) return -1
 
   const currentId = room.currentTrack?.id
   const currentIndex = currentId ? room.queue.findIndex((t) => t.id === currentId) : -1
   const insertIndex = currentIndex >= 0 ? currentIndex + 1 : 0
   room.queue.splice(insertIndex, 0, track)
-  return true
+  return insertIndex
 }
 
 export function removeTrack(roomId: string, trackId: string): void {

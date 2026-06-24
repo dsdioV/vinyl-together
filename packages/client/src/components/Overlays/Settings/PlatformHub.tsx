@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { usePlaylist } from '@/hooks/usePlaylist'
 import { PLATFORM_SHORT_LABELS, PLATFORM_COLORS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
 import { storage } from '@/lib/storage'
-import type { MusicSource, Playlist } from '@music-together/shared'
+import { LIMITS, type MusicSource, type Playlist } from '@music-together/shared'
 import { useState, useCallback, useMemo } from 'react'
 import { LoginSection } from './LoginSection'
 import { ManualCookieDialog } from './ManualCookieDialog'
@@ -85,6 +85,7 @@ export function PlatformHub() {
             onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
             onAddAll={playlist.addBatchToQueue}
             onLoadMore={playlist.loadMoreTracks}
+            maxAddCount={LIMITS.QUEUE_MAX_SIZE}
           />
         </div>
       </div>
