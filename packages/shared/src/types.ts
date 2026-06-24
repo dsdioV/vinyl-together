@@ -173,6 +173,8 @@ export interface PlatformAuthStatus {
   hasVip: boolean
   /** 最高 VIP 等级 (0=无, 1=VIP, 11=黑胶) */
   maxVipType: number
+  /** 最早的 VIP 用户登录时间戳 (ms) */
+  earliestVipTimestamp?: number
 }
 
 /** 当前用户自己在某平台的认证信息 */
