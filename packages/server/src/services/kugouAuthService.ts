@@ -530,6 +530,71 @@ export async function getPlaylistTracks(
 // parseCookieString 已移至 utils/cookieUtils.ts 统一管理
 
 // ---------------------------------------------------------------------------
+// Short Code Resolution — resolve kugou short URLs (e.g. #vl3jbf6) → full song info
+// ---------------------------------------------------------------------------
+// The www.kugou.com/song/#vl3jbf6 URLs use an encoded album_audio_id that the
+// web player resolves via the /play/songinfo endpoint (appid=1014, web player).
+// Requires user auth (token/userid from cookie), otherwise returns null.
+
+export async function resolveShortCode(
+  encodedId: string,
+  cookie?: string | null,
+): Promise<{ hash: string; songName: string; singerName: string; albumName?: string } | null> {
+  try {
+    const cookieObj = cookie ? parseCookieString(cookie) : {}
+
+    // If no auth token at all, short code resolution will fail — return early
+    const hasToken = cookieObj.token || cookieObj.t
+    const hasUserid = cookieObj.userid || cookieObj.KugooID
+    if (!hasToken && !hasUserid) {
+      logger.warn('Kugou resolveShortCode: no auth cookie, skipping')
+      return null
+    }
+
+    const body = await kugouRequest({
+      baseURL: 'https://wwwapi.kugou.com',
+      url: '/play/songinfo',
+      method: 'GET',
+      params: {
+        srcappid: SRCAPPID,
+        platid: 4,
+        encode_album_audio_id: encodedId,
+        appid: 1014,        // web player appid (overrides default 1005)
+        clientver: 20000,   // web player clientver (overrides default 20489)
+      },
+      encryptType: 'web',
+      cookie: cookieObj,
+    })
+
+    if (body?.err_code && body.err_code !== 0) {
+      logger.warn(`Kugou resolveShortCode failed for ${encodedId}: err_code ${body.err_code}, status ${body.status}`)
+      return null
+    }
+
+    const data = body?.data as Record<string, any> | undefined
+    if (!data) {
+      logger.warn(`Kugou resolveShortCode: no data for ${encodedId}`)
+      return null
+    }
+
+    // The response contains full song data; extract key fields
+    const hash = data.hash || data.audio_hash || data.file_hash || ''
+    const songName = data.songName || data.song_name || data.songname || ''
+    const singerName = data.singerName || data.singer_name || data.singername || data.author_name || ''
+
+    if (!hash) {
+      logger.warn(`Kugou resolveShortCode: no hash in response for ${encodedId}`, { keys: Object.keys(data) })
+      return null
+    }
+
+    return { hash, songName, singerName, albumName: data.album_name || data.albumName }
+  } catch (err) {
+    logger.error(`Kugou resolveShortCode failed for ${encodedId}`, err)
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Play URL Resolution — bypasses @meting/core for kugou
 // ---------------------------------------------------------------------------
 // The wwwapi.kugou.com endpoint expects a specific appid that must match the

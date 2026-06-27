@@ -848,7 +848,7 @@ class MusicProvider {
    * Checks the track registry first, then falls back to platform-specific APIs.
    * Returns a Track with a fresh nanoid id, or null if not found.
    */
-  async getTrackById(source: MusicSource, sourceId: string): Promise<Track | null> {
+  async getTrackById(source: MusicSource, sourceId: string, cookie?: string | null): Promise<Track | null> {
     // 1. Check registry
     const registryKey = `${source}:${sourceId}`
     const cached = this.trackRegistry.get(registryKey)
@@ -870,6 +870,25 @@ class MusicProvider {
           track = await this.fetchTencentTrackById(sourceId)
           break
         case 'kugou':
+          // Detect short code (6-8 chars, not a 32-char hex hash)
+          if (/^[a-zA-Z0-9]{6,8}$/.test(sourceId) && !/^[a-fA-F0-9]{32}$/.test(sourceId)) {
+            logger.info(`Kugou short code detected: ${sourceId}, resolving via play/songinfo...`)
+            const resolved = await kugouAuth.resolveShortCode(sourceId, cookie)
+            if (resolved) {
+              // Use the resolved hash to fetch full track data
+              track = await this.fetchKugouTrackById(resolved.hash)
+              if (track) {
+                // Override with resolved metadata if the hash API returned less info
+                if (!track.title && resolved.songName) track.title = resolved.songName
+                if (track.artist.length === 0 && resolved.singerName) {
+                  track.artist = resolved.singerName.split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean)
+                }
+              }
+              break
+            }
+            // Short code resolution failed — fall through to try as hash
+            logger.warn(`Kugou short code resolution failed for ${sourceId}, trying as hash...`)
+          }
           track = await this.fetchKugouTrackById(sourceId)
           break
         default:

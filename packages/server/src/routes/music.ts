@@ -111,7 +111,18 @@ router.get(
 router.get(
   '/track',
   validated(trackQuerySchema, 'Get track by ID', async (data, _req, res) => {
-    const track = await musicProvider.getTrackById(data.source, data.id)
+    let cookie: string | null = null
+    if (data.roomId) {
+      const identityUserId = _req.identityUserId
+      if (identityUserId) {
+        const room = roomRepo.get(data.roomId)
+        if (room && room.users.some((u) => u.id === identityUserId)) {
+          cookie = authService.getUserCookie(identityUserId, data.source, data.roomId)
+        }
+      }
+    }
+
+    const track = await musicProvider.getTrackById(data.source, data.id, cookie)
     if (!track) {
       res.status(404).json({ error: '歌曲未找到' })
       return

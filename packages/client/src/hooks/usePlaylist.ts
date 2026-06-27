@@ -59,10 +59,12 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
         break
       }
       case 'kugou': {
-        // Track URL: https://www.kugou.com/song/#6h5o4sc6 — hash is the track hash
+        // Track URL: https://www.kugou.com/song/#hash=BF7F3BC4... or #6h5o4sc6
         if (url.hash) {
-          const hashClean = url.hash.replace(/^#/, '').split(/[?&]/)[0].trim()
-          if (hashClean && hashClean.length >= 4) return hashClean
+          let hashVal = url.hash.replace(/^#/, '').split(/[?&]/)[0].trim()
+          // Strip "hash=" prefix if present (Kugou's 32-char audio hash format)
+          if (hashVal.startsWith('hash=')) hashVal = hashVal.slice(5)
+          if (hashVal && hashVal.length >= 4) return hashVal
         }
 
         // Songlist URL: https://www.kugou.com/songlist/gcid_3zwlkkpdz1jz0f2/
@@ -254,6 +256,8 @@ export function usePlaylist() {
     async (source: MusicSource, trackId: string): Promise<Track | null> => {
       try {
         const params = new URLSearchParams({ source, id: trackId })
+        const roomId = useRoomStore.getState().room?.id
+        if (roomId) params.set('roomId', roomId)
         const res = await fetch(`${SERVER_URL}/api/music/track?${params.toString()}`, {
           credentials: 'include',
         })

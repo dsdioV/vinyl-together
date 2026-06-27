@@ -167,6 +167,7 @@ export const coverQuerySchema = z.object({
 export const trackQuerySchema = z.object({
   source: musicSourceSchema,
   id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
+  roomId: z.string().min(1).max(10).optional(),
 })
 
 export const playlistQuerySchema = z.object({
