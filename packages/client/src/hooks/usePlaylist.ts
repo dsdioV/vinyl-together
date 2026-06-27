@@ -59,8 +59,25 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
         break
       }
       case 'kugou': {
-        // Various kugou URL formats
-        const kgMatch = url.pathname.match(/(\d+)/)
+        // Track URL: https://www.kugou.com/song/#6h5o4sc6 — hash is the track hash
+        if (url.hash) {
+          const hashClean = url.hash.replace(/^#/, '').split(/[?&]/)[0].trim()
+          if (hashClean && hashClean.length >= 4) return hashClean
+        }
+
+        // Songlist URL: https://www.kugou.com/songlist/gcid_3zwlkkpdz1jz0f2/
+        const slMatch = url.pathname.match(/\/songlist\/(.+)/)
+        if (slMatch) {
+          const id = slMatch[1].replace(/\/+$/, '')
+          if (id) return id
+        }
+
+        // Special/album URL: https://www.kugou.com/yy/special/single/12345.html
+        const spMatch = url.pathname.match(/\/special\/(?:single\/)?(\d+)/)
+        if (spMatch) return spMatch[1]
+
+        // Fallback: any longer numeric ID in path
+        const kgMatch = url.pathname.match(/(\d{4,})/)
         if (kgMatch) return kgMatch[1]
         break
       }
