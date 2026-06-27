@@ -21,7 +21,7 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
       // Resume: same track already loaded and has stream URL → keep position
       if (!data?.track && ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
-        playerService.resumeTrack(ctx.io, ctx.roomId, ctx.socket)
+        await playerService.resumeTrack(ctx.io, ctx.roomId, ctx.socket)
         return
       }
 

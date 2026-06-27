@@ -48,7 +48,7 @@ async function executeAction(
       playerService.pauseTrack(io, roomId)
       break
     case 'resume':
-      playerService.resumeTrack(io, roomId)
+      await playerService.resumeTrack(io, roomId)
       break
     case 'next': {
       const room = roomRepo.get(roomId)

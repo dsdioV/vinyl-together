@@ -139,7 +139,14 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
 
       scheduledTimerRef.current = setTimeout(() => {
         if (actionIdRef.current !== id) return // stale callback
-        if (!howlRef.current) return
+        if (!howlRef.current) {
+          // No Howl instance — the track likely has no streamUrl or loadTrack
+          // was never called.  Ask the server to re-resolve the stream URL
+          // rather than silently doing nothing.
+          console.warn('onResume: no Howl instance, requesting server re-play')
+          socket.emit(EVENTS.PLAYER_PLAY)
+          return
+        }
         // Seek to the expected position at this moment
         if (data.playState.currentTime > 0) {
           howlRef.current.seek(data.playState.currentTime)

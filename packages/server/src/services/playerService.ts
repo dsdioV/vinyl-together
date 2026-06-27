@@ -303,9 +303,24 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   return true
 }
 
-export function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
+export async function resumeTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room || !room.currentTrack) return
+
+  // If the current track has no streamUrl, re-resolve it instead of just
+  // flipping isPlaying (the client has no Howl instance and would silently
+  // ignore the RESUME event).  This can happen after long uptime when a
+  // previously resolved URL expired or was lost in a race.
+  if (!room.currentTrack.streamUrl) {
+    logger.warn(`resumeTrack: currentTrack "${room.currentTrack.title}" has no streamUrl — re-resolving`, { roomId })
+    const ok = await playTrackInRoom(io, roomId, room.currentTrack)
+    if (!ok) {
+      // Re-resolution also failed — skip to next track to unstick the room
+      logger.warn(`resumeTrack: re-resolution failed, skipping to next track`, { roomId })
+      await playNextTrackInRoom(io, roomId, room.playMode, { skipDebounce: true })
+    }
+    return
+  }
 
   const scheduleTime = getScheduleTime(roomId)
   room.playState = { ...room.playState, isPlaying: true, serverTimestamp: scheduleTime }
@@ -496,7 +511,12 @@ async function _executePlayNext(
         if (newTrack) {
           const success = await _playTrackInRoom(io, roomId, newTrack)
           if (!success) {
-            stopPlayback(io, roomId)
+            // _playTrackInRoom failed (e.g. stream URL could not be resolved).
+            // Retry with a different random pick instead of stopping playback,
+            // so a single dead track doesn't stall the room.
+            logger.warn(`Default queue track "${picked.title}" failed to play, trying another`, { roomId })
+            playNextTrackInRoom(io, roomId, playMode, { skipDebounce: true })
+            return
           }
           lastNextTimestamp.set(roomId, Date.now())
           return
