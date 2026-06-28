@@ -24,6 +24,13 @@ interface PlaylistDetailProps {
   onLoadMore: () => void
   /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
   maxAddCount?: number
+  /**
+   * Optional set of track keys to treat as "already added".
+   * When omitted, the main queue is used (default for PlatformHub).
+   * Pass defaultKeys when used inside DefaultPlaylistSection so that
+   * tracks already in the main queue can still be added to the default playlist.
+   */
+  checkedKeys?: Set<string>
 }
 
 export function PlaylistDetail({
@@ -39,43 +46,47 @@ export function PlaylistDetail({
   onAddAll,
   onLoadMore,
   maxAddCount,
+  checkedKeys,
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
+  // When checkedKeys is provided (e.g. defaultKeys for default playlist),
+  // use it instead of queueKeys to determine "already added" state.
+  const alreadyAddedKeys = checkedKeys ?? queueKeys
 
   const isTrackAdded = useCallback(
     (track: Track) => {
       const key = trackKey(track)
-      return addedIds.has(key) || queueKeys.has(key)
+      return addedIds.has(key) || alreadyAddedKeys.has(key)
     },
-    [addedIds, queueKeys],
+    [addedIds, alreadyAddedKeys],
   )
 
   const handleAddTrack = useCallback(
     (track: Track) => {
       const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
+      if (alreadyAddedKeys.has(key) || addedIds.has(key)) {
         toast.info(`「${track.title}」已在队列中`)
         return
       }
       onAddTrack(track)
       setAddedIds((prev) => new Set(prev).add(key))
     },
-    [onAddTrack, queueKeys, addedIds],
+    [onAddTrack, alreadyAddedKeys, addedIds],
   )
 
   const handleInsertAfterCurrent = useCallback(
     (track: Track) => {
       const key = trackKey(track)
-      if (queueKeys.has(key) || addedIds.has(key)) {
+      if (alreadyAddedKeys.has(key) || addedIds.has(key)) {
         toast.info(`「${track.title}」已在队列中`)
         return
       }
       onInsertAfterCurrent?.(track)
       setAddedIds((prev) => new Set(prev).add(key))
     },
-    [onInsertAfterCurrent, queueKeys, addedIds],
+    [onInsertAfterCurrent, alreadyAddedKeys, addedIds],
   )
 
   // Dynamic "add all" logic — filter duplicates

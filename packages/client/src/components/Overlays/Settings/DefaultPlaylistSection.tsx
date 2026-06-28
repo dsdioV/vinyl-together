@@ -218,6 +218,7 @@ export function DefaultPlaylistSection() {
           onAddTrack={handleAddToDefault}
           onAddAll={handleAddBatchToDefault}
           onLoadMore={loadMoreTracks}
+          checkedKeys={defaultKeys}
         />
       ) : (
         <>
