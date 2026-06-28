@@ -33,8 +33,8 @@ export function useLobby() {
   )
 
   const createRoom = useCallback(
-    (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number) => {
-      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password, persistent, persistentTtlHours })
+    (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number, customRoomId?: string) => {
+      socket.emit(EVENTS.ROOM_CREATE, { nickname, roomName, password, persistent, persistentTtlHours, roomId: customRoomId })
     },
     [socket],
   )

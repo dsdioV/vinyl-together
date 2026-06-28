@@ -71,12 +71,12 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
                 <Button
                   variant="outline"
                   size="sm"
-                  className="hidden h-7 gap-1 border-border/50 px-2 font-mono text-xs sm:flex"
+                  className="hidden h-7 max-w-[140px] gap-1 overflow-hidden border-border/50 px-2 font-mono text-xs sm:flex"
                   onClick={copyRoomLink}
                   aria-label="复制房间链接"
                 >
-                  {roomId}
-                  <Copy className="h-3 w-3" />
+                  <span className="truncate">{roomId}</span>
+                  <Copy className="h-3 w-3 shrink-0" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>复制房间链接</TooltipContent>

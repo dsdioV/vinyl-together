@@ -58,8 +58,12 @@ export function createRoom(
   persistentUserId?: string,
   persistent: boolean = false,
   persistentTtlHours: number = 0,
+  customRoomId?: string,
 ): { room: RoomData; user: User } {
-  const roomId = nanoid(6).toUpperCase()
+  // Use custom roomId if provided and valid, otherwise generate a random one
+  const roomId = (customRoomId && /^[A-Z0-9]{4,10}$/.test(customRoomId) && !roomRepo.get(customRoomId))
+    ? customRoomId
+    : nanoid(6).toUpperCase()
   const userId = persistentUserId || socketId
 
   const user: User = { id: userId, nickname, role: 'owner' }

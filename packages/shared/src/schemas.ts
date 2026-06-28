@@ -11,6 +11,12 @@ export const roomCreateSchema = z.object({
   password: z.string().max(LIMITS.ROOM_PASSWORD_MAX_LENGTH, '密码过长').optional(),
   persistent: z.boolean().optional(),
   persistentTtlHours: z.number().int().min(0).max(LIMITS.PERSISTENT_TTL_MAX_HOURS).optional(),
+  roomId: z
+    .string()
+    .regex(/^[A-Z0-9]+$/, '房间号只能包含大写字母和数字')
+    .min(LIMITS.ROOM_ID_CUSTOM_MIN_LENGTH, `房间号至少${LIMITS.ROOM_ID_CUSTOM_MIN_LENGTH}位`)
+    .max(LIMITS.ROOM_ID_CUSTOM_MAX_LENGTH, `房间号最多${LIMITS.ROOM_ID_CUSTOM_MAX_LENGTH}位`)
+    .optional(),
 })
 
 export const roomJoinSchema = z.object({

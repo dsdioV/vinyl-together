@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number) => void
+  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number, customRoomId?: string) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -30,6 +30,7 @@ export function CreateRoomDialog({
 }: CreateRoomDialogProps) {
   const [nickname, setNickname] = useState(defaultNickname)
   const [roomName, setRoomName] = useState('')
+  const [customRoomId, setCustomRoomId] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(false)
   const [password, setPassword] = useState('')
   const [persistent, setPersistent] = useState(false)
@@ -39,6 +40,7 @@ export function CreateRoomDialog({
   useEffect(() => {
     if (open) {
       setNickname(defaultNickname)
+      setCustomRoomId('')
       setPersistent(false)
       setPersistentTtlHours(24)
     }
@@ -55,6 +57,7 @@ export function CreateRoomDialog({
       passwordEnabled && password.trim() ? password.trim() : undefined,
       persistent,
       persistent ? persistentTtlHours : undefined,
+      customRoomId.trim().toUpperCase() || undefined,
     )
   }
 
@@ -88,6 +91,18 @@ export function CreateRoomDialog({
                 value={roomName}
                 onChange={(e) => setRoomName(e.target.value)}
                 maxLength={LIMITS.ROOM_NAME_MAX_LENGTH}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-sm font-medium text-foreground/80">
+                自定义房间号 <span className="text-xs text-muted-foreground">(可选，留空则随机生成)</span>
+              </Label>
+              <Input
+                placeholder="4-10位大写字母或数字..."
+                value={customRoomId}
+                onChange={(e) => setCustomRoomId(e.target.value.toUpperCase())}
+                maxLength={LIMITS.ROOM_ID_CUSTOM_MAX_LENGTH}
               />
             </div>
 

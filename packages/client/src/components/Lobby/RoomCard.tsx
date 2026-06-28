@@ -79,7 +79,7 @@ export const RoomCard = memo(function RoomCard({ room, index, onClick }: RoomCar
           <Users className="h-3 w-3" />
           {room.userCount}
         </span>
-        <span className="text-xs text-muted-foreground/50">{room.id}</span>
+        <span className="max-w-[100px] truncate text-xs text-muted-foreground/50">{room.id}</span>
       </div>
     </motion.button>
   )
