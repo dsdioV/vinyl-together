@@ -18,6 +18,11 @@ const PLAY_ERROR_TIMEOUT_MS = 3000
  *  many milliseconds, treat it as stalled (network drop mid-stream). */
 const STALLED_TIMEOUT_MS = 8000
 
+/** Delay between retries when onplay fails to fire after howl.play().
+ *  Retries continue indefinitely until onplay fires or the track changes,
+ *  so a temporary network issue won't cause the user to miss the song. */
+const PLAY_START_RETRY_DELAY_MS = 2000
+
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
  * Phase 1: Create Howl with volume=0 (silent)
@@ -34,6 +39,14 @@ export function useHowl(onTrackEnd: () => void) {
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
+  /** Set to true when the HTML5 Audio element fires the play event.
+   *  Reset on each loadTrack; the retry timer checks this to decide if
+   *  a reload is needed. */
+  const playStartedRef = useRef(false)
+  /** Ensures the retry-toast is shown only once per track. */
+  const retryToastShownRef = useRef(false)
+  /** Snapshot of the last loadTrack arguments for local retry. */
+  const lastLoadParamsRef = useRef<{ track: Track; seekTo?: number; autoPlay: boolean } | null>(null)
 
   // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
@@ -105,6 +118,9 @@ export function useHowl(onTrackEnd: () => void) {
       soundIdRef.current = undefined
       trackTitleRef.current = track.title
       retryRef.current = false
+      playStartedRef.current = false
+      retryToastShownRef.current = false
+      lastLoadParamsRef.current = { track, seekTo, autoPlay }
 
       if (!track.streamUrl) return
 
@@ -128,8 +144,33 @@ export function useHowl(onTrackEnd: () => void) {
               usePlayerStore.getState().setCurrentTime(seekTo)
             }
             soundIdRef.current = howl.play()
+            // If onplay doesn't fire within PLAY_START_RETRY_DELAY_MS, the
+            // stream likely failed to start (network/routing issue on this
+            // client).  Retry locally (re-load the Howl with the same URL) —
+            // this does NOT emit any socket event, so other listeners in the
+            // room are completely unaffected.  Retries continue indefinitely
+            // until onplay fires or the track changes.
+            const retryTimer = setTimeout(() => {
+              if (howlRef.current !== howl) return // stale — newer track loaded
+              if (playStartedRef.current) return   // onplay fired after all
+              if (!retryToastShownRef.current) {
+                retryToastShownRef.current = true
+                toast.error('歌曲加载中，请稍候…')
+              }
+              console.warn('onload: onplay never fired, retrying...')
+              const params = lastLoadParamsRef.current
+              if (params) {
+                // Unload the current Howl so loadTrack starts fresh
+                try { howl.unload() } catch { /* ignore */ }
+                if (howlRef.current === howl) howlRef.current = null
+                setTimeout(() => loadTrack(params.track, params.seekTo, params.autoPlay), PLAY_START_RETRY_DELAY_MS)
+              }
+            }, PLAY_START_RETRY_DELAY_MS)
+            // Cancel the retry timer if onplay fires normally
             howl.once('play', () => {
+              clearTimeout(retryTimer)
               if (howlRef.current !== howl) return
+              playStartedRef.current = true
               const elapsed = (Date.now() - loadStartTime) / 1000
               const seekTarget = (seekTo ?? 0) + Math.min(elapsed, MAX_LOAD_COMPENSATION_S)
               // seekTo > 0: must seek to correct position (+ loading compensation)
@@ -157,6 +198,7 @@ export function useHowl(onTrackEnd: () => void) {
         },
         onplay: () => {
           if (howlRef.current !== howl) return
+          playStartedRef.current = true
           usePlayerStore.getState().setIsPlaying(true)
           const dur = howl.duration()
           if (Number.isFinite(dur) && dur > 0) {
