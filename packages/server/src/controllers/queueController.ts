@@ -2,12 +2,10 @@ import {
   EVENTS,
   ERROR_CODE,
   queueAddSchema,
-  queueAddBatchSchema,
   queueInsertAfterCurrentSchema,
   queueRemoveSchema,
   queueReorderSchema,
   defaultQueueAddSchema,
-  defaultQueueAddBatchSchema,
   defaultQueueRemoveSchema,
   queueLikeSchema,
   queueUnlikeSchema,
@@ -117,13 +115,43 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     EVENTS.QUEUE_ADD_BATCH,
     withPermission('add', 'Queue', async (ctx, raw) => {
       if (!(await checkSocketRateLimit(ctx.socket))) return
-      const parsed = queueAddBatchSchema.safeParse(raw)
-      if (!parsed.success) {
+
+      const rawTracks: unknown[] = Array.isArray(raw?.tracks) ? raw.tracks : []
+      const playlistName: string | undefined = raw?.playlistName
+
+      if (rawTracks.length === 0) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲列表为空' })
+        return
+      }
+
+      // Per-track validation: skip individual invalid tracks instead of rejecting the batch
+      const validTracks: Track[] = []
+      let skipped = 0
+      for (const t of rawTracks) {
+        const check = queueAddSchema.safeParse({ track: t })
+        if (check.success) {
+          validTracks.push({ ...check.data.track, requestedBy: ctx.user.nickname })
+        } else {
+          skipped++
+          const issues = check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 3)
+          logger.warn('QUEUE_ADD_BATCH: skipping invalid track', {
+            title: (t as any)?.title,
+            sourceId: (t as any)?.sourceId,
+            issues,
+          })
+        }
+      }
+
+      if (validTracks.length === 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const { tracks: rawTracks, playlistName } = parsed.data
-      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
+
+      if (skipped > 0) {
+        logger.warn(`QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, { roomId: ctx.roomId })
+      }
+
+      const tracks = validTracks
 
       const addedCount = queueService.addBatchTracks(ctx.roomId, tracks)
       if (addedCount === 0) {
@@ -237,17 +265,41 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   socket.on(
     EVENTS.DEFAULT_QUEUE_ADD_BATCH,
     withPermission('add', 'Queue', (ctx, raw) => {
-      const parsed = defaultQueueAddBatchSchema.safeParse(raw)
-      if (!parsed.success) {
-        logger.warn('DEFAULT_QUEUE_ADD_BATCH schema validation failed', {
-          error: parsed.error.issues.slice(0, 5),
-          trackCount: raw?.tracks?.length,
-        })
+      const rawTracks: unknown[] = Array.isArray(raw?.tracks) ? raw.tracks : []
+
+      if (rawTracks.length === 0) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲列表为空' })
+        return
+      }
+
+      // Per-track validation: skip individual invalid tracks instead of rejecting the batch
+      const validTracks: Track[] = []
+      let skipped = 0
+      for (const t of rawTracks) {
+        const check = queueAddSchema.safeParse({ track: t })
+        if (check.success) {
+          validTracks.push({ ...check.data.track, requestedBy: ctx.user.nickname })
+        } else {
+          skipped++
+          const issues = check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 3)
+          logger.warn('DEFAULT_QUEUE_ADD_BATCH: skipping invalid track', {
+            title: (t as any)?.title,
+            sourceId: (t as any)?.sourceId,
+            issues,
+          })
+        }
+      }
+
+      if (validTracks.length === 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const { tracks: rawTracks } = parsed.data
-      const tracks: Track[] = rawTracks.map((t) => ({ ...t, requestedBy: ctx.user.nickname }))
+
+      if (skipped > 0) {
+        logger.warn(`DEFAULT_QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, { roomId: ctx.roomId })
+      }
+
+      const tracks = validTracks
 
       ctx.room.defaultQueue.push(...tracks)
       broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
