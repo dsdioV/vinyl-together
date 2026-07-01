@@ -239,6 +239,10 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     withPermission('add', 'Queue', (ctx, raw) => {
       const parsed = defaultQueueAddBatchSchema.safeParse(raw)
       if (!parsed.success) {
+        logger.warn('DEFAULT_QUEUE_ADD_BATCH schema validation failed', {
+          error: parsed.error.issues.slice(0, 5),
+          trackCount: raw?.tracks?.length,
+        })
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }

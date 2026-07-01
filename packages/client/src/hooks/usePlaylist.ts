@@ -292,6 +292,7 @@ export function usePlaylist() {
     (tracks: Track[], _playlistName?: string) => {
       if (tracks.length === 0) return
       const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
+      console.info(`[vinyl] addBatchToDefaultQueue: adding ${tracks.length} tracks in ${Math.ceil(tracks.length / batchSize)} chunks`)
       for (let i = 0; i < tracks.length; i += batchSize) {
         const chunk = tracks.slice(i, i + batchSize)
         socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk })

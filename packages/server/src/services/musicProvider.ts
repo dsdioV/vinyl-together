@@ -1203,8 +1203,19 @@ class MusicProvider {
 
         for (const song of songs) {
           const track = this.kugouSongToTrack(song)
-          if (track) allTracks.push(track)
+          if (track) {
+            allTracks.push(track)
+          } else {
+            logger.warn('Kugou playlist: skipping track with no hash', {
+              playlistId,
+              filename: String(song.filename || song.name || ''),
+              hasHash: !!song.hash,
+              keys: Object.keys(song).join(','),
+            })
+          }
         }
+
+        logger.info(`Kugou playlist page ${page}: got ${songs.length}, total tracks so far ${allTracks.length}/${totalFromApi}`)
 
         if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
         page++
@@ -1278,7 +1289,15 @@ class MusicProvider {
     // Cast for convenient dynamic property access
     const song_ = song as Record<string, any>
     const hash = song_.hash || song_.audio_info?.hash || ''
-    if (!hash) return null
+    if (!hash) {
+      logger.warn('kugouSongToTrack: no hash found', {
+        hasHash: !!song_.hash,
+        hasAudioInfo: !!song_.audio_info,
+        filename: String(song_.filename || song_.name || ''),
+        sampleKeys: Object.keys(song).slice(0, 10).join(','),
+      })
+      return null
+    }
 
     // filename is typically "Artist - Title" or "Artist1、Artist2 - Title"
     const filename = String(song_.filename || song_.name || '')
