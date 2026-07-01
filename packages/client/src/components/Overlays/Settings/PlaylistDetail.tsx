@@ -67,7 +67,7 @@ export function PlaylistDetail({
 
   const isSearching = filteredTracks !== null
   const displayTracks = filteredTracks ?? tracks
-  const searchTotalPages = Math.max(1, Math.ceil(filteredTracks?.length ?? 0 / SEARCH_PAGE_SIZE))
+  const searchTotalPages = Math.max(1, Math.ceil((filteredTracks?.length ?? 0) / SEARCH_PAGE_SIZE))
   const searchPageTracks = useMemo(
     () => isSearching ? displayTracks.slice((searchPage - 1) * SEARCH_PAGE_SIZE, searchPage * SEARCH_PAGE_SIZE) : displayTracks,
     [displayTracks, isSearching, searchPage],
