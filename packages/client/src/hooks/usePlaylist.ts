@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { EVENTS, LIMITS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
@@ -287,6 +288,19 @@ export function usePlaylist() {
     [socket],
   )
 
+  const addBatchToDefaultQueue = useCallback(
+    (tracks: Track[], _playlistName?: string) => {
+      if (tracks.length === 0) return
+      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
+      for (let i = 0; i < tracks.length; i += batchSize) {
+        const chunk = tracks.slice(i, i + batchSize)
+        socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk })
+      }
+      toast.success(`已添加 ${tracks.length} 首歌到默认播放列表`)
+    },
+    [socket],
+  )
+
   return {
     myPlaylists,
     playlistsLoading,
@@ -301,6 +315,7 @@ export function usePlaylist() {
     addTrackToQueue,
     insertTrackAfterCurrent,
     addBatchToQueue,
+    addBatchToDefaultQueue,
     fetchTrackById,
   }
 }

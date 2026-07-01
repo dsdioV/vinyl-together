@@ -97,6 +97,7 @@ export function PlatformHub() {
             onAddTrack={playlist.addTrackToQueue}
             onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
             onAddAll={playlist.addBatchToQueue}
+            onAddToDefault={playlist.addBatchToDefaultQueue}
             onLoadMore={playlist.loadMoreTracks}
             maxAddCount={LIMITS.QUEUE_MAX_SIZE}
           />

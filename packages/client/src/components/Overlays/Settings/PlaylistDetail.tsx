@@ -4,7 +4,7 @@ import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Playlist, Track } from '@music-together/shared'
-import { ArrowLeft, ListPlus, Music } from 'lucide-react'
+import { ArrowLeft, Library, ListPlus, Music } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -21,6 +21,7 @@ interface PlaylistDetailProps {
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], playlistName?: string) => void
+  onAddToDefault?: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
   /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
   maxAddCount?: number
@@ -44,6 +45,7 @@ export function PlaylistDetail({
   onAddTrack,
   onInsertAfterCurrent,
   onAddAll,
+  onAddToDefault,
   onLoadMore,
   maxAddCount,
   checkedKeys,
@@ -114,6 +116,17 @@ export function PlaylistDetail({
     }
   }, [addCount, uniqueTracks, onAddAll, playlist?.name])
 
+  const handleAddToDefault = useCallback(() => {
+    if (!onAddToDefault) return
+    if (uniqueTracks.length === 0) return
+    onAddToDefault(uniqueTracks, playlist?.name)
+    setAddedIds((prev) => {
+      const next = new Set(prev)
+      for (const t of uniqueTracks) next.add(trackKey(t))
+      return next
+    })
+  }, [uniqueTracks, onAddToDefault, playlist?.name])
+
   // Button label
   let addAllLabel: string
   if (loading) {
@@ -147,16 +160,30 @@ export function PlaylistDetail({
             ? '加载中…'
             : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleAddAll}
-          disabled={loading || isQueueFull || uniqueTracks.length === 0}
-          className="shrink-0 gap-1"
-        >
-          <ListPlus className="h-3.5 w-3.5" />
-          {addAllLabel}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onAddToDefault && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddToDefault}
+              disabled={loading || uniqueTracks.length === 0}
+              className="shrink-0 gap-1"
+            >
+              <Library className="h-3.5 w-3.5" />
+              加入默认列表
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAddAll}
+            disabled={loading || isQueueFull || uniqueTracks.length === 0}
+            className="shrink-0 gap-1"
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+            {addAllLabel}
+          </Button>
+        </div>
       </div>
 
       <Separator className="shrink-0" />
