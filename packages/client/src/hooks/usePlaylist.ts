@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { EVENTS, LIMITS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
+import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
@@ -274,16 +274,8 @@ export function usePlaylist() {
 
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
-      // Chunk large batch additions into QUEUE_BATCH_MAX_SIZE groups
-      // so long playlists can be added without hitting the schema limit
-      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
-      for (let i = 0; i < tracks.length; i += batchSize) {
-        const chunk = tracks.slice(i, i + batchSize)
-        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
-          tracks: chunk,
-          playlistName: i === 0 ? playlistName : `${playlistName ?? ''} (续 ${Math.floor(i / batchSize) + 1})`,
-        })
-      }
+      if (tracks.length === 0) return
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
     },
     [socket],
   )
@@ -291,12 +283,7 @@ export function usePlaylist() {
   const addBatchToDefaultQueue = useCallback(
     (tracks: Track[], _playlistName?: string) => {
       if (tracks.length === 0) return
-      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
-      console.info(`[vinyl] addBatchToDefaultQueue: adding ${tracks.length} tracks in ${Math.ceil(tracks.length / batchSize)} chunks`)
-      for (let i = 0; i < tracks.length; i += batchSize) {
-        const chunk = tracks.slice(i, i + batchSize)
-        socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk })
-      }
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks })
       toast.success(`已添加 ${tracks.length} 首歌到默认播放列表`)
     },
     [socket],

@@ -9,7 +9,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { EVENTS, LIMITS } from '@music-together/shared'
+import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, Hash, ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -114,11 +114,7 @@ export function DefaultPlaylistSection() {
   const handleAddBatchToDefault = useCallback(
     (tracks: Track[]) => {
       if (tracks.length === 0) return
-      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
-      for (let i = 0; i < tracks.length; i += batchSize) {
-        const chunk = tracks.slice(i, i + batchSize)
-        socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk })
-      }
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks })
       toast.success(`已添加 ${tracks.length} 首歌到默认播放列表`)
     },
     [socket],

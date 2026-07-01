@@ -17,7 +17,7 @@ import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useAuth } from '@/hooks/useAuth'
 import { usePlatformAutoSwitch } from '@/hooks/usePlatformAutoSwitch'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { EVENTS, LIMITS } from '@music-together/shared'
+import { EVENTS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, Hash } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -164,14 +164,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      const batchSize = LIMITS.QUEUE_BATCH_MAX_SIZE
-      for (let i = 0; i < tracks.length; i += batchSize) {
-        const chunk = tracks.slice(i, i + batchSize)
-        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
-          tracks: chunk,
-          playlistName: i === 0 ? playlistName : `${playlistName ?? ''} (续 ${Math.floor(i / batchSize) + 1})`,
-        })
-      }
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
@@ -300,7 +293,6 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               onInsertAfterCurrent={handleInsertAfterCurrent}
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
-              maxAddCount={LIMITS.QUEUE_MAX_SIZE}
             />
           ) : (
             <>

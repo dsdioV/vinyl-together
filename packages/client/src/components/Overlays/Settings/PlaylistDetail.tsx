@@ -4,9 +4,10 @@ import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { Playlist, Track } from '@music-together/shared'
-import { ArrowLeft, Library, ListPlus, Music } from 'lucide-react'
+import { ArrowLeft, Library, ListPlus, Music, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { Input } from '@/components/ui/input'
 
 const EMPTY_QUEUE: Track[] = []
 
@@ -24,7 +25,6 @@ interface PlaylistDetailProps {
   onAddToDefault?: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
   /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
-  maxAddCount?: number
   /**
    * Optional set of track keys to treat as "already added".
    * When omitted, the main queue is used (default for PlatformHub).
@@ -47,11 +47,31 @@ export function PlaylistDetail({
   onAddAll,
   onAddToDefault,
   onLoadMore,
-  maxAddCount,
   checkedKeys,
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
+
+  // Song-list search & pagination
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchPage, setSearchPage] = useState(1)
+  const SEARCH_PAGE_SIZE = 50
+
+  const filteredTracks = useMemo(() => {
+    if (!searchQuery.trim()) return null // null = no filter, use original tracks
+    const q = searchQuery.trim().toLowerCase()
+    return tracks.filter(
+      (t) => t.title.toLowerCase().includes(q) || t.artist.some((a) => a.toLowerCase().includes(q)),
+    )
+  }, [tracks, searchQuery])
+
+  const isSearching = filteredTracks !== null
+  const displayTracks = filteredTracks ?? tracks
+  const searchTotalPages = Math.max(1, Math.ceil(filteredTracks?.length ?? 0 / SEARCH_PAGE_SIZE))
+  const searchPageTracks = useMemo(
+    () => isSearching ? displayTracks.slice((searchPage - 1) * SEARCH_PAGE_SIZE, searchPage * SEARCH_PAGE_SIZE) : displayTracks,
+    [displayTracks, isSearching, searchPage],
+  )
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
   // When checkedKeys is provided (e.g. defaultKeys for default playlist),
   // use it instead of queueKeys to determine "already added" state.
@@ -92,29 +112,18 @@ export function PlaylistDetail({
   )
 
   // Dynamic "add all" logic — filter duplicates
-  // maxAddCount limits how many tracks can be added (e.g. main queue capacity).
-  // When omitted, no limit is enforced (e.g. default playlist which has no server-side cap).
-  const effectiveMax = maxAddCount ?? Infinity
-  const availableSlots = effectiveMax - queue.length
   const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
-  const addCount = Math.min(availableSlots, uniqueTracks.length)
-  const isQueueFull = availableSlots <= 0
 
   const handleAddAll = useCallback(() => {
-    if (addCount <= 0) return
-    const toAdd = uniqueTracks.slice(0, addCount)
-    onAddAll(toAdd, playlist?.name)
+    if (uniqueTracks.length === 0) return
+    onAddAll(uniqueTracks, playlist?.name)
     setAddedIds((prev) => {
       const next = new Set(prev)
-      for (const t of toAdd) next.add(trackKey(t))
+      for (const t of uniqueTracks) next.add(trackKey(t))
       return next
     })
-    if (addCount < uniqueTracks.length) {
-      toast.success(`已添加 ${addCount} 首到队列（队列已满，还有 ${uniqueTracks.length - addCount} 首未添加）`)
-    } else {
-      toast.success(`已添加全部 ${addCount} 首到队列`)
-    }
-  }, [addCount, uniqueTracks, onAddAll, playlist?.name])
+    toast.success(`已添加 ${uniqueTracks.length} 首到队列`)
+  }, [uniqueTracks, onAddAll, playlist?.name])
 
   const handleAddToDefault = useCallback(() => {
     if (!onAddToDefault) return
@@ -133,14 +142,10 @@ export function PlaylistDetail({
     addAllLabel = '加载中…'
   } else if (tracks.length === 0) {
     addAllLabel = '添加全部'
-  } else if (isQueueFull) {
-    addAllLabel = '队列已满'
   } else if (uniqueTracks.length === 0) {
     addAllLabel = '全部已添加'
-  } else if (addCount === uniqueTracks.length) {
-    addAllLabel = `添加全部 ${addCount} 首`
   } else {
-    addAllLabel = `添加 ${addCount} 首到队列`
+    addAllLabel = `添加全部 ${uniqueTracks.length} 首`
   }
 
   return (
@@ -153,12 +158,27 @@ export function PlaylistDetail({
         <h4 className="min-w-0 flex-1 truncate text-sm font-semibold">{playlist?.name ?? '歌单详情'}</h4>
       </div>
 
+      {/* Search box */}
+      {tracks.length > 0 && (
+        <div className="relative shrink-0">
+          <Search className="text-muted-foreground absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setSearchPage(1) }}
+            placeholder="搜索歌单内歌曲…"
+            className="h-8 pl-8 pr-3 text-xs"
+          />
+        </div>
+      )}
+
       {/* Row 2: Info + Action */}
       <div className="flex shrink-0 items-center justify-between gap-3 py-1">
         <p className="text-muted-foreground text-xs">
           {loading
             ? '加载中…'
-            : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
+            : isSearching
+              ? `搜索到 ${filteredTracks!.length} 首${tracks.length < total ? `（已加载 ${tracks.length} / ${total}，搜索范围可能不完整）` : ''}`
+              : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
         </p>
         <div className="flex shrink-0 items-center gap-1.5">
           {onAddToDefault && (
@@ -177,7 +197,7 @@ export function PlaylistDetail({
             variant="outline"
             size="sm"
             onClick={handleAddAll}
-            disabled={loading || isQueueFull || uniqueTracks.length === 0}
+            disabled={loading || uniqueTracks.length === 0}
             className="shrink-0 gap-1"
           >
             <ListPlus className="h-3.5 w-3.5" />
@@ -190,18 +210,47 @@ export function PlaylistDetail({
 
       {/* Track list with shared virtual scrolling component */}
       <VirtualTrackList
-        tracks={tracks}
+        tracks={searchPageTracks}
         loading={loading}
-        hasMore={hasMore}
+        hasMore={isSearching ? false : hasMore}
         loadingMore={loadingMore}
-        onLoadMore={onLoadMore}
+        onLoadMore={isSearching ? () => {} : onLoadMore}
         isTrackAdded={isTrackAdded}
         onAddTrack={handleAddTrack}
         onInsertAfterCurrent={onInsertAfterCurrent ? handleInsertAfterCurrent : undefined}
         emptyIcon={<Music className="h-8 w-8" />}
-        emptyMessage="歌单为空"
+        emptyMessage={isSearching ? '没有匹配的歌曲' : '歌单为空'}
         className="border-0 rounded-none"
       />
+
+      {/* Pagination for search results */}
+      {isSearching && searchTotalPages > 1 && (
+        <div className="flex shrink-0 items-center justify-center gap-3 py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={searchPage <= 1}
+            onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
+            className="gap-1"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            上一页
+          </Button>
+          <span className="text-muted-foreground text-xs tabular-nums">
+            {searchPage} / {searchTotalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={searchPage >= searchTotalPages}
+            onClick={() => setSearchPage((p) => Math.min(searchTotalPages, p + 1))}
+            className="gap-1"
+          >
+            下一页
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
