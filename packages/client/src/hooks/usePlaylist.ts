@@ -4,6 +4,9 @@ import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-toge
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
+import { trackLookupFailure, type TrackLookupResult } from '@/lib/trackLookup'
+
+export { parsePlaylistInput } from '@/lib/musicInput'
 
 const PAGE_SIZE = 1000
 
@@ -25,73 +28,6 @@ function buildPlaylistUrl(
   if (options?.roomId) params.set('roomId', options.roomId)
   if (options?.type) params.set('type', options.type)
   return `${SERVER_URL}/api/music/playlist?${params.toString()}`
-}
-
-/**
- * Extract a playlist ID from a URL or raw ID string.
- * Supports common URL formats for netease, tencent, and kugou.
- */
-export function parsePlaylistInput(input: string, source: MusicSource): string | null {
-  const trimmed = input.trim()
-  if (!trimmed) return null
-
-  // If it looks like a plain numeric/alphanumeric ID, return as-is
-  if (/^[\w-]+$/.test(trimmed)) return trimmed
-
-  try {
-    const url = new URL(trimmed)
-
-    switch (source) {
-      case 'netease': {
-        // https://music.163.com/playlist?id=12345
-        // https://music.163.com/#/playlist?id=12345
-        const idParam = url.searchParams.get('id')
-        if (idParam) return idParam
-        const hashMatch = url.hash.match(/[?&]id=(\d+)/)
-        if (hashMatch) return hashMatch[1]
-        const pathMatch = url.pathname.match(/\/playlist\/(\d+)/)
-        if (pathMatch) return pathMatch[1]
-        break
-      }
-      case 'tencent': {
-        // https://y.qq.com/n/ryqq/playlist/12345.html
-        const qqMatch = url.pathname.match(/\/playlist\/(\d+)/)
-        if (qqMatch) return qqMatch[1]
-        break
-      }
-      case 'kugou': {
-        // Track URL: https://www.kugou.com/song/#hash=BF7F3BC4... or #6h5o4sc6
-        if (url.hash) {
-          let hashVal = url.hash.replace(/^#/, '').split(/[?&]/)[0].trim()
-          // Strip "hash=" prefix if present (Kugou's 32-char audio hash format)
-          if (hashVal.startsWith('hash=')) hashVal = hashVal.slice(5)
-          if (hashVal && hashVal.length >= 4) return hashVal
-        }
-
-        // Songlist URL: https://www.kugou.com/songlist/gcid_3zwlkkpdz1jz0f2/
-        const slMatch = url.pathname.match(/\/songlist\/(.+)/)
-        if (slMatch) {
-          const id = slMatch[1].replace(/\/+$/, '')
-          if (id) return id
-        }
-
-        // Special/album URL: https://www.kugou.com/yy/special/single/12345.html
-        const spMatch = url.pathname.match(/\/special\/(?:single\/)?(\d+)/)
-        if (spMatch) return spMatch[1]
-
-        // Fallback: any longer numeric ID in path
-        const kgMatch = url.pathname.match(/(\d{4,})/)
-        if (kgMatch) return kgMatch[1]
-        break
-      }
-    }
-  } catch {
-    // Not a URL, try to extract numbers
-    const numMatch = trimmed.match(/(\d{4,})/)
-    if (numMatch) return numMatch[1]
-  }
-
-  return null
 }
 
 export function usePlaylist() {
@@ -254,7 +190,7 @@ export function usePlaylist() {
    * Uses the /api/music/track endpoint.
    */
   const fetchTrackById = useCallback(
-    async (source: MusicSource, trackId: string): Promise<Track | null> => {
+    async (source: MusicSource, trackId: string): Promise<TrackLookupResult> => {
       try {
         const params = new URLSearchParams({ source, id: trackId })
         const roomId = useRoomStore.getState().room?.id
@@ -262,11 +198,17 @@ export function usePlaylist() {
         const res = await fetch(`${SERVER_URL}/api/music/track?${params.toString()}`, {
           credentials: 'include',
         })
-        if (!res.ok) return null
-        const data = await res.json()
-        return data.track ?? null
+        let data: { track?: Track; code?: unknown; error?: unknown } | null = null
+        try {
+          data = (await res.json()) as { track?: Track; code?: unknown; error?: unknown }
+        } catch {
+          // Fall through to a status-specific, safe message.
+        }
+        if (!res.ok) return trackLookupFailure(res.status, data)
+        if (!data?.track) return trackLookupFailure(502, null)
+        return { ok: true, track: data.track }
       } catch {
-        return null
+        return { ok: false, code: 'NETWORK_ERROR', message: '无法连接服务器，请稍后重试' }
       }
     },
     [],

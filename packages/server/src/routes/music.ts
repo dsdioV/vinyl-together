@@ -9,6 +9,7 @@ import {
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
 import { musicProvider } from '../services/musicProvider.js'
+import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
@@ -122,7 +123,16 @@ router.get(
       }
     }
 
-    const track = await musicProvider.getTrackById(data.source, data.id, cookie)
+    let track
+    try {
+      track = await musicProvider.getTrackById(data.source, data.id, cookie)
+    } catch (error) {
+      if (error instanceof KugouShortCodeError) {
+        res.status(error.httpStatus).json({ error: error.message, code: error.code })
+        return
+      }
+      throw error
+    }
     if (!track) {
       res.status(404).json({ error: '歌曲未找到' })
       return

@@ -201,13 +201,14 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       }
 
       setIdLoading(true)
-      const track = await fetchTrackById(source, parsedId)
+      const result = await fetchTrackById(source, parsedId)
       setIdLoading(false)
 
-      if (!track) {
-        toast.error('未找到该歌曲，请检查 ID 是否正确')
+      if (!result.ok) {
+        toast.error(result.message)
         return
       }
+      const track = result.track
 
       const key = trackKey(track)
       if (queueKeys.has(key) || addedIds.has(key)) {

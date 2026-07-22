@@ -8,6 +8,11 @@ import pLimit from 'p-limit'
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import * as kugouAuth from './kugouAuthService.js'
 import * as tencentAuth from './tencentAuthService.js'
+import {
+  isKugouShortCode,
+  KugouShortCodeError,
+  resolveKugouShortCode,
+} from './kugouShortCodeService.js'
 import { logger } from '../utils/logger.js'
 
 /** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
@@ -169,7 +174,7 @@ const MINUTE = 60 * 1000
 // ---------------------------------------------------------------------------
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
 
-class MusicProvider {
+export class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, MetingInstance>()
 
@@ -870,24 +875,42 @@ class MusicProvider {
           track = await this.fetchTencentTrackById(sourceId)
           break
         case 'kugou':
-          // Detect short code (6-8 chars, not a 32-char hex hash)
-          if (/^[a-zA-Z0-9]{6,8}$/.test(sourceId) && !/^[a-fA-F0-9]{32}$/.test(sourceId)) {
-            logger.info(`Kugou short code detected: ${sourceId}, resolving via play/songinfo...`)
-            const resolved = await kugouAuth.resolveShortCode(sourceId, cookie)
-            if (resolved) {
-              // Use the resolved hash to fetch full track data
-              track = await this.fetchKugouTrackById(resolved.hash)
-              if (track) {
-                // Override with resolved metadata if the hash API returned less info
-                if (!track.title && resolved.songName) track.title = resolved.songName
-                if (track.artist.length === 0 && resolved.singerName) {
-                  track.artist = resolved.singerName.split(/[、,，&]/).map((a: string) => a.trim()).filter(Boolean)
-                }
+          if (isKugouShortCode(sourceId)) {
+            logger.info(`Kugou short code detected: ${sourceId}`)
+            const resolved = await resolveKugouShortCode(sourceId)
+            track = await this.fetchKugouTrackById(resolved.hash)
+
+            const resolvedArtists = resolved.singerName
+              .split(/[、,，&]/)
+              .map((artist) => artist.trim())
+              .filter(Boolean)
+
+            if (!track) {
+              track = {
+                id: nanoid(),
+                title: resolved.songName || 'Unknown',
+                artist: resolvedArtists.length > 0 ? resolvedArtists : ['Unknown'],
+                album: resolved.albumName || '',
+                duration: resolved.duration,
+                cover: '',
+                source: 'kugou',
+                sourceId: resolved.hash,
+                urlId: resolved.hash,
+                lyricId: resolved.hash,
+                picId: resolved.hash,
               }
-              break
+            } else {
+              if ((!track.title || track.title === 'Unknown') && resolved.songName) track.title = resolved.songName
+              if (
+                (track.artist.length === 0 || track.artist.every((artist) => artist === 'Unknown')) &&
+                resolvedArtists.length > 0
+              ) {
+                track.artist = resolvedArtists
+              }
+              if (!track.album && resolved.albumName) track.album = resolved.albumName
+              if (!track.duration && resolved.duration) track.duration = resolved.duration
             }
-            // Short code resolution failed — fall through to try as hash
-            logger.warn(`Kugou short code resolution failed for ${sourceId}, trying as hash...`)
+            break
           }
           track = await this.fetchKugouTrackById(sourceId)
           break
@@ -905,6 +928,7 @@ class MusicProvider {
 
       return track
     } catch (err) {
+      if (err instanceof KugouShortCodeError) throw err
       logger.error(`getTrackById failed for ${source}/${sourceId}:`, err)
       return null
     }

@@ -154,13 +154,14 @@ export function DefaultPlaylistSection() {
       }
 
       setIdLoading(true)
-      const track = await fetchTrackById(source, parsedId)
+      const result = await fetchTrackById(source, parsedId)
       setIdLoading(false)
 
-      if (!track) {
-        toast.error('未找到该歌曲，请检查 ID 是否正确')
+      if (!result.ok) {
+        toast.error(result.message)
         return
       }
+      const track = result.track
 
       if (defaultKeys.has(trackKey(track))) {
         toast.info(`「${track.title}」已在默认播放列表中`)
