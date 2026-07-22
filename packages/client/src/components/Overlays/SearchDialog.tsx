@@ -27,6 +27,12 @@ import { PlaylistDetail } from './Settings/PlaylistDetail'
 
 const EMPTY_QUEUE: Track[] = []
 
+type PlaylistDetailContext = {
+  playlist: Playlist
+  source: MusicSource
+  type: 'album' | 'playlist'
+}
+
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
   { id: 'tencent', label: 'QQ' },
@@ -69,19 +75,30 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const { socket } = useSocketContext()
 
   // Album Detail view state
-  const [selectedAlbum, setSelectedAlbum] = useState<Playlist | null>(null)
+  const [selectedAlbum, setSelectedAlbum] = useState<PlaylistDetailContext | null>(null)
   const {
     playlistTracks,
     playlistTotal,
     tracksLoading,
     loadingMore: albumLoadingMore,
     hasMoreTracks,
+    playlistSearchTracks,
+    playlistSearchTotal,
+    playlistSearchPage,
+    playlistSearchHasMore,
+    playlistSearchLoading,
+    playlistSearchError,
     fetchPlaylistTracks,
     loadMoreTracks,
+    searchPlaylistTracks,
+    clearPlaylistSearch,
     fetchTrackById,
   } = usePlaylist()
 
-  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
+  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(
+    source,
+    searchType,
+  )
 
   // Auto re-search when source or type changes
   const prevSourceRef = useRef(source)
@@ -141,7 +158,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       }
       onAddToQueue(track)
       setAddedIds((prev) => new Set(prev).add(key))
-      // Removed duplicate toast.success since onAddToQueue (from useQueue) usually already handles it 
+      // Removed duplicate toast.success since onAddToQueue (from useQueue) usually already handles it
       // or the UI handles feedback.
     },
     [onAddToQueue, queueKeys, addedIds],
@@ -172,7 +189,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       })
       toast.success(`已添加 ${tracks.length} 首歌曲`)
     },
-    [socket]
+    [socket],
   )
 
   const isTrackAdded = useCallback(
@@ -184,8 +201,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   )
 
   const handleSelectAlbum = (album: Playlist) => {
-    setSelectedAlbum(album)
-    fetchPlaylistTracks(source, album.id, album.trackCount, searchType as 'album' | 'playlist')
+    const type = searchType as 'album' | 'playlist'
+    setSelectedAlbum({ playlist: album, source, type })
+    fetchPlaylistTracks(source, album.id, album.trackCount, type)
   }
 
   const handleIdLookup = async () => {
@@ -237,8 +255,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
       trackCount: 0,
       source,
     }
-    setSelectedAlbum(fakePlaylist)
-    fetchPlaylistTracks(source, parsedId, undefined, searchType as 'album' | 'playlist').finally(() => {
+    const type = searchType as 'album' | 'playlist'
+    setSelectedAlbum({ playlist: fakePlaylist, source, type })
+    fetchPlaylistTracks(source, parsedId, undefined, type).finally(() => {
       setIdLoading(false)
     })
   }
@@ -249,7 +268,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         <ResponsiveDialogHeader>
           <div className="flex items-center gap-3">
             <ResponsiveDialogTitle className="shrink-0">
-              {selectedAlbum ? selectedAlbum.name : '搜索点歌'}
+              {selectedAlbum ? selectedAlbum.playlist.name : '搜索点歌'}
             </ResponsiveDialogTitle>
             {!selectedAlbum && (
               <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5">
@@ -283,17 +302,29 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
           {selectedAlbum ? (
             <PlaylistDetail
-              playlist={selectedAlbum}
+              key={`${selectedAlbum.source}:${selectedAlbum.type}:${selectedAlbum.playlist.id}`}
+              playlist={selectedAlbum.playlist}
+              playlistSource={selectedAlbum.source}
+              playlistId={selectedAlbum.playlist.id}
+              playlistType={selectedAlbum.type}
               tracks={playlistTracks}
               loading={tracksLoading}
               loadingMore={albumLoadingMore}
               hasMore={hasMoreTracks}
               total={playlistTotal}
+              searchTracks={playlistSearchTracks}
+              searchTotal={playlistSearchTotal}
+              searchResultPage={playlistSearchPage}
+              searchHasMore={playlistSearchHasMore}
+              searchLoading={playlistSearchLoading}
+              searchError={playlistSearchError}
               onBack={() => setSelectedAlbum(null)}
               onAddTrack={handleAdd}
               onInsertAfterCurrent={handleInsertAfterCurrent}
               onAddAll={handleAddBatch}
               onLoadMore={loadMoreTracks}
+              onSearch={searchPlaylistTracks}
+              onClearSearch={clearPlaylistSearch}
             />
           ) : (
             <>
@@ -307,16 +338,24 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
                 }}
               >
                 <TabsList className="w-full">
-                  <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
+                  <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
+                    单曲
+                  </TabsTrigger>
+                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                    专辑
+                  </TabsTrigger>
+                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                    歌单
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
 
               {/* Search input */}
               <div className="flex gap-2">
                 <Input
-                  placeholder={searchType === 'song' ? '搜索歌曲、歌手...' : searchType === 'album' ? '搜索专辑...' : '搜索歌单...'}
+                  placeholder={
+                    searchType === 'song' ? '搜索歌曲、歌手...' : searchType === 'album' ? '搜索专辑...' : '搜索歌单...'
+                  }
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSearch()}

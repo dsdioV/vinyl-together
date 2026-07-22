@@ -124,7 +124,7 @@ export const queueAddBatchSchema = z.object({
 
 export const queueRemoveSchema = z.object({ trackId: z.string().max(200) })
 export const queueReorderSchema = z.object({
-  trackIds: z.array(z.string().max(200)).max(LIMITS.QUEUE_MAX_SIZE),
+  trackIds: z.array(z.string().max(200)).max(LIMITS.QUEUE_MAX_SIZE_MAX),
 })
 
 // ---------------------------------------------------------------------------
@@ -198,6 +198,24 @@ export const playlistQuerySchema = z.object({
   id: z.string().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
   limit: z.coerce.number().int().min(1).max(1000).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+  total: z.coerce.number().int().min(0).optional(),
+  roomId: z.string().min(1).max(10).optional(),
+  type: z.enum(['playlist', 'album']).optional().default('playlist'),
+})
+
+export const playlistSearchQuerySchema = z.object({
+  source: musicSourceSchema,
+  id: z.string().trim().min(1).max(LIMITS.PLAYLIST_ID_MAX_LENGTH),
+  keyword: z.string().trim().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
+  page: z.coerce.number().int().min(1).max(LIMITS.PLAYLIST_SEARCH_PAGE_MAX).default(1),
+  // Full-playlist search deliberately uses a fixed page size so the page
+  // ceiling always covers the complete supported 8,192-track range.
+  limit: z.coerce
+    .number()
+    .int()
+    .min(LIMITS.PLAYLIST_SEARCH_PAGE_SIZE)
+    .max(LIMITS.PLAYLIST_SEARCH_PAGE_SIZE)
+    .default(LIMITS.PLAYLIST_SEARCH_PAGE_SIZE),
   total: z.coerce.number().int().min(0).optional(),
   roomId: z.string().min(1).max(10).optional(),
   type: z.enum(['playlist', 'album']).optional().default('playlist'),

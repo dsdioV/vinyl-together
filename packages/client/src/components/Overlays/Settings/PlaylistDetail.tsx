@@ -3,9 +3,9 @@ import { Separator } from '@/components/ui/separator'
 import { VirtualTrackList } from '@/components/VirtualTrackList'
 import { trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
-import type { Playlist, Track } from '@music-together/shared'
+import { LIMITS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { ArrowLeft, Library, ListPlus, Music, Search, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 
@@ -13,17 +13,35 @@ const EMPTY_QUEUE: Track[] = []
 
 interface PlaylistDetailProps {
   playlist: Playlist | null
+  playlistSource: MusicSource
+  playlistId: string
+  playlistType: 'playlist' | 'album'
   tracks: Track[]
   loading: boolean
   loadingMore: boolean
   hasMore: boolean
   total: number
+  searchTracks: Track[]
+  searchTotal: number
+  searchResultPage: number
+  searchHasMore: boolean
+  searchLoading: boolean
+  searchError: string | null
   onBack: () => void
   onAddTrack: (track: Track) => void
   onInsertAfterCurrent?: (track: Track) => void
   onAddAll: (tracks: Track[], playlistName?: string) => void
   onAddToDefault?: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
+  onSearch: (
+    source: MusicSource,
+    playlistId: string,
+    keyword: string,
+    page: number,
+    trackCount?: number,
+    type?: 'playlist' | 'album',
+  ) => Promise<void>
+  onClearSearch: () => void
   /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
   maxAddCount?: number
   /** Label used by the bulk-add success toast. Defaults to the main queue. */
@@ -41,17 +59,28 @@ interface PlaylistDetailProps {
 
 export function PlaylistDetail({
   playlist,
+  playlistSource,
+  playlistId,
+  playlistType,
   tracks,
   loading,
   loadingMore,
   hasMore,
   total,
+  searchTracks,
+  searchTotal,
+  searchResultPage,
+  searchHasMore,
+  searchLoading,
+  searchError,
   onBack,
   onAddTrack,
   onInsertAfterCurrent,
   onAddAll,
   onAddToDefault,
   onLoadMore,
+  onSearch,
+  onClearSearch,
   maxAddCount,
   addAllTargetLabel,
   maxDefaultAddCount,
@@ -60,25 +89,65 @@ export function PlaylistDetail({
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set())
 
-  // Song-list search & pagination
+  // Full remote playlist search. Browsing tracks remain untouched so clearing
+  // the keyword immediately restores the existing virtual/infinite list.
   const [searchQuery, setSearchQuery] = useState('')
   const [searchPage, setSearchPage] = useState(1)
-  const SEARCH_PAGE_SIZE = 50
+  const [searchDebouncing, setSearchDebouncing] = useState(false)
+  const normalizedSearchQuery = searchQuery.trim()
+  const isSearching = normalizedSearchQuery.length > 0
+  const displayTracks = isSearching ? searchTracks : tracks
+  const displayLoading = isSearching ? searchDebouncing || searchLoading : loading
+  const searchTotalPages = Math.max(1, Math.ceil(searchTotal / LIMITS.PLAYLIST_SEARCH_PAGE_SIZE))
 
-  const filteredTracks = useMemo(() => {
-    if (!searchQuery.trim()) return null // null = no filter, use original tracks
-    const q = searchQuery.trim().toLowerCase()
-    return tracks.filter(
-      (t) => t.title.toLowerCase().includes(q) || t.artist.some((a) => a.toLowerCase().includes(q)),
-    )
-  }, [tracks, searchQuery])
+  useEffect(() => {
+    return () => onClearSearch()
+  }, [onClearSearch])
 
-  const isSearching = filteredTracks !== null
-  const displayTracks = filteredTracks ?? tracks
-  const searchTotalPages = Math.max(1, Math.ceil((filteredTracks?.length ?? 0) / SEARCH_PAGE_SIZE))
-  const searchPageTracks = useMemo(
-    () => isSearching ? displayTracks.slice((searchPage - 1) * SEARCH_PAGE_SIZE, searchPage * SEARCH_PAGE_SIZE) : displayTracks,
-    [displayTracks, isSearching, searchPage],
+  useEffect(() => {
+    if (!normalizedSearchQuery) return
+
+    const timeout = window.setTimeout(() => {
+      void onSearch(playlistSource, playlistId, normalizedSearchQuery, searchPage, total, playlistType)
+      setSearchDebouncing(false)
+    }, 300)
+
+    return () => window.clearTimeout(timeout)
+  }, [normalizedSearchQuery, onSearch, playlistId, playlistSource, playlistType, searchPage, total])
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      const nextNormalizedQuery = value.trim()
+
+      // Keep the displayed value in sync without resetting a search whose
+      // effective keyword did not change (for example, adding a trailing
+      // space). Since the effect depends on the normalized value, clearing
+      // here would otherwise leave the UI waiting for a request that will
+      // never be scheduled.
+      if (nextNormalizedQuery === normalizedSearchQuery) {
+        setSearchQuery(value)
+        return
+      }
+
+      // Clear the previous keyword's page in the same event as the input update;
+      // Abort/request-id guards alone would still leave stale UI during debounce.
+      onClearSearch()
+      setSearchQuery(value)
+      setSearchPage(1)
+      setSearchDebouncing(nextNormalizedQuery.length > 0)
+    },
+    [normalizedSearchQuery, onClearSearch],
+  )
+
+  const handleSearchPageChange = useCallback(
+    (page: number) => {
+      const nextPage = Math.min(searchTotalPages, Math.max(1, page))
+      if (nextPage === searchPage) return
+      onClearSearch()
+      setSearchPage(nextPage)
+      setSearchDebouncing(true)
+    },
+    [onClearSearch, searchPage, searchTotalPages],
   )
   const queueKeys = useMemo(() => new Set(queue.map(trackKey)), [queue])
   // When checkedKeys is provided (e.g. defaultKeys for default playlist),
@@ -120,13 +189,14 @@ export function PlaylistDetail({
   )
 
   // Dynamic "add all" logic — filter duplicates
-  const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
+  const uniqueTracks = useMemo(() => displayTracks.filter((t) => !isTrackAdded(t)), [displayTracks, isTrackAdded])
   const addAllTracks = useMemo(
     () => uniqueTracks.slice(0, maxAddCount === undefined ? uniqueTracks.length : Math.max(0, maxAddCount)),
     [uniqueTracks, maxAddCount],
   )
   const defaultAddTracks = useMemo(
-    () => uniqueTracks.slice(0, maxDefaultAddCount === undefined ? uniqueTracks.length : Math.max(0, maxDefaultAddCount)),
+    () =>
+      uniqueTracks.slice(0, maxDefaultAddCount === undefined ? uniqueTracks.length : Math.max(0, maxDefaultAddCount)),
     [uniqueTracks, maxDefaultAddCount],
   )
 
@@ -154,14 +224,14 @@ export function PlaylistDetail({
 
   // Button label
   let addAllLabel: string
-  if (loading) {
+  if (displayLoading) {
     addAllLabel = '加载中…'
-  } else if (tracks.length === 0) {
+  } else if (displayTracks.length === 0) {
     addAllLabel = '添加全部'
   } else if (addAllTracks.length === 0) {
     addAllLabel = maxAddCount === 0 ? '已达上限' : '全部已添加'
   } else {
-    addAllLabel = `添加全部 ${addAllTracks.length} 首`
+    addAllLabel = isSearching ? `添加本页 ${addAllTracks.length} 首` : `添加全部 ${addAllTracks.length} 首`
   }
 
   return (
@@ -175,13 +245,15 @@ export function PlaylistDetail({
       </div>
 
       {/* Search box */}
-      {tracks.length > 0 && (
+      {(tracks.length > 0 || total > 0 || isSearching) && (
         <div className="relative shrink-0">
           <Search className="text-muted-foreground absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
           <Input
             value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setSearchPage(1) }}
+            onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="搜索歌单内歌曲…"
+            aria-label="搜索歌单内歌曲"
+            maxLength={LIMITS.SEARCH_KEYWORD_MAX_LENGTH}
             className="h-8 pl-8 pr-3 text-xs"
           />
         </div>
@@ -190,10 +262,12 @@ export function PlaylistDetail({
       {/* Row 2: Info + Action */}
       <div className="flex shrink-0 items-center justify-between gap-3 py-1">
         <p className="text-muted-foreground text-xs">
-          {loading
+          {displayLoading
             ? '加载中…'
             : isSearching
-              ? `搜索到 ${filteredTracks!.length} 首${tracks.length < total ? `（已加载 ${tracks.length} / ${total}，搜索范围可能不完整）` : ''}`
+              ? searchError
+                ? '搜索失败'
+                : `搜索到 ${searchTotal} 首 · 第 ${searchResultPage} / ${searchTotalPages} 页`
               : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
         </p>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -202,7 +276,7 @@ export function PlaylistDetail({
               variant="outline"
               size="sm"
               onClick={handleAddToDefault}
-              disabled={loading || defaultAddTracks.length === 0}
+              disabled={displayLoading || defaultAddTracks.length === 0}
               className="shrink-0 gap-1"
             >
               <Library className="h-3.5 w-3.5" />
@@ -213,7 +287,7 @@ export function PlaylistDetail({
             variant="outline"
             size="sm"
             onClick={handleAddAll}
-            disabled={loading || addAllTracks.length === 0}
+            disabled={displayLoading || addAllTracks.length === 0}
             className="shrink-0 gap-1"
           >
             <ListPlus className="h-3.5 w-3.5" />
@@ -226,8 +300,8 @@ export function PlaylistDetail({
 
       {/* Track list with shared virtual scrolling component */}
       <VirtualTrackList
-        tracks={searchPageTracks}
-        loading={loading}
+        tracks={displayTracks}
+        loading={displayLoading}
         hasMore={isSearching ? false : hasMore}
         loadingMore={loadingMore}
         onLoadMore={isSearching ? () => {} : onLoadMore}
@@ -235,31 +309,31 @@ export function PlaylistDetail({
         onAddTrack={handleAddTrack}
         onInsertAfterCurrent={onInsertAfterCurrent ? handleInsertAfterCurrent : undefined}
         emptyIcon={<Music className="h-8 w-8" />}
-        emptyMessage={isSearching ? '没有匹配的歌曲' : '歌单为空'}
+        emptyMessage={isSearching ? searchError || '没有匹配的歌曲' : '歌单为空'}
         className="border-0 rounded-none"
       />
 
       {/* Pagination for search results */}
-      {isSearching && searchTotalPages > 1 && (
+      {isSearching && !displayLoading && !searchError && searchTotalPages > 1 && (
         <div className="flex shrink-0 items-center justify-center gap-3 py-2">
           <Button
             variant="outline"
             size="sm"
             disabled={searchPage <= 1}
-            onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
+            onClick={() => handleSearchPageChange(searchPage - 1)}
             className="gap-1"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             上一页
           </Button>
           <span className="text-muted-foreground text-xs tabular-nums">
-            {searchPage} / {searchTotalPages}
+            {searchResultPage} / {searchTotalPages}
           </span>
           <Button
             variant="outline"
             size="sm"
-            disabled={searchPage >= searchTotalPages}
-            onClick={() => setSearchPage((p) => Math.min(searchTotalPages, p + 1))}
+            disabled={searchPage >= searchTotalPages || !searchHasMore}
+            onClick={() => handleSearchPageChange(searchPage + 1)}
             className="gap-1"
           >
             下一页

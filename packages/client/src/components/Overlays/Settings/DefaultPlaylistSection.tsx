@@ -24,6 +24,12 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'kugou', label: '酷狗' },
 ]
 
+type PlaylistDetailContext = {
+  playlist: Playlist
+  source: MusicSource
+  type: 'album' | 'playlist'
+}
+
 export function DefaultPlaylistSection() {
   const { socket } = useSocketContext()
   const defaultQueue = useRoomStore((s) => s.room?.defaultQueue ?? [])
@@ -61,18 +67,29 @@ export function DefaultPlaylistSection() {
     setCurrentPage(1)
   }, [])
 
-  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(source, searchType)
+  const { results, loading, loadingMore, hasMore, hasSearched, search, loadMore, resetState } = useSearch(
+    source,
+    searchType,
+  )
 
   // Playlist detail state
-  const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null)
+  const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistDetailContext | null>(null)
   const {
     playlistTracks,
     playlistTotal,
     tracksLoading,
     loadingMore: playlistLoadingMore,
     hasMoreTracks,
+    playlistSearchTracks,
+    playlistSearchTotal,
+    playlistSearchPage,
+    playlistSearchHasMore,
+    playlistSearchLoading,
+    playlistSearchError,
     fetchPlaylistTracks,
     loadMoreTracks,
+    searchPlaylistTracks,
+    clearPlaylistSearch,
     fetchTrackById,
   } = usePlaylist()
 
@@ -132,14 +149,12 @@ export function DefaultPlaylistSection() {
     [socket],
   )
 
-  const isTrackInDefault = useCallback(
-    (track: Track) => defaultKeys.has(trackKey(track)),
-    [defaultKeys],
-  )
+  const isTrackInDefault = useCallback((track: Track) => defaultKeys.has(trackKey(track)), [defaultKeys])
 
   const handleSelectPlaylist = (pl: Playlist) => {
-    setSelectedPlaylist(pl)
-    fetchPlaylistTracks(source, pl.id, pl.trackCount, searchType as 'album' | 'playlist')
+    const type = searchType as 'album' | 'playlist'
+    setSelectedPlaylist({ playlist: pl, source, type })
+    fetchPlaylistTracks(source, pl.id, pl.trackCount, type)
   }
 
   const handleBackToSearch = () => {
@@ -194,8 +209,9 @@ export function DefaultPlaylistSection() {
       trackCount: 0,
       source,
     }
-    setSelectedPlaylist(fakePlaylist)
-    fetchPlaylistTracks(source, parsedId, undefined, searchType as 'album' | 'playlist').finally(() => {
+    const type = searchType as 'album' | 'playlist'
+    setSelectedPlaylist({ playlist: fakePlaylist, source, type })
+    fetchPlaylistTracks(source, parsedId, undefined, type).finally(() => {
       setIdLoading(false)
     })
   }
@@ -210,16 +226,28 @@ export function DefaultPlaylistSection() {
 
       {selectedPlaylist ? (
         <PlaylistDetail
-          playlist={selectedPlaylist}
+          key={`${selectedPlaylist.source}:${selectedPlaylist.type}:${selectedPlaylist.playlist.id}`}
+          playlist={selectedPlaylist.playlist}
+          playlistSource={selectedPlaylist.source}
+          playlistId={selectedPlaylist.playlist.id}
+          playlistType={selectedPlaylist.type}
           tracks={playlistTracks}
           loading={tracksLoading}
           loadingMore={playlistLoadingMore}
           hasMore={hasMoreTracks}
           total={playlistTotal}
+          searchTracks={playlistSearchTracks}
+          searchTotal={playlistSearchTotal}
+          searchResultPage={playlistSearchPage}
+          searchHasMore={playlistSearchHasMore}
+          searchLoading={playlistSearchLoading}
+          searchError={playlistSearchError}
           onBack={handleBackToSearch}
           onAddTrack={handleAddToDefault}
           onAddAll={handleAddBatchToDefault}
           onLoadMore={loadMoreTracks}
+          onSearch={searchPlaylistTracks}
+          onClearSearch={clearPlaylistSearch}
           maxAddCount={remainingCapacity}
           addAllTargetLabel="默认播放列表"
           checkedKeys={defaultKeys}
@@ -235,16 +263,25 @@ export function DefaultPlaylistSection() {
             }}
           >
             <TabsList className="w-full">
-              <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">单曲</TabsTrigger>
-              <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">专辑</TabsTrigger>
-              <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">歌单</TabsTrigger>
+              <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
+                单曲
+              </TabsTrigger>
+              <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                专辑
+              </TabsTrigger>
+              <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                歌单
+              </TabsTrigger>
             </TabsList>
           </Tabs>
 
           {/* Search */}
           <div className="space-y-3 mt-3">
             <div className="flex items-center gap-2">
-              <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5 shrink-0">
+              <div
+                ref={sourceContainerRef}
+                className="bg-muted/50 relative flex items-center rounded-lg p-0.5 shrink-0"
+              >
                 <motion.div
                   className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
                   animate={{ left: pillStyle.left, width: pillStyle.width }}
@@ -269,7 +306,11 @@ export function DefaultPlaylistSection() {
               </div>
               <Input
                 placeholder={
-                  searchType === 'song' ? '搜索歌曲...' : searchType === 'album' ? '搜索专辑 / 编号...' : '搜索歌单 / 编号...'
+                  searchType === 'song'
+                    ? '搜索歌曲...'
+                    : searchType === 'album'
+                      ? '搜索专辑 / 编号...'
+                      : '搜索歌单 / 编号...'
                 }
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
@@ -277,7 +318,13 @@ export function DefaultPlaylistSection() {
                 className="flex-1 h-8 text-sm"
                 aria-label="搜索添加到默认列表"
               />
-              <Button size="sm" className="h-8 shrink-0" onClick={() => handleSearch()} disabled={loading} aria-label="搜索">
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => handleSearch()}
+                disabled={loading}
+                aria-label="搜索"
+              >
                 {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
               </Button>
               <Button
@@ -303,15 +350,21 @@ export function DefaultPlaylistSection() {
                   className="flex-1 h-8 text-sm"
                   aria-label={searchType === 'song' ? '歌曲 ID 或链接' : '歌单 ID 或链接'}
                 />
-                <Button onClick={handleIdLookup} disabled={idLoading} size="sm" className="h-8 shrink-0" aria-label="按 ID 查找">
+                <Button
+                  onClick={handleIdLookup}
+                  disabled={idLoading}
+                  size="sm"
+                  className="h-8 shrink-0"
+                  aria-label="按 ID 查找"
+                >
                   {idLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '查找'}
                 </Button>
               </div>
             )}
 
             {/* Search results */}
-            {hasSearched && (
-              searchType === 'song' ? (
+            {hasSearched &&
+              (searchType === 'song' ? (
                 <div className="rounded-md border max-h-48 overflow-hidden">
                   <VirtualTrackList
                     ref={listRef}
@@ -380,8 +433,7 @@ export function DefaultPlaylistSection() {
                     </div>
                   )}
                 </div>
-              )
-            )}
+              ))}
           </div>
         </>
       )}

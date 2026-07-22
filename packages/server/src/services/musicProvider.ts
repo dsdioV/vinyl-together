@@ -1,7 +1,8 @@
 import Meting from '@meting/core'
 import { get as kugouLrcGet, Format } from '@s4p/kugou-lrc'
 import type { KrcInfo } from '@s4p/kugou-lrc'
-import type { MusicSource, Track } from '@music-together/shared'
+import { LIMITS, type MusicSource, type Track } from '@music-together/shared'
+import { createHash } from 'node:crypto'
 import { LRUCache } from 'lru-cache'
 import { nanoid } from 'nanoid'
 import pLimit from 'p-limit'
@@ -135,6 +136,19 @@ interface TencentSearchSong {
 
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
+/** Independent safety ceiling for ordinary full-playlist fetches. */
+const PLAYLIST_FETCH_HARD_MAX_TRACKS = 100_000
+
+class PlaylistPaginationError extends Error {
+  constructor(source: MusicSource, playlistId: string, page: number) {
+    super(`Playlist pagination repeated page ${page}: ${source}/${playlistId}`)
+    this.name = 'PlaylistPaginationError'
+  }
+}
+
+function fingerprintPlaylistPage(songs: readonly unknown[]): string {
+  return createHash('sha256').update(JSON.stringify(songs)).digest('hex')
+}
 
 /** Race a promise against a timeout. Returns null on timeout. */
 async function withTimeout<T>(promise: Promise<T>, ms = API_TIMEOUT_MS): Promise<T | null> {
@@ -169,6 +183,20 @@ const PLAYLIST_PATHS: Record<MusicSource, string> = {
 const HOUR = 60 * 60 * 1000
 const MINUTE = 60 * 1000
 
+export class PlaylistSearchLimitError extends Error {
+  readonly code = 'PLAYLIST_TRACK_LIMIT_EXCEEDED'
+  readonly maxTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS
+
+  constructor(readonly actualTracks?: number) {
+    super(
+      actualTracks === undefined
+        ? `歌单超过支持上限 ${LIMITS.PLAYLIST_SEARCH_MAX_TRACKS} 首`
+        : `歌单包含 ${actualTracks} 首歌曲，超过支持上限 ${LIMITS.PLAYLIST_SEARCH_MAX_TRACKS} 首`,
+    )
+    this.name = 'PlaylistSearchLimitError'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // TrackMeta — Track without per-instance fields (id, requestedBy)
 // ---------------------------------------------------------------------------
@@ -187,7 +215,7 @@ export class MusicProvider {
   // here. Cross-context enrichment: search provides duration + cover, playlist
   // provides additional tracks. Merge strategy keeps the richest data.
   private trackRegistry = new LRUCache<string, TrackMeta>({
-    max: 10_000,
+    max: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
     ttl: 2 * HOUR,
   })
 
@@ -212,6 +240,20 @@ export class MusicProvider {
     max: 500,
     ttl: 24 * HOUR,
   })
+
+  /**
+   * Playlist visibility can depend on the authenticated account. Keep indexes
+   * in separate credential scopes without retaining secrets in cache keys.
+   */
+  private getPlaylistCacheKey(
+    source: MusicSource,
+    type: 'playlist' | 'album',
+    playlistId: string,
+    cookie?: string | null,
+  ): string {
+    const credentialScope = cookie ? createHash('sha256').update(cookie).digest('hex') : 'anonymous'
+    return `${source}:${type}:${playlistId}:auth:${credentialScope}`
+  }
 
   private getInstance(source: MusicSource): MetingInstance {
     let m = this.instances.get(source)
@@ -1057,13 +1099,17 @@ export class MusicProvider {
     playlistId: string,
     playlistTotal?: number,
     cookie?: string | null,
-    type: 'playlist' | 'album' = 'playlist'
+    type: 'playlist' | 'album' = 'playlist',
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
-    const cacheKey = `${source}:${playlistId}`
+    const cacheKey = this.getPlaylistCacheKey(source, type, playlistId, cookie)
 
     // Check reference index — verify registry still has all tracks
     const indexed = this.playlistIndex.get(cacheKey)
     if (indexed) {
+      if (maxTracks !== undefined && indexed.ids.length > maxTracks) {
+        throw new PlaylistSearchLimitError(indexed.ids.length)
+      }
       const allPresent = indexed.ids.every((id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined)
       if (allPresent) {
         logger.info(`Playlist index hit: ${source}/${playlistId} (${indexed.ids.length} tracks)`)
@@ -1076,18 +1122,18 @@ export class MusicProvider {
     // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
     if (source === 'netease') {
       if (type === 'album') {
-        return this.fetchNeteaseAlbum(playlistId, cacheKey)
+        return this.fetchNeteaseAlbum(playlistId, cacheKey, maxTracks)
       }
-      return this.fetchNeteasePlaylist(playlistId, cacheKey, playlistTotal, cookie)
+      return this.fetchNeteasePlaylist(playlistId, cacheKey, cookie, maxTracks)
     }
 
     // Kugou: try native API (works with global_collection_id from user playlists)
     // Falls back to Meting for public playlists / special IDs
     if (source === 'kugou') {
       if (type === 'album') {
-        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
+        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type, maxTracks)
       }
-      const result = await this.fetchKugouPlaylist(playlistId, cacheKey, cookie)
+      const result = await this.fetchKugouPlaylist(playlistId, cacheKey, cookie, maxTracks)
       if (result.total > 0) return result
       logger.info(`Kugou native API returned empty for ${playlistId}, falling back to Meting`)
     }
@@ -1095,15 +1141,15 @@ export class MusicProvider {
     // Tencent: use new native API (supports fav & custom lists)
     if (source === 'tencent') {
       if (type === 'album') {
-        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
+        return this.fetchMetingPlaylist(source, playlistId, cacheKey, type, maxTracks)
       }
-      const result = await this.fetchTencentPlaylist(playlistId, cacheKey, cookie)
+      const result = await this.fetchTencentPlaylist(playlistId, cacheKey, cookie, maxTracks)
       if (result.total > 0) return result
       logger.info(`Tencent native API returned empty for ${playlistId}, falling back to Meting`)
     }
 
     // Fallback: use Meting raw mode
-    return this.fetchMetingPlaylist(source, playlistId, cacheKey, type)
+    return this.fetchMetingPlaylist(source, playlistId, cacheKey, type, maxTracks)
   }
 
   /**
@@ -1115,6 +1161,7 @@ export class MusicProvider {
   private async fetchNeteaseAlbum(
     albumId: string,
     cacheKey: string,
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
     try {
       const res = await withTimeout(ncmApi.album({ id: albumId, timestamp: Date.now() }), 30_000)
@@ -1126,6 +1173,9 @@ export class MusicProvider {
       const songs = res?.body?.songs
       if (!Array.isArray(songs) || songs.length === 0) {
         return { ids: [], total: 0 }
+      }
+      if (maxTracks !== undefined && songs.length > maxTracks) {
+        throw new PlaylistSearchLimitError(songs.length)
       }
 
       const allTracks = songs.map((song: any) => this.rawToTrack(song, 'netease'))
@@ -1139,6 +1189,7 @@ export class MusicProvider {
       logger.info(`Netease album ${albumId}: ${ids.length} tracks`)
       return { ids, total: ids.length }
     } catch (err) {
+      if (err instanceof PlaylistSearchLimitError) throw err
       logger.error(`Netease album failed: ${albumId}`, err)
       return { ids: [], total: 0 }
     }
@@ -1147,21 +1198,30 @@ export class MusicProvider {
   private async fetchNeteasePlaylist(
     playlistId: string,
     cacheKey: string,
-    playlistTotal?: number,
     cookie?: string | null,
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
     // Netease /api/v3/song/detail can't handle more than ~1000 IDs per request,
     // so we paginate through playlist_track_all in chunks of 1000.
     const CHUNK_SIZE = 1000
-    const totalToFetch = playlistTotal || 100000
+    // Independent of the client-provided total: prevents an abnormal upstream
+    // that always returns a full page from causing an unbounded loop.
+    const fetchLimit =
+      maxTracks === undefined
+        ? PLAYLIST_FETCH_HARD_MAX_TRACKS
+        : Math.min(PLAYLIST_FETCH_HARD_MAX_TRACKS, maxTracks + 1)
     const baseParams = { id: playlistId, timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
 
     try {
       const allTracks: Track[] = []
       let offset = 0
 
-      while (offset < totalToFetch) {
-        const res = await withTimeout(ncmApi.playlist_track_all({ ...baseParams, limit: CHUNK_SIZE, offset }), 60_000)
+      while (offset < fetchLimit) {
+        const requestLimit = Math.min(CHUNK_SIZE, fetchLimit - offset)
+        const res = await withTimeout(
+          ncmApi.playlist_track_all({ ...baseParams, limit: requestLimit, offset }),
+          60_000,
+        )
 
         if (res === null) {
           logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
@@ -1179,10 +1239,19 @@ export class MusicProvider {
 
         const chunk = songs.map((song: Record<string, unknown>) => this.rawToTrack(song, 'netease'))
         allTracks.push(...chunk)
+        if (maxTracks !== undefined && allTracks.length > maxTracks) {
+          throw new PlaylistSearchLimitError(allTracks.length)
+        }
 
-        // If we got fewer than CHUNK_SIZE, we've reached the end
-        if (songs.length < CHUNK_SIZE) break
-        offset += CHUNK_SIZE
+        // If we got fewer than requested, we've reached the end.
+        if (songs.length < requestLimit) break
+        offset += requestLimit
+      }
+
+      if (maxTracks === undefined && offset >= PLAYLIST_FETCH_HARD_MAX_TRACKS) {
+        logger.warn(
+          `Netease playlist reached hard fetch limit: ${playlistId} (${PLAYLIST_FETCH_HARD_MAX_TRACKS} tracks)`,
+        )
       }
 
       if (allTracks.length === 0) return { ids: [], total: 0 }
@@ -1198,6 +1267,7 @@ export class MusicProvider {
       )
       return { ids, total: ids.length }
     } catch (err) {
+      if (err instanceof PlaylistSearchLimitError) throw err
       logger.error(`Netease playlist_track_all failed: ${playlistId}`, err)
       return { ids: [], total: 0 }
     }
@@ -1211,21 +1281,42 @@ export class MusicProvider {
     playlistId: string,
     cacheKey: string,
     cookie?: string | null,
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
     try {
       const PAGE_SIZE = 300
       const allTracks: Track[] = []
       let page = 1
       let totalFromApi = 0
+      let fetchedSongCount = 0
+      let previousPageFingerprint: string | null = null
 
       // Paginate until all tracks are fetched
       while (true) {
         const { songs, total } = await kugouAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
-        if (page === 1) totalFromApi = total
+        totalFromApi = Math.max(totalFromApi, total)
+        if (maxTracks !== undefined && total > maxTracks) {
+          throw new PlaylistSearchLimitError(total)
+        }
 
         if (songs.length === 0) break
 
+        const pageFingerprint = fingerprintPlaylistPage(songs)
+        if (pageFingerprint === previousPageFingerprint) {
+          if (maxTracks !== undefined) throw new PlaylistPaginationError('kugou', playlistId, page)
+          logger.warn(`Kugou playlist pagination repeated page ${page}: ${playlistId}`)
+          break
+        }
+        previousPageFingerprint = pageFingerprint
+
         for (const song of songs) {
+          if (maxTracks === undefined && fetchedSongCount >= PLAYLIST_FETCH_HARD_MAX_TRACKS) break
+
+          fetchedSongCount++
+          if (maxTracks !== undefined && fetchedSongCount > maxTracks) {
+            throw new PlaylistSearchLimitError(fetchedSongCount)
+          }
+
           const track = this.kugouSongToTrack(song)
           if (track) {
             allTracks.push(track)
@@ -1241,7 +1332,17 @@ export class MusicProvider {
 
         logger.info(`Kugou playlist page ${page}: got ${songs.length}, total tracks so far ${allTracks.length}/${totalFromApi}`)
 
-        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
+        if (maxTracks === undefined && fetchedSongCount >= PLAYLIST_FETCH_HARD_MAX_TRACKS) {
+          logger.warn(
+            `Kugou playlist reached hard fetch limit: ${playlistId} (${PLAYLIST_FETCH_HARD_MAX_TRACKS} tracks)`,
+          )
+          break
+        }
+
+        // Upstream total can be absent or stale. Only an empty/short page is a
+        // reliable end marker; total is used solely for early limit rejection
+        // and progress logging.
+        if (songs.length < PAGE_SIZE) break
         page++
       }
 
@@ -1256,6 +1357,7 @@ export class MusicProvider {
       logger.info(`Kugou playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
       return { ids, total: ids.length }
     } catch (err) {
+      if (err instanceof PlaylistSearchLimitError || err instanceof PlaylistPaginationError) throw err
       logger.error(`Kugou playlist fetch failed: ${playlistId}`, err)
       return { ids: [], total: 0 }
     }
@@ -1269,25 +1371,52 @@ export class MusicProvider {
     playlistId: string,
     cacheKey: string,
     cookie?: string | null,
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
     try {
       const PAGE_SIZE = 100
       const allTracks: Track[] = []
       let page = 1
-      let totalFromApi = 0
+      let fetchedSongCount = 0
+      let previousPageFingerprint: string | null = null
 
       while (true) {
         const { songs, total } = await tencentAuth.getPlaylistTracks(playlistId, page, PAGE_SIZE, cookie)
-        if (page === 1) totalFromApi = total
+        if (maxTracks !== undefined && total > maxTracks) {
+          throw new PlaylistSearchLimitError(total)
+        }
 
         if (songs.length === 0) break
 
+        const pageFingerprint = fingerprintPlaylistPage(songs)
+        if (pageFingerprint === previousPageFingerprint) {
+          if (maxTracks !== undefined) throw new PlaylistPaginationError('tencent', playlistId, page)
+          logger.warn(`Tencent playlist pagination repeated page ${page}: ${playlistId}`)
+          break
+        }
+        previousPageFingerprint = pageFingerprint
+
         for (const song of songs) {
+          if (maxTracks === undefined && fetchedSongCount >= PLAYLIST_FETCH_HARD_MAX_TRACKS) break
+
+          fetchedSongCount++
+          if (maxTracks !== undefined && fetchedSongCount > maxTracks) {
+            throw new PlaylistSearchLimitError(fetchedSongCount)
+          }
+
           const track = this.rawToTrack(song, 'tencent')
           if (track) allTracks.push(track)
         }
 
-        if (allTracks.length >= totalFromApi || songs.length < PAGE_SIZE) break
+        if (maxTracks === undefined && fetchedSongCount >= PLAYLIST_FETCH_HARD_MAX_TRACKS) {
+          logger.warn(
+            `Tencent playlist reached hard fetch limit: ${playlistId} (${PLAYLIST_FETCH_HARD_MAX_TRACKS} tracks)`,
+          )
+          break
+        }
+
+        // Do not trust a missing or under-reported total to terminate paging.
+        if (songs.length < PAGE_SIZE) break
         page++
       }
 
@@ -1302,6 +1431,7 @@ export class MusicProvider {
       logger.info(`Tencent playlist ${playlistId}: ${ids.length} tracks (via native API, ${page} pages)`)
       return { ids, total: ids.length }
     } catch (err) {
+      if (err instanceof PlaylistSearchLimitError || err instanceof PlaylistPaginationError) throw err
       logger.error(`Tencent playlist fetch failed: ${playlistId}`, err)
       return { ids: [], total: 0 }
     }
@@ -1369,7 +1499,8 @@ export class MusicProvider {
     source: MusicSource,
     playlistId: string,
     cacheKey: string,
-    type: 'playlist' | 'album' = 'playlist'
+    type: 'playlist' | 'album' = 'playlist',
+    maxTracks?: number,
   ): Promise<{ ids: string[]; total: number }> {
     try {
       const meting = new Meting(source)
@@ -1395,6 +1526,9 @@ export class MusicProvider {
       }
       const songs = this.navigatePath(rawData, path)
       if (!Array.isArray(songs) || songs.length === 0) return { ids: [], total: 0 }
+      if (maxTracks !== undefined && songs.length > maxTracks) {
+        throw new PlaylistSearchLimitError(songs.length)
+      }
 
       const tracks = songs.map((song: MetingJson) => this.rawToTrack(song, source))
       for (const t of tracks) this.enrichFromRegistry(t)
@@ -1406,6 +1540,7 @@ export class MusicProvider {
       logger.info(`Playlist ${playlistId} on ${source}: ${tracks.length} tracks (raw mode)`)
       return { ids, total: ids.length }
     } catch (err) {
+      if (err instanceof PlaylistSearchLimitError) throw err
       logger.error(`Get playlist failed for ${source}:`, err)
       return { ids: [], total: 0 }
     }
@@ -1425,7 +1560,18 @@ export class MusicProvider {
     cookie?: string | null,
     type: 'playlist' | 'album' = 'playlist'
   ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
-    const { ids, total } = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie, type)
+    if (playlistTotal !== undefined && playlistTotal > LIMITS.PLAYLIST_SEARCH_MAX_TRACKS) {
+      throw new PlaylistSearchLimitError(playlistTotal)
+    }
+
+    const { ids, total } = await this.fetchFullPlaylist(
+      source,
+      playlistId,
+      undefined,
+      cookie,
+      type,
+      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+    )
     if (total === 0) return { tracks: [], total: 0, hasMore: false }
 
     const pageIds = ids.slice(offset, offset + limit)
@@ -1435,9 +1581,16 @@ export class MusicProvider {
     if (!tracks) {
       // Registry eviction between fetchFullPlaylist and hydrate (very rare).
       // Clear index and retry once.
-      this.playlistIndex.delete(`${source}:${playlistId}`)
+      this.playlistIndex.delete(this.getPlaylistCacheKey(source, type, playlistId, cookie))
       logger.warn(`Playlist page hydration failed, retrying: ${source}/${playlistId}`)
-      const retry = await this.fetchFullPlaylist(source, playlistId, playlistTotal, cookie)
+      const retry = await this.fetchFullPlaylist(
+        source,
+        playlistId,
+        undefined,
+        cookie,
+        type,
+        LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      )
       if (retry.total === 0) return { tracks: [], total: 0, hasMore: false }
       const retryPageIds = retry.ids.slice(offset, offset + limit)
       tracks = this.hydrateFromRegistry(source, retryPageIds)
@@ -1454,6 +1607,81 @@ export class MusicProvider {
     this.registerTracks(tracks)
 
     return { tracks, total, hasMore: offset + limit < total }
+  }
+
+  /**
+   * Search the complete server-side playlist index without sending the full
+   * playlist to the client. Only the requested result page is hydrated and has
+   * its covers resolved.
+   */
+  async searchPlaylistTracks(
+    source: MusicSource,
+    playlistId: string,
+    keyword: string,
+    page: number = 1,
+    limit: number = LIMITS.PLAYLIST_SEARCH_PAGE_SIZE,
+    playlistTotal?: number,
+    cookie?: string | null,
+    type: 'playlist' | 'album' = 'playlist',
+  ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
+    const normalizedKeyword = keyword.trim().toLowerCase()
+    if (!normalizedKeyword) return { tracks: [], total: 0, hasMore: false }
+
+    if (playlistTotal !== undefined && playlistTotal > LIMITS.PLAYLIST_SEARCH_MAX_TRACKS) {
+      throw new PlaylistSearchLimitError(playlistTotal)
+    }
+
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1
+    const safeLimit = Number.isFinite(limit)
+      ? Math.min(LIMITS.PLAYLIST_SEARCH_PAGE_SIZE, Math.max(1, Math.trunc(limit)))
+      : LIMITS.PLAYLIST_SEARCH_PAGE_SIZE
+
+    // `playlistTotal` comes from the client and is only a fast-rejection hint.
+    // Never use it to cap fetching, otherwise stale or forged values can make
+    // the supposedly full-playlist search silently incomplete.
+    const { ids, total: playlistSize } = await this.fetchFullPlaylist(
+      source,
+      playlistId,
+      undefined,
+      cookie,
+      type,
+      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+    )
+
+    if (playlistSize > LIMITS.PLAYLIST_SEARCH_MAX_TRACKS || ids.length > LIMITS.PLAYLIST_SEARCH_MAX_TRACKS) {
+      this.playlistIndex.delete(this.getPlaylistCacheKey(source, type, playlistId, cookie))
+      throw new PlaylistSearchLimitError(Math.max(playlistSize, ids.length))
+    }
+
+    const matchingIds: string[] = []
+    for (const sourceId of ids) {
+      const track = this.trackRegistry.get(`${source}:${sourceId}`)
+      if (!track) {
+        // The full-playlist index and registry must stay in sync. Make the
+        // inconsistency visible rather than returning silently incomplete hits.
+        throw new Error(`Playlist search index is stale: ${source}/${playlistId}`)
+      }
+
+      const titleMatches = track.title.toLowerCase().includes(normalizedKeyword)
+      const artistMatches = track.artist.some((artist) => artist.toLowerCase().includes(normalizedKeyword))
+      if (titleMatches || artistMatches) matchingIds.push(sourceId)
+    }
+
+    const offset = (safePage - 1) * safeLimit
+    const pageIds = matchingIds.slice(offset, offset + safeLimit)
+    const tracks = this.hydrateFromRegistry(source, pageIds)
+    if (!tracks) {
+      throw new Error(`Playlist search page hydration failed: ${source}/${playlistId}`)
+    }
+
+    await this.batchResolveCover(tracks, source)
+    this.registerTracks(tracks)
+
+    return {
+      tracks,
+      total: matchingIds.length,
+      hasMore: offset + safeLimit < matchingIds.length,
+    }
   }
 
   // ---------------------------------------------------------------------------

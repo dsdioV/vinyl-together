@@ -91,12 +91,22 @@ export function PlatformHub() {
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <PlaylistDetail
+            key={`${viewState.source}:playlist:${viewState.playlist.id}`}
             playlist={viewState.playlist}
+            playlistSource={viewState.source}
+            playlistId={viewState.playlist.id}
+            playlistType="playlist"
             tracks={playlist.playlistTracks}
             loading={playlist.tracksLoading}
             loadingMore={playlist.loadingMore}
             hasMore={playlist.hasMoreTracks}
             total={playlist.playlistTotal}
+            searchTracks={playlist.playlistSearchTracks}
+            searchTotal={playlist.playlistSearchTotal}
+            searchResultPage={playlist.playlistSearchPage}
+            searchHasMore={playlist.playlistSearchHasMore}
+            searchLoading={playlist.playlistSearchLoading}
+            searchError={playlist.playlistSearchError}
             onBack={handleBack}
             onAddTrack={playlist.addTrackToQueue}
             onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
@@ -104,6 +114,8 @@ export function PlatformHub() {
             onAddToDefault={ability.can('add', 'DefaultQueue') ? playlist.addBatchToDefaultQueue : undefined}
             maxDefaultAddCount={Math.max(0, LIMITS.DEFAULT_QUEUE_MAX_SIZE - defaultQueueSize)}
             onLoadMore={playlist.loadMoreTracks}
+            onSearch={playlist.searchPlaylistTracks}
+            onClearSearch={playlist.clearPlaylistSearch}
           />
         </div>
       </div>
@@ -126,11 +138,7 @@ export function PlatformHub() {
         >
           <TabsList className="grid w-full grid-cols-3">
             {platforms.map((p) => (
-              <TabsTrigger
-                key={p}
-                value={p}
-                className={PLATFORM_COLORS[p]}
-              >
+              <TabsTrigger key={p} value={p} className={PLATFORM_COLORS[p]}>
                 {PLATFORM_SHORT_LABELS[p]}
               </TabsTrigger>
             ))}

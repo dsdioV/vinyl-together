@@ -10,13 +10,23 @@ export { parsePlaylistInput } from '@/lib/musicInput'
 
 const PAGE_SIZE = 1000
 
+type PlaylistType = 'playlist' | 'album'
+
+interface PlaylistSearchResponse {
+  tracks?: Track[]
+  total?: number
+  page?: number
+  hasMore?: boolean
+  error?: string
+}
+
 /** Build the playlist API URL with all query parameters */
 function buildPlaylistUrl(
   source: MusicSource,
   id: string,
   limit: number,
   offset: number,
-  options?: { total?: number; roomId?: string; type?: 'playlist' | 'album' },
+  options?: { total?: number; roomId?: string; type?: PlaylistType },
 ): string {
   const params = new URLSearchParams({
     source,
@@ -28,6 +38,27 @@ function buildPlaylistUrl(
   if (options?.roomId) params.set('roomId', options.roomId)
   if (options?.type) params.set('type', options.type)
   return `${SERVER_URL}/api/music/playlist?${params.toString()}`
+}
+
+/** Build the server-side full-playlist search URL. */
+function buildPlaylistSearchUrl(
+  source: MusicSource,
+  id: string,
+  keyword: string,
+  page: number,
+  options?: { total?: number; roomId?: string; type?: PlaylistType },
+): string {
+  const params = new URLSearchParams({
+    source,
+    id,
+    keyword,
+    page: String(page),
+    limit: String(LIMITS.PLAYLIST_SEARCH_PAGE_SIZE),
+  })
+  if (options?.total) params.set('total', String(options.total))
+  if (options?.roomId) params.set('roomId', options.roomId)
+  if (options?.type) params.set('type', options.type)
+  return `${SERVER_URL}/api/music/playlist/search?${params.toString()}`
 }
 
 export function usePlaylist() {
@@ -50,10 +81,39 @@ export function usePlaylist() {
   const [tracksLoading, setTracksLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
 
+  // Server-side full-playlist search state. This is kept separate from the
+  // infinitely-loaded browsing list so clearing a keyword restores it instantly.
+  const [playlistSearchTracks, setPlaylistSearchTracks] = useState<Track[]>([])
+  const [playlistSearchTotal, setPlaylistSearchTotal] = useState(0)
+  const [playlistSearchPage, setPlaylistSearchPage] = useState(1)
+  const [playlistSearchHasMore, setPlaylistSearchHasMore] = useState(false)
+  const [playlistSearchLoading, setPlaylistSearchLoading] = useState(false)
+  const [playlistSearchError, setPlaylistSearchError] = useState<string | null>(null)
+
   // Track current playlist context to prevent stale responses
-  const currentPlaylistRef = useRef<{ source: MusicSource; id: string; type?: 'playlist' | 'album' } | null>(null)
+  const currentPlaylistRef = useRef<{ source: MusicSource; id: string; type?: PlaylistType } | null>(null)
   const offsetRef = useRef(0)
   const loadingMoreRef = useRef(false)
+  const playlistSearchAbortRef = useRef<AbortController | null>(null)
+  const playlistSearchRequestIdRef = useRef(0)
+
+  const clearPlaylistSearch = useCallback(() => {
+    playlistSearchAbortRef.current?.abort()
+    playlistSearchAbortRef.current = null
+    playlistSearchRequestIdRef.current += 1
+    setPlaylistSearchTracks([])
+    setPlaylistSearchTotal(0)
+    setPlaylistSearchPage(1)
+    setPlaylistSearchHasMore(false)
+    setPlaylistSearchLoading(false)
+    setPlaylistSearchError(null)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      playlistSearchAbortRef.current?.abort()
+    }
+  }, [])
 
   useEffect(() => {
     const onMyList = (data: { platform: MusicSource; playlists: Playlist[] }) => {
@@ -80,8 +140,14 @@ export function usePlaylist() {
    * Resets all track state immediately to prevent stale data from flashing.
    */
   const fetchPlaylistTracks = useCallback(
-    async (source: MusicSource, playlistId: string, trackCount?: number, type: 'playlist' | 'album' = 'playlist'): Promise<Track[]> => {
+    async (
+      source: MusicSource,
+      playlistId: string,
+      trackCount?: number,
+      type: PlaylistType = 'playlist',
+    ): Promise<Track[]> => {
       // Reset state immediately — prevents flashing old data when switching playlists
+      clearPlaylistSearch()
       setPlaylistTracks([])
       setPlaylistTotal(0)
       setHasMoreTracks(false)
@@ -107,7 +173,7 @@ export function usePlaylist() {
 
         // Stale response guard
         const ctx = currentPlaylistRef.current
-        if (!ctx || ctx.source !== source || ctx.id !== playlistId) return []
+        if (!ctx || ctx.source !== source || ctx.id !== playlistId || ctx.type !== type) return []
 
         const data = await res.json()
         const tracks: Track[] = data.tracks ?? []
@@ -122,13 +188,13 @@ export function usePlaylist() {
       } catch {
         // Only update state if this is still the active playlist
         const ctx = currentPlaylistRef.current
-        if (ctx && ctx.source === source && ctx.id === playlistId) {
+        if (ctx && ctx.source === source && ctx.id === playlistId && ctx.type === type) {
           setTracksLoading(false)
         }
         return []
       }
     },
-    [],
+    [clearPlaylistSearch],
   )
 
   /**
@@ -155,7 +221,8 @@ export function usePlaylist() {
 
       // Stale response guard — context might have changed while we were fetching
       const currentCtx = currentPlaylistRef.current
-      if (!currentCtx || currentCtx.source !== ctx.source || currentCtx.id !== ctx.id) return
+      if (!currentCtx || currentCtx.source !== ctx.source || currentCtx.id !== ctx.id || currentCtx.type !== ctx.type)
+        return
 
       const data = await res.json()
       const newTracks: Track[] = data.tracks ?? []
@@ -170,6 +237,73 @@ export function usePlaylist() {
       setLoadingMore(false)
     }
   }, [hasMoreTracks, playlistTotal])
+
+  /**
+   * Search the complete remote playlist without downloading the remaining
+   * browsing pages into the browser. Each request replaces the previous page.
+   */
+  const searchPlaylistTracks = useCallback(
+    async (
+      source: MusicSource,
+      playlistId: string,
+      keyword: string,
+      page = 1,
+      trackCount?: number,
+      type: PlaylistType = 'playlist',
+    ): Promise<void> => {
+      const trimmedKeyword = keyword.trim()
+      if (!trimmedKeyword) {
+        clearPlaylistSearch()
+        return
+      }
+
+      playlistSearchAbortRef.current?.abort()
+      const controller = new AbortController()
+      playlistSearchAbortRef.current = controller
+      const requestId = ++playlistSearchRequestIdRef.current
+
+      // Clear synchronously at request start so pages/keywords never mix.
+      setPlaylistSearchTracks([])
+      setPlaylistSearchTotal(0)
+      setPlaylistSearchPage(page)
+      setPlaylistSearchHasMore(false)
+      setPlaylistSearchLoading(true)
+      setPlaylistSearchError(null)
+
+      try {
+        const url = buildPlaylistSearchUrl(source, playlistId, trimmedKeyword, page, {
+          total: trackCount,
+          roomId: useRoomStore.getState().room?.id,
+          type,
+        })
+        const res = await fetch(url, { signal: controller.signal, credentials: 'include' })
+        const data = (await res.json().catch(() => null)) as PlaylistSearchResponse | null
+        if (!res.ok) {
+          throw new Error(data?.error || `HTTP ${res.status}`)
+        }
+
+        if (playlistSearchRequestIdRef.current !== requestId) return
+
+        const tracks = data?.tracks ?? []
+        setPlaylistSearchTracks(tracks)
+        setPlaylistSearchTotal(data?.total ?? tracks.length)
+        setPlaylistSearchPage(data?.page ?? page)
+        setPlaylistSearchHasMore(data?.hasMore ?? tracks.length >= LIMITS.PLAYLIST_SEARCH_PAGE_SIZE)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return
+        if (playlistSearchRequestIdRef.current !== requestId) return
+        setPlaylistSearchTracks([])
+        setPlaylistSearchTotal(0)
+        setPlaylistSearchHasMore(false)
+        setPlaylistSearchError(error instanceof Error ? error.message : '搜索失败，请稍后重试')
+      } finally {
+        if (playlistSearchRequestIdRef.current === requestId) {
+          setPlaylistSearchLoading(false)
+        }
+      }
+    },
+    [clearPlaylistSearch],
+  )
 
   const addTrackToQueue = useCallback(
     (track: Track) => {
@@ -189,30 +323,27 @@ export function usePlaylist() {
    * Fetch a single track by its platform ID.
    * Uses the /api/music/track endpoint.
    */
-  const fetchTrackById = useCallback(
-    async (source: MusicSource, trackId: string): Promise<TrackLookupResult> => {
+  const fetchTrackById = useCallback(async (source: MusicSource, trackId: string): Promise<TrackLookupResult> => {
+    try {
+      const params = new URLSearchParams({ source, id: trackId })
+      const roomId = useRoomStore.getState().room?.id
+      if (roomId) params.set('roomId', roomId)
+      const res = await fetch(`${SERVER_URL}/api/music/track?${params.toString()}`, {
+        credentials: 'include',
+      })
+      let data: { track?: Track; code?: unknown; error?: unknown } | null = null
       try {
-        const params = new URLSearchParams({ source, id: trackId })
-        const roomId = useRoomStore.getState().room?.id
-        if (roomId) params.set('roomId', roomId)
-        const res = await fetch(`${SERVER_URL}/api/music/track?${params.toString()}`, {
-          credentials: 'include',
-        })
-        let data: { track?: Track; code?: unknown; error?: unknown } | null = null
-        try {
-          data = (await res.json()) as { track?: Track; code?: unknown; error?: unknown }
-        } catch {
-          // Fall through to a status-specific, safe message.
-        }
-        if (!res.ok) return trackLookupFailure(res.status, data)
-        if (!data?.track) return trackLookupFailure(502, null)
-        return { ok: true, track: data.track }
+        data = (await res.json()) as { track?: Track; code?: unknown; error?: unknown }
       } catch {
-        return { ok: false, code: 'NETWORK_ERROR', message: '无法连接服务器，请稍后重试' }
+        // Fall through to a status-specific, safe message.
       }
-    },
-    [],
-  )
+      if (!res.ok) return trackLookupFailure(res.status, data)
+      if (!data?.track) return trackLookupFailure(502, null)
+      return { ok: true, track: data.track }
+    } catch {
+      return { ok: false, code: 'NETWORK_ERROR', message: '无法连接服务器，请稍后重试' }
+    }
+  }, [])
 
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
@@ -223,7 +354,7 @@ export function usePlaylist() {
   )
 
   const addBatchToDefaultQueue = useCallback(
-    (tracks: Track[], _playlistName?: string) => {
+    (tracks: Track[]) => {
       const defaultQueueSize = useRoomStore.getState().room?.defaultQueue.length ?? 0
       const remainingCapacity = Math.max(0, LIMITS.DEFAULT_QUEUE_MAX_SIZE - defaultQueueSize)
       const tracksToAdd = tracks.slice(0, remainingCapacity)
@@ -245,9 +376,17 @@ export function usePlaylist() {
     hasMoreTracks,
     tracksLoading,
     loadingMore,
+    playlistSearchTracks,
+    playlistSearchTotal,
+    playlistSearchPage,
+    playlistSearchHasMore,
+    playlistSearchLoading,
+    playlistSearchError,
     fetchMyPlaylists,
     fetchPlaylistTracks,
     loadMoreTracks,
+    searchPlaylistTracks,
+    clearPlaylistSearch,
     addTrackToQueue,
     insertTrackAfterCurrent,
     addBatchToQueue,

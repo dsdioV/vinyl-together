@@ -2,10 +2,14 @@ import type { PlayMode, Track } from '@music-together/shared'
 import { LIMITS } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 
+function getQueueMaxSize(configuredMaxSize?: number): number {
+  return Math.min(configuredMaxSize ?? LIMITS.QUEUE_MAX_SIZE, LIMITS.QUEUE_MAX_SIZE_MAX)
+}
+
 export function addTrack(roomId: string, track: Track): boolean {
   const room = roomRepo.get(roomId)
   if (!room) return false
-  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  const maxSize = getQueueMaxSize(room.maxQueueSize)
   if (room.queue.length >= maxSize) return false
   room.queue.push(track)
   return true
@@ -19,7 +23,7 @@ export function addTrack(roomId: string, track: Track): boolean {
 export function addBatchTracks(roomId: string, tracks: Track[]): number {
   const room = roomRepo.get(roomId)
   if (!room) return 0
-  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  const maxSize = getQueueMaxSize(room.maxQueueSize)
   const available = maxSize - room.queue.length
   if (available <= 0) return 0
   const toAdd = tracks.slice(0, available)
@@ -35,7 +39,7 @@ export function addBatchTracks(roomId: string, tracks: Track[]): number {
 export function insertAfterCurrent(roomId: string, track: Track): number {
   const room = roomRepo.get(roomId)
   if (!room) return -1
-  const maxSize = room.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE
+  const maxSize = getQueueMaxSize(room.maxQueueSize)
   if (room.queue.length >= maxSize) return -1
 
   const currentId = room.currentTrack?.id

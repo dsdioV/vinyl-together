@@ -1,4 +1,4 @@
-import type { RoomState } from '@music-together/shared'
+import { LIMITS, type RoomState } from '@music-together/shared'
 import type { RoomData } from '../repositories/types.js'
 
 /** 将内部 RoomData 转为客户端可见的 RoomState（不含密码明文） */
@@ -21,7 +21,7 @@ export function toPublicRoomState(data: RoomData): RoomState {
     persistent: data.persistent,
     persistentTtlHours: data.persistentTtlHours,
     voteThreshold: data.voteThreshold,
-    maxQueueSize: data.maxQueueSize,
+    maxQueueSize: Math.min(data.maxQueueSize, LIMITS.QUEUE_MAX_SIZE_MAX),
     playedHistory: data.playedHistory,
     trackLikes: Object.fromEntries(
       Array.from(data.trackLikes.entries()).map(([trackId, userIds]) => [trackId, Array.from(userIds)]),

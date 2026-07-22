@@ -1,4 +1,4 @@
-import { ERROR_CODE, EVENTS } from '@music-together/shared'
+import { ERROR_CODE, EVENTS, LIMITS } from '@music-together/shared'
 import type { Track, User } from '@music-together/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RoomData } from '../repositories/types.js'
@@ -76,7 +76,7 @@ function makeRoom(user: User, defaultQueue: Track[] = [], queue: Track[] = []): 
     trackLikes: new Map(),
     trackLikeTimestamps: new Map(),
     voteThreshold: 0.67,
-    maxQueueSize: 10_000,
+    maxQueueSize: LIMITS.QUEUE_MAX_SIZE_MAX,
     playedHistory: [],
   }
 }
@@ -231,6 +231,24 @@ describe('queue batch limits', () => {
       expect.objectContaining({ code: ERROR_CODE.INVALID_DATA }),
     )
     expect(mocks.createSystemMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('main queue capacity', () => {
+  it('caps a legacy five-digit room setting at the current 8192 limit', async () => {
+    const existing = Array.from({ length: LIMITS.QUEUE_MAX_SIZE_MAX }, (_, index) => makeTrack(index))
+    const fixture = mount('member', { queue: existing })
+    fixture.room.maxQueueSize = 10_000
+
+    await fixture.dispatch(EVENTS.QUEUE_ADD, { track: makeTrack('overflow') })
+
+    expect(fixture.room.queue).toHaveLength(LIMITS.QUEUE_MAX_SIZE_MAX)
+    expect(fixture.room.queue).toEqual(existing)
+    expect(fixture.ioEmit).not.toHaveBeenCalled()
+    expect(fixture.socketEmit).toHaveBeenCalledWith(
+      EVENTS.ROOM_ERROR,
+      expect.objectContaining({ code: ERROR_CODE.QUEUE_FULL }),
+    )
   })
 })
 

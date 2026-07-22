@@ -1,48 +1,99 @@
 import express from 'express'
 import type { Server } from 'node:http'
+import { LIMITS } from '@music-together/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getTrackByIdMock = vi.hoisted(() => vi.fn())
+const mocks = vi.hoisted(() => {
+  class MockPlaylistSearchLimitError extends Error {
+    readonly code = 'PLAYLIST_TRACK_LIMIT_EXCEEDED'
+    readonly maxTracks = 8_192
+
+    constructor(readonly actualTracks?: number) {
+      super(
+        actualTracks === undefined
+          ? '歌单超过支持上限 8192 首'
+          : `歌单包含 ${actualTracks} 首歌曲，超过支持上限 8192 首`,
+      )
+      this.name = 'PlaylistSearchLimitError'
+    }
+  }
+
+  return {
+    getTrackById: vi.fn(),
+    getPlaylistPage: vi.fn(),
+    searchPlaylistTracks: vi.fn(),
+    getUserCookie: vi.fn(),
+    PlaylistSearchLimitError: MockPlaylistSearchLimitError,
+  }
+})
 
 vi.mock('../services/musicProvider.js', () => ({
-  musicProvider: { getTrackById: getTrackByIdMock },
+  musicProvider: {
+    getTrackById: mocks.getTrackById,
+    getPlaylistPage: mocks.getPlaylistPage,
+    searchPlaylistTracks: mocks.searchPlaylistTracks,
+  },
+  PlaylistSearchLimitError: mocks.PlaylistSearchLimitError,
+}))
+
+vi.mock('../services/authService.js', () => ({
+  getUserCookie: mocks.getUserCookie,
 }))
 
 import musicRouter from './music.js'
+import { PlaylistSearchLimitError } from '../services/musicProvider.js'
 import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
+import { roomRepo } from '../repositories/roomRepository.js'
+import type { RoomData } from '../repositories/types.js'
+
+let server: Server
+let baseUrl: string
+const mountedRoomIds: string[] = []
+
+beforeAll(async () => {
+  const app = express()
+  app.use((req, _res, next) => {
+    req.identityUserId = req.header('x-test-user-id') ?? undefined
+    next()
+  })
+  app.use('/', musicRouter)
+  server = await new Promise<Server>((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Test server did not bind a TCP port')
+  baseUrl = `http://127.0.0.1:${address.port}`
+})
+
+afterAll(async () => {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
+})
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  for (const roomId of mountedRoomIds.splice(0)) roomRepo.delete(roomId)
+})
+
+function mountRoom(roomId: string, userId: string): void {
+  roomRepo.set(roomId, {
+    id: roomId,
+    users: [{ id: userId, nickname: 'Tester', role: 'member' }],
+  } as RoomData)
+  mountedRoomIds.push(roomId)
+}
+
+function playlistSearchUrl(params: Record<string, string | number>): string {
+  return `${baseUrl}/playlist/search?${new URLSearchParams(
+    Object.entries(params).map(([key, value]) => [key, String(value)]),
+  )}`
+}
 
 describe('GET /track', () => {
-  let server: Server
-  let baseUrl: string
-
-  beforeAll(async () => {
-    const app = express()
-    app.use('/', musicRouter)
-    server = await new Promise<Server>((resolve) => {
-      const listening = app.listen(0, '127.0.0.1', () => resolve(listening))
-    })
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('Test server did not bind a TCP port')
-    baseUrl = `http://127.0.0.1:${address.port}`
-  })
-
-  afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()))
-    })
-  })
-
-  beforeEach(() => {
-    getTrackByIdMock.mockReset()
-  })
-
   it('preserves a safe, actionable Kugou security error', async () => {
-    getTrackByIdMock.mockRejectedValue(
-      new KugouShortCodeError(
-        'KUGOU_SECURITY_VERIFICATION_REQUIRED',
-        '酷狗暂时要求安全验证，请稍后重试',
-        429,
-      ),
+    mocks.getTrackById.mockRejectedValue(
+      new KugouShortCodeError('KUGOU_SECURITY_VERIFICATION_REQUIRED', '酷狗暂时要求安全验证，请稍后重试', 429),
     )
 
     const response = await fetch(`${baseUrl}/track?source=kugou&id=j2hixca`)
@@ -54,10 +105,172 @@ describe('GET /track', () => {
   })
 
   it('returns 404 for an unresolved ordinary track', async () => {
-    getTrackByIdMock.mockResolvedValue(null)
+    mocks.getTrackById.mockResolvedValue(null)
 
     const response = await fetch(`${baseUrl}/track?source=netease&id=12345`)
     expect(response.status).toBe(404)
     await expect(response.json()).resolves.toEqual({ error: '歌曲未找到' })
+  })
+})
+
+describe('GET /playlist', () => {
+  it('maps an oversized playlist to the same stable 422 response', async () => {
+    const actualTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1
+    mocks.getPlaylistPage.mockRejectedValue(new PlaylistSearchLimitError(actualTracks))
+
+    const response = await fetch(
+      `${baseUrl}/playlist?${new URLSearchParams({
+        source: 'netease',
+        id: 'large-playlist',
+        total: String(actualTracks),
+      })}`,
+    )
+
+    expect(response.status).toBe(422)
+    expect(mocks.getPlaylistPage).toHaveBeenCalledWith(
+      'netease',
+      'large-playlist',
+      100,
+      0,
+      actualTracks,
+      null,
+      'playlist',
+    )
+    await expect(response.json()).resolves.toEqual({
+      error: `歌单包含 ${actualTracks} 首歌曲，超过支持上限 ${LIMITS.PLAYLIST_SEARCH_MAX_TRACKS} 首`,
+      code: 'PLAYLIST_TRACK_LIMIT_EXCEEDED',
+      maxTracks: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      actualTracks,
+    })
+  })
+})
+
+describe('GET /playlist/search', () => {
+  it('searches the complete playlist with fixed 50-track pagination defaults', async () => {
+    const tracks = [{ id: 'after-1000' }]
+    mocks.searchPlaylistTracks.mockResolvedValue({ tracks, total: 1_500, hasMore: false })
+
+    const response = await fetch(playlistSearchUrl({ source: 'netease', id: ' playlist-1 ', keyword: ' target song ' }))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ tracks, total: 1_500, page: 1, hasMore: false })
+    expect(mocks.searchPlaylistTracks).toHaveBeenCalledWith(
+      'netease',
+      'playlist-1',
+      'target song',
+      1,
+      50,
+      undefined,
+      null,
+      'playlist',
+    )
+  })
+
+  it('passes an authenticated room member cookie and playlist metadata to the provider', async () => {
+    mountRoom('ROOM1', 'member-1')
+    mocks.getUserCookie.mockReturnValue('vip-cookie')
+    mocks.searchPlaylistTracks.mockResolvedValue({
+      tracks: [],
+      total: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      hasMore: false,
+    })
+
+    const response = await fetch(
+      playlistSearchUrl({
+        source: 'tencent',
+        id: 'album-1',
+        keyword: 'needle',
+        page: LIMITS.PLAYLIST_SEARCH_PAGE_MAX,
+        limit: LIMITS.PLAYLIST_SEARCH_PAGE_SIZE,
+        total: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+        roomId: 'ROOM1',
+        type: 'album',
+      }),
+      { headers: { 'x-test-user-id': 'member-1' } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(mocks.getUserCookie).toHaveBeenCalledWith('member-1', 'tencent', 'ROOM1')
+    expect(mocks.searchPlaylistTracks).toHaveBeenCalledWith(
+      'tencent',
+      'album-1',
+      'needle',
+      LIMITS.PLAYLIST_SEARCH_PAGE_MAX,
+      LIMITS.PLAYLIST_SEARCH_PAGE_SIZE,
+      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      'vip-cookie',
+      'album',
+    )
+  })
+
+  it('requires room identity and membership before using room-scoped credentials', async () => {
+    mountRoom('ROOM2', 'member-2')
+
+    const query = playlistSearchUrl({ source: 'kugou', id: 'playlist-2', keyword: 'needle', roomId: 'ROOM2' })
+    const unauthenticated = await fetch(query)
+    const nonMember = await fetch(query, { headers: { 'x-test-user-id': 'outsider' } })
+
+    expect(unauthenticated.status).toBe(401)
+    await expect(unauthenticated.json()).resolves.toEqual({ error: 'Unauthorized' })
+    expect(nonMember.status).toBe(403)
+    await expect(nonMember.json()).resolves.toEqual({ error: 'Forbidden' })
+    expect(mocks.getUserCookie).not.toHaveBeenCalled()
+    expect(mocks.searchPlaylistTracks).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['blank keyword', { source: 'netease', id: 'playlist-1', keyword: '   ' }],
+    ['oversized keyword', { source: 'netease', id: 'playlist-1', keyword: 'x'.repeat(501) }],
+    ['blank playlist id', { source: 'netease', id: '', keyword: 'song' }],
+    ['oversized playlist id', { source: 'netease', id: 'x'.repeat(201), keyword: 'song' }],
+    ['page zero', { source: 'netease', id: 'playlist-1', keyword: 'song', page: 0 }],
+    [
+      'page above maximum',
+      {
+        source: 'netease',
+        id: 'playlist-1',
+        keyword: 'song',
+        page: LIMITS.PLAYLIST_SEARCH_PAGE_MAX + 1,
+      },
+    ],
+    ['non-fixed limit', { source: 'netease', id: 'playlist-1', keyword: 'song', limit: 49 }],
+    ['oversized limit', { source: 'netease', id: 'playlist-1', keyword: 'song', limit: 51 }],
+  ])('rejects %s', async (_label, params) => {
+    const response = await fetch(playlistSearchUrl(params))
+
+    expect(response.status).toBe(400)
+    expect(mocks.searchPlaylistTracks).not.toHaveBeenCalled()
+  })
+
+  it('maps the recognizable over-8192 service error to a stable 422 response', async () => {
+    const actualTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1
+    mocks.searchPlaylistTracks.mockRejectedValue(new PlaylistSearchLimitError(actualTracks))
+
+    const response = await fetch(
+      playlistSearchUrl({
+        source: 'netease',
+        id: 'large-playlist',
+        keyword: 'song',
+        total: actualTracks,
+      }),
+    )
+
+    expect(response.status).toBe(422)
+    expect(mocks.searchPlaylistTracks).toHaveBeenCalledWith(
+      'netease',
+      'large-playlist',
+      'song',
+      1,
+      50,
+      actualTracks,
+      null,
+      'playlist',
+    )
+    await expect(response.json()).resolves.toEqual({
+      error: `歌单包含 ${actualTracks} 首歌曲，超过支持上限 ${LIMITS.PLAYLIST_SEARCH_MAX_TRACKS} 首`,
+      code: 'PLAYLIST_TRACK_LIMIT_EXCEEDED',
+      maxTracks: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      actualTracks,
+    })
   })
 })

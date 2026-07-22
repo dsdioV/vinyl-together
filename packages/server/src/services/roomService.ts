@@ -225,6 +225,10 @@ export function updateSettings(
   const room = roomRepo.get(roomId)
   if (!room) return
 
+  // Normalize rooms created under an older, larger queue limit before any
+  // settings broadcast exposes the value again.
+  room.maxQueueSize = Math.min(room.maxQueueSize, LIMITS.QUEUE_MAX_SIZE_MAX)
+
   if (settings.name !== undefined) {
     room.name = settings.name
   }
@@ -251,7 +255,7 @@ export function updateSettings(
   }
 
   if (settings.maxQueueSize !== undefined) {
-    room.maxQueueSize = settings.maxQueueSize
+    room.maxQueueSize = Math.min(settings.maxQueueSize, LIMITS.QUEUE_MAX_SIZE_MAX)
   }
 }
 

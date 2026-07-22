@@ -4,12 +4,14 @@ import {
   lyricQuerySchema,
   coverQuerySchema,
   playlistQuerySchema,
+  playlistSearchQuerySchema,
   trackQuerySchema,
   sanitizeCoverProxyUrl,
+  type MusicSource,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
-import { musicProvider } from '../services/musicProvider.js'
+import { musicProvider, PlaylistSearchLimitError } from '../services/musicProvider.js'
 import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -17,6 +19,43 @@ import { logger } from '../utils/logger.js'
 import { readCoverResponse } from '../utils/coverResponse.js'
 
 const router: RouterType = Router()
+
+type PlaylistCookieResult = { authorized: true; cookie: string | null } | { authorized: false }
+
+function resolvePlaylistCookie(
+  req: Request,
+  res: Response,
+  source: MusicSource,
+  roomId?: string,
+): PlaylistCookieResult {
+  if (!roomId) return { authorized: true, cookie: null }
+
+  const identityUserId = req.identityUserId
+  if (!identityUserId) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return { authorized: false }
+  }
+
+  const room = roomRepo.get(roomId)
+  if (!room || !room.users.some((user) => user.id === identityUserId)) {
+    res.status(403).json({ error: 'Forbidden' })
+    return { authorized: false }
+  }
+
+  return {
+    authorized: true,
+    cookie: authService.getUserCookie(identityUserId, source, roomId),
+  }
+}
+
+function respondPlaylistLimitError(res: Response, error: PlaylistSearchLimitError): void {
+  res.status(422).json({
+    error: error.message,
+    code: error.code,
+    maxTracks: error.maxTracks,
+    ...(error.actualTracks === undefined ? {} : { actualTracks: error.actualTracks }),
+  })
+}
 
 /**
  * Wrap an async route handler with validation + error handling.
@@ -88,26 +127,51 @@ router.get(
 
 router.get(
   '/playlist',
-  validated(playlistQuerySchema, 'Get playlist', async (data, _req, res) => {
+  validated(playlistQuerySchema, 'Get playlist', async (data, req, res) => {
     const { source, id, limit, offset, total, roomId, type } = data
 
-    let cookie: string | null = null
-    if (roomId) {
-      const identityUserId = _req.identityUserId
-      if (!identityUserId) {
-        res.status(401).json({ error: 'Unauthorized' })
-        return
-      }
-      const room = roomRepo.get(roomId)
-      if (!room || !room.users.some((u) => u.id === identityUserId)) {
-        res.status(403).json({ error: 'Forbidden' })
-        return
-      }
-      cookie = authService.getUserCookie(identityUserId, source, roomId)
-    }
+    const auth = resolvePlaylistCookie(req, res, source, roomId)
+    if (!auth.authorized) return
 
-    const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, cookie, type)
-    res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
+    try {
+      const result = await musicProvider.getPlaylistPage(source, id, limit, offset, total, auth.cookie, type)
+      res.json({ tracks: result.tracks, total: result.total, offset, hasMore: result.hasMore })
+    } catch (error) {
+      if (error instanceof PlaylistSearchLimitError) {
+        respondPlaylistLimitError(res, error)
+        return
+      }
+      throw error
+    }
+  }),
+)
+
+router.get(
+  '/playlist/search',
+  validated(playlistSearchQuerySchema, 'Search playlist', async (data, req, res) => {
+    const { source, id, keyword, page, limit, total, roomId, type } = data
+    const auth = resolvePlaylistCookie(req, res, source, roomId)
+    if (!auth.authorized) return
+
+    try {
+      const result = await musicProvider.searchPlaylistTracks(
+        source,
+        id,
+        keyword,
+        page,
+        limit,
+        total,
+        auth.cookie,
+        type,
+      )
+      res.json({ tracks: result.tracks, total: result.total, page, hasMore: result.hasMore })
+    } catch (error) {
+      if (error instanceof PlaylistSearchLimitError) {
+        respondPlaylistLimitError(res, error)
+        return
+      }
+      throw error
+    }
   }),
 )
 
