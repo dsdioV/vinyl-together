@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { EVENTS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
+import { EVENTS, LIMITS, type MusicSource, type Playlist, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
@@ -224,9 +224,15 @@ export function usePlaylist() {
 
   const addBatchToDefaultQueue = useCallback(
     (tracks: Track[], _playlistName?: string) => {
-      if (tracks.length === 0) return
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks })
-      toast.success(`已添加 ${tracks.length} 首歌到默认播放列表`)
+      const defaultQueueSize = useRoomStore.getState().room?.defaultQueue.length ?? 0
+      const remainingCapacity = Math.max(0, LIMITS.DEFAULT_QUEUE_MAX_SIZE - defaultQueueSize)
+      const tracksToAdd = tracks.slice(0, remainingCapacity)
+      if (tracksToAdd.length === 0) {
+        toast.info('默认播放列表已满')
+        return
+      }
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd })
+      toast.success(`已添加 ${tracksToAdd.length} 首歌到默认播放列表`)
     },
     [socket],
   )

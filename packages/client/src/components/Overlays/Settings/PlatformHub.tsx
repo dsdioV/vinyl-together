@@ -5,8 +5,10 @@ import { usePlaylist } from '@/hooks/usePlaylist'
 import { usePlatformAutoSwitch } from '@/hooks/usePlatformAutoSwitch'
 import { PLATFORM_SHORT_LABELS, PLATFORM_COLORS, getPlatformStatus, getMyPlatformStatus } from '@/lib/platform'
 import { storage } from '@/lib/storage'
-import { type MusicSource, type Playlist } from '@music-together/shared'
-import { useState, useCallback, useMemo } from 'react'
+import { AbilityContext } from '@/providers/AbilityProvider'
+import { useRoomStore } from '@/stores/roomStore'
+import { LIMITS, type MusicSource, type Playlist } from '@music-together/shared'
+import { useState, useCallback, useContext, useMemo } from 'react'
 import { LoginSection } from './LoginSection'
 import { ManualCookieDialog } from './ManualCookieDialog'
 import { QrLoginDialog } from './QrLoginDialog'
@@ -18,6 +20,8 @@ type ViewState = { type: 'list' } | { type: 'detail'; playlist: Playlist; source
 export function PlatformHub() {
   const auth = useAuth()
   const playlist = usePlaylist()
+  const ability = useContext(AbilityContext)
+  const defaultQueueSize = useRoomStore((s) => s.room?.defaultQueue.length ?? 0)
   const { preferredSettingsPlatform } = usePlatformAutoSwitch(auth.platformStatus, auth.myStatus)
 
   const [activePlatform, setActivePlatform] = useState<MusicSource>('netease')
@@ -97,7 +101,8 @@ export function PlatformHub() {
             onAddTrack={playlist.addTrackToQueue}
             onInsertAfterCurrent={playlist.insertTrackAfterCurrent}
             onAddAll={playlist.addBatchToQueue}
-            onAddToDefault={playlist.addBatchToDefaultQueue}
+            onAddToDefault={ability.can('add', 'DefaultQueue') ? playlist.addBatchToDefaultQueue : undefined}
+            maxDefaultAddCount={Math.max(0, LIMITS.DEFAULT_QUEUE_MAX_SIZE - defaultQueueSize)}
             onLoadMore={playlist.loadMoreTracks}
           />
         </div>

@@ -6,6 +6,7 @@ import {
   queueAddBatchSchema,
   queueAddSchema,
   queueInsertAfterCurrentSchema,
+  sanitizeCoverProxyUrl,
 } from '@music-together/shared'
 import type { Track, User } from '@music-together/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,6 +57,55 @@ describe('client track schemas', () => {
     const parsed = schema.parse({ tracks: [untrustedTrack] })
 
     expect(parsed.tracks[0]).not.toHaveProperty('streamUrl')
+  })
+
+  it.each([
+    ['netease', 'https://p1.music.126.net/image.jpg?param=300y300', 'https://p1.music.126.net/image.jpg?param=300y300'],
+    ['netease', 'http://p4.music.126.net/image.jpg', 'https://p4.music.126.net/image.jpg'],
+    ['tencent', 'https://y.gtimg.cn/music/photo_new/cover.jpg', 'https://y.gtimg.cn/music/photo_new/cover.jpg'],
+    [
+      'kugou',
+      'http://imge.kugou.com/stdmusic/400/cover.jpg?x=1#fragment',
+      'https://imge.kugou.com/stdmusic/400/cover.jpg?x=1',
+    ],
+    ['kugou', 'https://imgessl.kugou.com/stdmusic/cover.jpg', 'https://imgessl.kugou.com/stdmusic/cover.jpg'],
+  ] as const)('preserves a trusted %s cover and normalizes it to HTTPS', (source, cover, expected) => {
+    const parsed = queueAddSchema.parse({ track: { ...untrustedTrack, source, cover } })
+
+    expect(parsed.track.cover).toBe(expected)
+  })
+
+  it.each([
+    ['tracking pixel', 'netease', 'https://attacker.example/pixel.gif'],
+    ['loopback host', 'netease', 'http://127.0.0.1/internal'],
+    ['private host', 'netease', 'http://192.168.1.1/internal'],
+    ['data URL', 'netease', 'data:image/png;base64,AAAA'],
+    ['protocol-relative URL', 'tencent', '//y.gtimg.cn/cover.jpg'],
+    ['forged suffix', 'tencent', 'https://y.gtimg.cn.evil.example/cover.jpg'],
+    ['userinfo', 'tencent', 'https://attacker.example@y.gtimg.cn/cover.jpg'],
+    ['custom port', 'tencent', 'https://y.gtimg.cn:444/cover.jpg'],
+    ['source mismatch', 'netease', 'https://y.gtimg.cn/cover.jpg'],
+  ] as const)('clears an untrusted cover (%s)', (_name, source, cover) => {
+    const parsed = queueAddSchema.parse({ track: { ...untrustedTrack, source, cover } })
+
+    expect(parsed.track.cover).toBe('')
+  })
+
+  it('applies cover sanitization to batch and default-queue schemas', () => {
+    const malicious = { ...untrustedTrack, cover: 'https://attacker.example/pixel.gif' }
+
+    expect(queueAddBatchSchema.parse({ tracks: [malicious] }).tracks[0].cover).toBe('')
+    expect(defaultQueueAddSchema.parse({ track: malicious }).track.cover).toBe('')
+    expect(defaultQueueAddBatchSchema.parse({ tracks: [malicious] }).tracks[0].cover).toBe('')
+    expect(queueInsertAfterCurrentSchema.parse({ track: malicious }).track.cover).toBe('')
+  })
+
+  it('uses the same URL policy for the public cover proxy', () => {
+    expect(sanitizeCoverProxyUrl('http://imge.kugou.com/stdmusic/cover.jpg')).toBe(
+      'https://imge.kugou.com/stdmusic/cover.jpg',
+    )
+    expect(sanitizeCoverProxyUrl('https://127.0.0.1/cover.jpg')).toBe('')
+    expect(sanitizeCoverProxyUrl('https://y.gtimg.cn.evil.example/cover.jpg')).toBe('')
   })
 })
 

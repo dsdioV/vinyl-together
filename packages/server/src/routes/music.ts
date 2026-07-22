@@ -5,6 +5,7 @@ import {
   coverQuerySchema,
   playlistQuerySchema,
   trackQuerySchema,
+  sanitizeCoverProxyUrl,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
@@ -13,6 +14,7 @@ import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
+import { readCoverResponse } from '../utils/coverResponse.js'
 
 const router: RouterType = Router()
 
@@ -145,15 +147,6 @@ router.get(
 // 封面图片代理 — 解决外部 CDN（如 QQ 音乐 y.gtimg.cn）的 CORS 限制
 // AMLL 的 BackgroundRender 用 WebGL 纹理加载图片，需要同源或 CORS 允许
 // ---------------------------------------------------------------------------
-const ALLOWED_COVER_HOSTS = [
-  'y.gtimg.cn',
-  'p1.music.126.net',
-  'p2.music.126.net',
-  'p3.music.126.net',
-  'p4.music.126.net',
-  'imgessl.kugou.com',
-]
-
 router.get('/cover-proxy', async (req: Request, res: Response) => {
   const imageUrl = req.query.url as string | undefined
   if (!imageUrl) {
@@ -162,15 +155,16 @@ router.get('/cover-proxy', async (req: Request, res: Response) => {
   }
 
   try {
-    const parsed = new URL(imageUrl)
-    if (!ALLOWED_COVER_HOSTS.includes(parsed.hostname)) {
+    const safeImageUrl = sanitizeCoverProxyUrl(imageUrl)
+    if (!safeImageUrl) {
       res.status(403).json({ error: 'Host not allowed' })
       return
     }
 
-    const response = await fetch(imageUrl, {
+    const response = await fetch(safeImageUrl, {
       signal: AbortSignal.timeout(10_000),
       headers: { 'User-Agent': 'Mozilla/5.0' },
+      redirect: 'error',
     })
 
     if (!response.ok) {
@@ -178,19 +172,19 @@ router.get('/cover-proxy', async (req: Request, res: Response) => {
       return
     }
 
-    // 这里不要直接 pipe web stream。
-    // 上游 CDN 超时/中断时，Readable 的异步 error 可能逃出当前 try/catch，导致 Node 进程崩溃。
-    // 封面图体积小，直接读成 buffer 更稳，失败也会在当前 await 中被 catch。
-    const arrayBuffer = await response.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
+    // 分块读取并限制实际（解压后）大小；读取异常仍会被当前 try/catch 捕获。
+    const cover = await readCoverResponse(response)
+    if (!cover.ok) {
+      res.status(cover.status).json({ error: cover.error })
+      return
+    }
 
-    // 透传 content-type，设置缓存（封面图不会频繁变化）
-    const contentType = response.headers.get('content-type') || 'image/jpeg'
-    res.setHeader('Content-Type', contentType)
-    res.setHeader('Content-Length', String(buffer.length))
+    res.setHeader('Content-Type', cover.contentType)
+    res.setHeader('Content-Length', String(cover.buffer.length))
+    res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Cache-Control', 'public, max-age=86400') // 24h 缓存
     res.setHeader('Access-Control-Allow-Origin', '*')
-    res.status(200).end(buffer)
+    res.status(200).end(cover.buffer)
   } catch (err) {
     logger.error('Cover proxy failed', err, { imageUrl })
     if (!res.headersSent) {

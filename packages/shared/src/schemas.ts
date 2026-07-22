@@ -1,5 +1,6 @@
 import * as z from 'zod/v4'
 import { LIMITS } from './constants.js'
+import { sanitizeTrackCoverUrl } from './coverUrl.js'
 
 // ---------------------------------------------------------------------------
 // Room
@@ -105,7 +106,10 @@ const clientTrackSchema = z.object({
   lyricId: z.string().max(200).optional(),
   picId: z.string().max(200).optional(),
   vip: z.boolean().optional(),
-})
+}).transform((track) => ({
+  ...track,
+  cover: sanitizeTrackCoverUrl(track.cover, track.source),
+}))
 
 export const queueAddSchema = z.object({
   track: clientTrackSchema,

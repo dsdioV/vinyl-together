@@ -25,6 +25,11 @@ interface PlaylistDetailProps {
   onAddToDefault?: (tracks: Track[], playlistName?: string) => void
   onLoadMore: () => void
   /** Maximum number of tracks that can be added. Omit to allow unlimited additions. */
+  maxAddCount?: number
+  /** Label used by the bulk-add success toast. Defaults to the main queue. */
+  addAllTargetLabel?: string
+  /** Maximum number of tracks that can be added through onAddToDefault. */
+  maxDefaultAddCount?: number
   /**
    * Optional set of track keys to treat as "already added".
    * When omitted, the main queue is used (default for PlatformHub).
@@ -47,6 +52,9 @@ export function PlaylistDetail({
   onAddAll,
   onAddToDefault,
   onLoadMore,
+  maxAddCount,
+  addAllTargetLabel,
+  maxDefaultAddCount,
   checkedKeys,
 }: PlaylistDetailProps) {
   const queue = useRoomStore((s) => s.room?.queue ?? EMPTY_QUEUE)
@@ -113,28 +121,36 @@ export function PlaylistDetail({
 
   // Dynamic "add all" logic — filter duplicates
   const uniqueTracks = useMemo(() => tracks.filter((t) => !isTrackAdded(t)), [tracks, isTrackAdded])
+  const addAllTracks = useMemo(
+    () => uniqueTracks.slice(0, maxAddCount === undefined ? uniqueTracks.length : Math.max(0, maxAddCount)),
+    [uniqueTracks, maxAddCount],
+  )
+  const defaultAddTracks = useMemo(
+    () => uniqueTracks.slice(0, maxDefaultAddCount === undefined ? uniqueTracks.length : Math.max(0, maxDefaultAddCount)),
+    [uniqueTracks, maxDefaultAddCount],
+  )
 
   const handleAddAll = useCallback(() => {
-    if (uniqueTracks.length === 0) return
-    onAddAll(uniqueTracks, playlist?.name)
+    if (addAllTracks.length === 0) return
+    onAddAll(addAllTracks, playlist?.name)
     setAddedIds((prev) => {
       const next = new Set(prev)
-      for (const t of uniqueTracks) next.add(trackKey(t))
+      for (const t of addAllTracks) next.add(trackKey(t))
       return next
     })
-    toast.success(`已添加 ${uniqueTracks.length} 首到队列`)
-  }, [uniqueTracks, onAddAll, playlist?.name])
+    toast.success(`已添加 ${addAllTracks.length} 首到${addAllTargetLabel ?? '队列'}`)
+  }, [addAllTracks, onAddAll, playlist?.name, addAllTargetLabel])
 
   const handleAddToDefault = useCallback(() => {
     if (!onAddToDefault) return
-    if (uniqueTracks.length === 0) return
-    onAddToDefault(uniqueTracks, playlist?.name)
+    if (defaultAddTracks.length === 0) return
+    onAddToDefault(defaultAddTracks, playlist?.name)
     setAddedIds((prev) => {
       const next = new Set(prev)
-      for (const t of uniqueTracks) next.add(trackKey(t))
+      for (const t of defaultAddTracks) next.add(trackKey(t))
       return next
     })
-  }, [uniqueTracks, onAddToDefault, playlist?.name])
+  }, [defaultAddTracks, onAddToDefault, playlist?.name])
 
   // Button label
   let addAllLabel: string
@@ -142,10 +158,10 @@ export function PlaylistDetail({
     addAllLabel = '加载中…'
   } else if (tracks.length === 0) {
     addAllLabel = '添加全部'
-  } else if (uniqueTracks.length === 0) {
-    addAllLabel = '全部已添加'
+  } else if (addAllTracks.length === 0) {
+    addAllLabel = maxAddCount === 0 ? '已达上限' : '全部已添加'
   } else {
-    addAllLabel = `添加全部 ${uniqueTracks.length} 首`
+    addAllLabel = `添加全部 ${addAllTracks.length} 首`
   }
 
   return (
@@ -186,7 +202,7 @@ export function PlaylistDetail({
               variant="outline"
               size="sm"
               onClick={handleAddToDefault}
-              disabled={loading || uniqueTracks.length === 0}
+              disabled={loading || defaultAddTracks.length === 0}
               className="shrink-0 gap-1"
             >
               <Library className="h-3.5 w-3.5" />
@@ -197,7 +213,7 @@ export function PlaylistDetail({
             variant="outline"
             size="sm"
             onClick={handleAddAll}
-            disabled={loading || uniqueTracks.length === 0}
+            disabled={loading || addAllTracks.length === 0}
             className="shrink-0 gap-1"
           >
             <ListPlus className="h-3.5 w-3.5" />

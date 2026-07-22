@@ -1,6 +1,7 @@
 import {
   EVENTS,
   ERROR_CODE,
+  queueAddBatchSchema,
   queueAddSchema,
   queueInsertAfterCurrentSchema,
   queueRemoveSchema,
@@ -9,6 +10,7 @@ import {
   defaultQueueRemoveSchema,
   queueLikeSchema,
   queueUnlikeSchema,
+  LIMITS,
 } from '@music-together/shared'
 import type { Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -117,10 +119,22 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       if (!(await checkSocketRateLimit(ctx.socket))) return
 
       const rawTracks: unknown[] = Array.isArray(raw?.tracks) ? raw.tracks : []
-      const playlistName: string | undefined = raw?.playlistName
+      const playlistNameResult = queueAddBatchSchema.shape.playlistName.safeParse(raw?.playlistName)
+      if (!playlistNameResult.success) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌单名称' })
+        return
+      }
+      const playlistName = playlistNameResult.data
 
       if (rawTracks.length === 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲列表为空' })
+        return
+      }
+      if (rawTracks.length > LIMITS.QUEUE_BATCH_MAX_SIZE) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_DATA,
+          message: `单次最多添加 ${LIMITS.QUEUE_BATCH_MAX_SIZE} 首歌曲`,
+        })
         return
       }
 
@@ -241,10 +255,18 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.DEFAULT_QUEUE_ADD,
-    withPermission('add', 'Queue', (ctx, raw) => {
+    withPermission('add', 'DefaultQueue', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = defaultQueueAddSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      if (ctx.room.defaultQueue.length >= LIMITS.DEFAULT_QUEUE_MAX_SIZE) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.QUEUE_FULL,
+          message: '默认播放列表已满',
+        })
         return
       }
       const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
@@ -264,11 +286,28 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.DEFAULT_QUEUE_ADD_BATCH,
-    withPermission('add', 'Queue', (ctx, raw) => {
+    withPermission('add', 'DefaultQueue', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const rawTracks: unknown[] = Array.isArray(raw?.tracks) ? raw.tracks : []
 
       if (rawTracks.length === 0) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲列表为空' })
+        return
+      }
+      if (rawTracks.length > LIMITS.QUEUE_BATCH_MAX_SIZE) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_DATA,
+          message: `单次最多添加 ${LIMITS.QUEUE_BATCH_MAX_SIZE} 首歌曲`,
+        })
+        return
+      }
+
+      const remainingCapacity = LIMITS.DEFAULT_QUEUE_MAX_SIZE - ctx.room.defaultQueue.length
+      if (remainingCapacity <= 0) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.QUEUE_FULL,
+          message: '默认播放列表已满',
+        })
         return
       }
 
@@ -299,7 +338,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         logger.warn(`DEFAULT_QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, { roomId: ctx.roomId })
       }
 
-      const tracks = validTracks
+      const tracks = validTracks.slice(0, remainingCapacity)
 
       ctx.room.defaultQueue.push(...tracks)
       broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
@@ -316,7 +355,8 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.DEFAULT_QUEUE_REMOVE,
-    withPermission('remove', 'Queue', (ctx, raw) => {
+    withPermission('remove', 'DefaultQueue', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
       const parsed = defaultQueueRemoveSchema.safeParse(raw)
       if (!parsed.success) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的移除请求' })

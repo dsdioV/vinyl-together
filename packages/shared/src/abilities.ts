@@ -15,7 +15,7 @@ export type Actions =
   | 'vote'
   | 'set-role'
 
-export type Subjects = 'Player' | 'Queue' | 'Room' | 'all'
+export type Subjects = 'Player' | 'Queue' | 'DefaultQueue' | 'Room' | 'all'
 
 export type AppAbility = PureAbility<[Actions, Subjects]>
 
@@ -44,6 +44,8 @@ export function defineAbilityFor(role: UserRole): AppAbility {
       can('add', 'Queue')
       can('remove', 'Queue')
       can('reorder', 'Queue')
+      can('add', 'DefaultQueue')
+      can('remove', 'DefaultQueue')
       break
     case 'member':
       can('add', 'Queue')

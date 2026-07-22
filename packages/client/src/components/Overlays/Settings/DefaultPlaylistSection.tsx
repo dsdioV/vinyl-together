@@ -9,7 +9,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
-import { EVENTS } from '@music-together/shared'
+import { EVENTS, LIMITS } from '@music-together/shared'
 import type { MusicSource, Track, Playlist } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, Hash, ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -28,6 +28,7 @@ export function DefaultPlaylistSection() {
   const { socket } = useSocketContext()
   const defaultQueue = useRoomStore((s) => s.room?.defaultQueue ?? [])
   const defaultKeys = useMemo(() => new Set(defaultQueue.map(trackKey)), [defaultQueue])
+  const remainingCapacity = Math.max(0, LIMITS.DEFAULT_QUEUE_MAX_SIZE - defaultQueue.length)
 
   const [source, setSource] = useState<MusicSource>('netease')
   const [searchType, setSearchType] = useState<'song' | 'album' | 'playlist'>('song')
@@ -100,6 +101,10 @@ export function DefaultPlaylistSection() {
 
   const handleAddToDefault = useCallback(
     (track: Track) => {
+      if (remainingCapacity === 0) {
+        toast.info('默认播放列表已满')
+        return
+      }
       const key = trackKey(track)
       if (defaultKeys.has(key)) {
         toast.info(`「${track.title}」已在默认播放列表中`)
@@ -108,16 +113,16 @@ export function DefaultPlaylistSection() {
       socket.emit(EVENTS.DEFAULT_QUEUE_ADD, { track })
       toast.success(`「${track.title}」已加入默认播放列表`)
     },
-    [socket, defaultKeys],
+    [socket, defaultKeys, remainingCapacity],
   )
 
   const handleAddBatchToDefault = useCallback(
     (tracks: Track[]) => {
-      if (tracks.length === 0) return
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks })
-      toast.success(`已添加 ${tracks.length} 首歌到默认播放列表`)
+      const tracksToAdd = tracks.slice(0, remainingCapacity)
+      if (tracksToAdd.length === 0) return
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd })
     },
-    [socket],
+    [socket, remainingCapacity],
   )
 
   const handleRemoveFromDefault = useCallback(
@@ -199,7 +204,7 @@ export function DefaultPlaylistSection() {
     <div>
       <h3 className="text-base font-semibold">默认播放列表</h3>
       <p className="text-muted-foreground mt-1 text-xs">
-        主队列为空时自动从中随机抽取歌曲播放。房主可以自由添加/移除歌曲。
+        主队列为空时自动从中随机抽取歌曲播放。房主和管理员可以自由添加/移除歌曲。
       </p>
       <Separator className="mt-2 mb-4" />
 
@@ -215,6 +220,8 @@ export function DefaultPlaylistSection() {
           onAddTrack={handleAddToDefault}
           onAddAll={handleAddBatchToDefault}
           onLoadMore={loadMoreTracks}
+          maxAddCount={remainingCapacity}
+          addAllTargetLabel="默认播放列表"
           checkedKeys={defaultKeys}
         />
       ) : (
