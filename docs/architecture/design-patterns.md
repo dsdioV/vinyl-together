@@ -48,7 +48,7 @@ RoomPage
 
 其他独立 hook：`useChat`、`useLobby`、`useQueue`、`useVote`、`useAuth`、`usePlaylist`，每个 hook 负责将 Socket 事件绑定到对应 Store。
 
-`usePlaylist` 管理歌单功能：通过 Socket 获取用户歌单列表（`playlist:get_my` → `playlist:my_list`），通过 REST 分页获取歌单曲目（`GET /api/music/playlist?limit=100&offset=0`，返回 `{ tracks, total, offset, hasMore }`），提供 `loadMoreTracks()` 无限加载下一页、URL/ID 解析工具函数（`parsePlaylistInput`），以及单曲/批量添加到队列。切换歌单时立即重置状态防止闪旧数据，内部 `loadingMoreRef`（ref）做同步防重，避免 React 批量更新前的闭包竞态。URL 拼接通过 `buildPlaylistUrl()` 辅助函数集中管理。
+`usePlaylist` 管理歌单功能：通过 Socket 获取用户歌单列表（`playlist:get_my` → `playlist:my_list`），通过 REST 分页获取普通浏览曲目（`GET /api/music/playlist?limit=1000&offset=0`），并通过 `GET /api/music/playlist/search` 在服务端搜索最多 10,000 首的完整歌单、每页返回 50 个命中结果。它还提供 `loadMoreTracks()` 无限加载、URL/ID 解析（`parsePlaylistInput`）以及单曲/批量添加到队列。普通浏览与搜索分别使用 `AbortController`、请求序号和独立状态阻止过期响应；`loadingMoreRef` 做同步防重，持续加载失败时停止自动请求并显示明确错误。
 
 ## 受控 Dialog 模式
 

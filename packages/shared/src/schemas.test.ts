@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { LIMITS } from './constants.js'
-import { playlistSearchQuerySchema, queueReorderSchema, roomSettingsSchema } from './schemas.js'
+import { playlistQuerySchema, playlistSearchQuerySchema, queueReorderSchema, roomSettingsSchema } from './schemas.js'
 
 const baseQuery = {
   source: 'netease',
@@ -24,7 +24,7 @@ describe('playlistSearchQuerySchema', () => {
     })
   })
 
-  it('accepts the final page so all supported 8192 tracks remain addressable', () => {
+  it('accepts the final page so all supported 10000 tracks remain addressable', () => {
     const result = playlistSearchQuerySchema.safeParse({
       ...baseQuery,
       page: LIMITS.PLAYLIST_SEARCH_PAGE_MAX,
@@ -64,6 +64,28 @@ describe('playlistSearchQuerySchema', () => {
     })
 
     expect(result.success).toBe(true)
+  })
+})
+
+describe('playlistQuerySchema', () => {
+  it('allows at most one 1000-track browser page per request', () => {
+    expect(
+      playlistQuerySchema.safeParse({
+        source: 'netease',
+        id: 'playlist-1',
+        limit: 1000,
+        offset: 9000,
+        total: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+      }).success,
+    ).toBe(true)
+
+    expect(
+      playlistQuerySchema.safeParse({
+        source: 'netease',
+        id: 'playlist-1',
+        limit: 1001,
+      }).success,
+    ).toBe(false)
   })
 })
 

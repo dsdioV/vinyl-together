@@ -41,7 +41,7 @@
 - **Default playlist** -- Auto-fill empty queue with random songs from a designated playlist (configurable)
 - **Search by ID** -- Look up playlists and albums by numeric ID
 - **Like mode** -- Most-liked song plays next (requires auto-remove)
-- **Unlimited batch import** -- Remove the 200-song limit for playlist imports
+- **Large playlist browsing and search** -- Load external playlists in chunks and search all tracks in playlists of up to 10,000 songs; the room queue remains capped at 8,192 songs
 - **Real-time chat** -- In-room text messaging with system messages
 - **Role grace period** -- Privileged users retain roles for 30s after disconnect
 - **Mobile responsive** -- Adaptive layout with orientation-based switching

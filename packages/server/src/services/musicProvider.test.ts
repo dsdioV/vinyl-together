@@ -274,7 +274,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     expect(result.tracks[0]).toMatchObject({ sourceId: '1005', title: 'Acceptance Needle' })
   })
 
-  it('supports the final page for an 8192-track result set', async () => {
+  it('supports the final page for a 10000-track result set', async () => {
     const provider = new MusicProvider()
     const internals = provider as unknown as ProviderInternals
     const tracks = Array.from({ length: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS }, (_, index) => ({
@@ -302,6 +302,66 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     expect(result.tracks.at(-1)?.sourceId).toBe(String(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS - 1))
     expect(result.total).toBe(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS)
     expect(result.hasMore).toBe(false)
+  })
+
+  it('returns only the requested 1000-track browser page from a supported 10000-track playlist', async () => {
+    const provider = new MusicProvider()
+    const internals = provider as unknown as ProviderInternals
+    const tracks = Array.from({ length: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS }, (_, index) => ({
+      ...track('netease', String(index)),
+      cover: '',
+    }))
+    const ids = tracks.map((item) => item.sourceId)
+    internals.registerTracks(tracks)
+    vi.spyOn(provider, 'fetchFullPlaylist').mockResolvedValue({ ids, total: tracks.length })
+    vi.spyOn(internals, 'batchResolveCover').mockResolvedValue()
+
+    const result = await provider.getPlaylistPage(
+      'netease',
+      'playlist-id',
+      1000,
+      0,
+      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+    )
+
+    expect(result.tracks).toHaveLength(1000)
+    expect(result.tracks[0]?.sourceId).toBe('0')
+    expect(result.tracks.at(-1)?.sourceId).toBe('999')
+    expect(result.total).toBe(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS)
+    expect(result.hasMore).toBe(true)
+  })
+
+  it('fetches a maximum-size 10000-track Netease playlist in 1000-track chunks', async () => {
+    const provider = new MusicProvider()
+    ncmApiMock.playlist_track_all.mockImplementation(({ limit, offset }: { limit: number; offset: number }) => {
+      const remaining = Math.max(0, LIMITS.PLAYLIST_SEARCH_MAX_TRACKS - offset)
+      const count = Math.min(limit, remaining)
+      return {
+        body: {
+          songs: Array.from({ length: count }, (_, index) => neteaseSong(offset + index)),
+        },
+      }
+    })
+
+    const result = await provider.fetchFullPlaylist(
+      'netease',
+      'maximum-playlist',
+      undefined,
+      null,
+      'playlist',
+      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+    )
+
+    expect(result.total).toBe(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS)
+    expect(result.ids.at(-1)).toBe(String(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS - 1))
+    expect(ncmApiMock.playlist_track_all).toHaveBeenCalledTimes(11)
+    expect(ncmApiMock.playlist_track_all).toHaveBeenNthCalledWith(
+      10,
+      expect.objectContaining({ limit: 1000, offset: 9000 }),
+    )
+    expect(ncmApiMock.playlist_track_all).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 1, offset: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS }),
+    )
   })
 
   it('fetches Netease playlists to the API end instead of trusting a smaller client total', async () => {
@@ -495,7 +555,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     expect(tencentPlaylistTracksMock).toHaveBeenCalledTimes(1_000)
   })
 
-  it('applies the 8192-track limit to ordinary playlist browsing', async () => {
+  it('applies the 10000-track limit to ordinary playlist browsing', async () => {
     const provider = new MusicProvider()
     const actualTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1
     const fetchSpy = vi
@@ -516,7 +576,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     )
   })
 
-  it('rejects Tencent search as soon as the 8193rd track is discovered', async () => {
+  it('rejects Tencent search as soon as the 10001st track is discovered', async () => {
     const provider = new MusicProvider()
     tencentPlaylistTracksMock.mockImplementation(
       (_playlistId: string, page: number, pageSize: number) => ({
@@ -534,7 +594,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     )
   })
 
-  it('rejects Kugou search as soon as the 8193rd track is discovered', async () => {
+  it('rejects Kugou search as soon as the 10001st track is discovered', async () => {
     const provider = new MusicProvider()
     kugouPlaylistTracksMock.mockImplementation(
       (_playlistId: string, page: number, pageSize: number) => ({
@@ -579,7 +639,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     )
   })
 
-  it('stops an unbounded Netease fetch after proving the playlist exceeds 8192 tracks', async () => {
+  it('stops an unbounded Netease fetch after proving the playlist exceeds 10000 tracks', async () => {
     const provider = new MusicProvider()
     const actualTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1
     const lastOffset = Math.floor(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS / 1000) * 1000

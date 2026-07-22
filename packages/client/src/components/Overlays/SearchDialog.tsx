@@ -78,6 +78,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const [selectedAlbum, setSelectedAlbum] = useState<PlaylistDetailContext | null>(null)
   const {
     playlistTracks,
+    playlistError,
     playlistTotal,
     tracksLoading,
     loadingMore: albumLoadingMore,
@@ -309,6 +310,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
               playlistType={selectedAlbum.type}
               tracks={playlistTracks}
               loading={tracksLoading}
+              loadError={playlistError}
               loadingMore={albumLoadingMore}
               hasMore={hasMoreTracks}
               total={playlistTotal}

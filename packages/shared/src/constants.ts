@@ -21,12 +21,12 @@ export const LIMITS = {
   SEARCH_KEYWORD_MAX_LENGTH: 500,
   SEARCH_PAGE_SIZE_MAX: 50,
   SEARCH_PAGE_MAX: 100,
-  /** 单个歌单读取与全量搜索最多支持的歌曲数 */
-  PLAYLIST_SEARCH_MAX_TRACKS: 8_192,
+  /** 单个外部歌单读取与全量搜索最多支持的歌曲数 */
+  PLAYLIST_SEARCH_MAX_TRACKS: 10_000,
   /** 歌单内搜索固定分页大小 */
   PLAYLIST_SEARCH_PAGE_SIZE: 50,
-  /** 8,192 首歌按每页 50 首时的最后一页 */
-  PLAYLIST_SEARCH_PAGE_MAX: 164,
+  /** 10,000 首歌按每页 50 首时的最后一页 */
+  PLAYLIST_SEARCH_PAGE_MAX: 200,
   PLAYLIST_ID_MAX_LENGTH: 200,
   PLAYED_HISTORY_MAX_SIZE: 200,
   /** 持久化房间无人自动清理上限（小时） */

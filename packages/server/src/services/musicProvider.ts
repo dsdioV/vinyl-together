@@ -138,6 +138,8 @@ interface TencentSearchSong {
 const API_TIMEOUT_MS = 15_000
 /** Independent safety ceiling for ordinary full-playlist fetches. */
 const PLAYLIST_FETCH_HARD_MAX_TRACKS = 100_000
+/** Leave headroom beyond one maximum-size playlist so unrelated tracks remain cached. */
+const TRACK_REGISTRY_MAX_TRACKS = 16_384
 
 class PlaylistPaginationError extends Error {
   constructor(source: MusicSource, playlistId: string, page: number) {
@@ -215,7 +217,7 @@ export class MusicProvider {
   // here. Cross-context enrichment: search provides duration + cover, playlist
   // provides additional tracks. Merge strategy keeps the richest data.
   private trackRegistry = new LRUCache<string, TrackMeta>({
-    max: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
+    max: TRACK_REGISTRY_MAX_TRACKS,
     ttl: 2 * HOUR,
   })
 

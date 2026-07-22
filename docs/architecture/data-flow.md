@@ -264,7 +264,8 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 | `/api/music/url`           | GET  | 解析流媒体 URL（`source` + `id`）                                                                       |
 | `/api/music/lyric`         | GET  | 获取歌词                                                                                                |
 | `/api/music/cover`         | GET  | 获取封面图                                                                                              |
-| `/api/music/playlist`      | GET  | 获取歌单曲目列表（`source` + `id` + `limit` + `offset`），分页返回 `{ tracks, total, offset, hasMore }` |
+| `/api/music/playlist`      | GET  | 获取最多 10,000 首的外部歌单，客户端每次最多加载 1,000 首，返回 `{ tracks, total, offset, hasMore }`   |
+| `/api/music/playlist/search` | GET | 服务端搜索完整外部歌单，每页固定返回 50 个命中结果，最多 200 页                                     |
 | `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
 | `/api/health`              | GET  | 健康检查                                                                                                |
 

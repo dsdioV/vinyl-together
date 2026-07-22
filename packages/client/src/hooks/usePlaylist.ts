@@ -5,6 +5,7 @@ import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
 import { trackLookupFailure, type TrackLookupResult } from '@/lib/trackLookup'
+import { getPlaylistLoadError, PLAYLIST_NETWORK_ERROR } from '@/lib/playlistLoad'
 
 export { parsePlaylistInput } from '@/lib/musicInput'
 
@@ -18,6 +19,14 @@ interface PlaylistSearchResponse {
   page?: number
   hasMore?: boolean
   error?: string
+}
+
+interface PlaylistPageResponse {
+  tracks?: Track[]
+  total?: number
+  hasMore?: boolean
+  code?: unknown
+  error?: unknown
 }
 
 /** Build the playlist API URL with all query parameters */
@@ -80,6 +89,7 @@ export function usePlaylist() {
   const [hasMoreTracks, setHasMoreTracks] = useState(false)
   const [tracksLoading, setTracksLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [playlistError, setPlaylistError] = useState<string | null>(null)
 
   // Server-side full-playlist search state. This is kept separate from the
   // infinitely-loaded browsing list so clearing a keyword restores it instantly.
@@ -94,6 +104,8 @@ export function usePlaylist() {
   const currentPlaylistRef = useRef<{ source: MusicSource; id: string; type?: PlaylistType } | null>(null)
   const offsetRef = useRef(0)
   const loadingMoreRef = useRef(false)
+  const playlistBrowseAbortRef = useRef<AbortController | null>(null)
+  const playlistBrowseRequestIdRef = useRef(0)
   const playlistSearchAbortRef = useRef<AbortController | null>(null)
   const playlistSearchRequestIdRef = useRef(0)
 
@@ -111,6 +123,7 @@ export function usePlaylist() {
 
   useEffect(() => {
     return () => {
+      playlistBrowseAbortRef.current?.abort()
       playlistSearchAbortRef.current?.abort()
     }
   }, [])
@@ -148,11 +161,16 @@ export function usePlaylist() {
     ): Promise<Track[]> => {
       // Reset state immediately — prevents flashing old data when switching playlists
       clearPlaylistSearch()
+      playlistBrowseAbortRef.current?.abort()
+      const controller = new AbortController()
+      playlistBrowseAbortRef.current = controller
+      const requestId = ++playlistBrowseRequestIdRef.current
       setPlaylistTracks([])
       setPlaylistTotal(0)
       setHasMoreTracks(false)
       setTracksLoading(true)
       setLoadingMore(false)
+      setPlaylistError(null)
       loadingMoreRef.current = false
 
       // Track current context for stale response detection
@@ -165,33 +183,50 @@ export function usePlaylist() {
           roomId: useRoomStore.getState().room?.id,
           type,
         })
-        const res = await fetch(url, { credentials: 'include' })
-        if (!res.ok) {
-          setTracksLoading(false)
-          return []
-        }
+        const res = await fetch(url, { signal: controller.signal, credentials: 'include' })
+        const data = (await res.json().catch(() => null)) as PlaylistPageResponse | null
 
         // Stale response guard
         const ctx = currentPlaylistRef.current
-        if (!ctx || ctx.source !== source || ctx.id !== playlistId || ctx.type !== type) return []
+        if (
+          playlistBrowseRequestIdRef.current !== requestId ||
+          !ctx ||
+          ctx.source !== source ||
+          ctx.id !== playlistId ||
+          ctx.type !== type
+        )
+          return []
 
-        const data = await res.json()
-        const tracks: Track[] = data.tracks ?? []
-        const total: number = data.total ?? tracks.length
+        if (!res.ok) {
+          setPlaylistError(getPlaylistLoadError(res.status, data))
+          return []
+        }
+
+        const tracks: Track[] = data?.tracks ?? []
+        const total: number = data?.total ?? tracks.length
 
         setPlaylistTracks(tracks)
         setPlaylistTotal(total)
-        setHasMoreTracks(data.hasMore ?? false)
+        setHasMoreTracks(data?.hasMore ?? false)
+        setPlaylistError(null)
         offsetRef.current = tracks.length
-        setTracksLoading(false)
         return tracks
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return []
         // Only update state if this is still the active playlist
         const ctx = currentPlaylistRef.current
-        if (ctx && ctx.source === source && ctx.id === playlistId && ctx.type === type) {
-          setTracksLoading(false)
+        if (
+          playlistBrowseRequestIdRef.current === requestId &&
+          ctx &&
+          ctx.source === source &&
+          ctx.id === playlistId &&
+          ctx.type === type
+        ) {
+          setPlaylistError(PLAYLIST_NETWORK_ERROR)
         }
         return []
+      } finally {
+        if (playlistBrowseRequestIdRef.current === requestId) setTracksLoading(false)
       }
     },
     [clearPlaylistSearch],
@@ -205,6 +240,8 @@ export function usePlaylist() {
   const loadMoreTracks = useCallback(async () => {
     const ctx = currentPlaylistRef.current
     if (!ctx || loadingMoreRef.current || !hasMoreTracks) return
+    const requestId = playlistBrowseRequestIdRef.current
+    const signal = playlistBrowseAbortRef.current?.signal
 
     loadingMoreRef.current = true
     setLoadingMore(true)
@@ -216,25 +253,43 @@ export function usePlaylist() {
         roomId: useRoomStore.getState().room?.id,
         type: ctx.type,
       })
-      const res = await fetch(url, { credentials: 'include' })
-      if (!res.ok) return
+      const res = await fetch(url, { signal, credentials: 'include' })
+      const data = (await res.json().catch(() => null)) as PlaylistPageResponse | null
 
       // Stale response guard — context might have changed while we were fetching
       const currentCtx = currentPlaylistRef.current
-      if (!currentCtx || currentCtx.source !== ctx.source || currentCtx.id !== ctx.id || currentCtx.type !== ctx.type)
+      if (
+        playlistBrowseRequestIdRef.current !== requestId ||
+        !currentCtx ||
+        currentCtx.source !== ctx.source ||
+        currentCtx.id !== ctx.id ||
+        currentCtx.type !== ctx.type
+      )
         return
 
-      const data = await res.json()
-      const newTracks: Track[] = data.tracks ?? []
+      if (!res.ok) {
+        setPlaylistError(getPlaylistLoadError(res.status, data))
+        setHasMoreTracks(false)
+        return
+      }
+
+      const newTracks: Track[] = data?.tracks ?? []
 
       setPlaylistTracks((prev) => [...prev, ...newTracks])
-      setHasMoreTracks(data.hasMore ?? false)
+      setHasMoreTracks(data?.hasMore ?? false)
+      setPlaylistError(null)
       offsetRef.current = offset + newTracks.length
-    } catch {
-      // Silently fail — user can scroll again to retry
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return
+      if (playlistBrowseRequestIdRef.current === requestId) {
+        setPlaylistError(PLAYLIST_NETWORK_ERROR)
+        setHasMoreTracks(false)
+      }
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (playlistBrowseRequestIdRef.current === requestId) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
   }, [hasMoreTracks, playlistTotal])
 
@@ -376,6 +431,7 @@ export function usePlaylist() {
     hasMoreTracks,
     tracksLoading,
     loadingMore,
+    playlistError,
     playlistSearchTracks,
     playlistSearchTotal,
     playlistSearchPage,

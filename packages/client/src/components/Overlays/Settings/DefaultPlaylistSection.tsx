@@ -76,6 +76,7 @@ export function DefaultPlaylistSection() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<PlaylistDetailContext | null>(null)
   const {
     playlistTracks,
+    playlistError,
     playlistTotal,
     tracksLoading,
     loadingMore: playlistLoadingMore,
@@ -233,6 +234,7 @@ export function DefaultPlaylistSection() {
           playlistType={selectedPlaylist.type}
           tracks={playlistTracks}
           loading={tracksLoading}
+          loadError={playlistError}
           loadingMore={playlistLoadingMore}
           hasMore={hasMoreTracks}
           total={playlistTotal}

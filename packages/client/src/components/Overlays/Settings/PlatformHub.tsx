@@ -98,6 +98,7 @@ export function PlatformHub() {
             playlistType="playlist"
             tracks={playlist.playlistTracks}
             loading={playlist.tracksLoading}
+            loadError={playlist.playlistError}
             loadingMore={playlist.loadingMore}
             hasMore={playlist.hasMoreTracks}
             total={playlist.playlistTotal}

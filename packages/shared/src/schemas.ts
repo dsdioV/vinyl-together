@@ -209,7 +209,7 @@ export const playlistSearchQuerySchema = z.object({
   keyword: z.string().trim().min(1).max(LIMITS.SEARCH_KEYWORD_MAX_LENGTH),
   page: z.coerce.number().int().min(1).max(LIMITS.PLAYLIST_SEARCH_PAGE_MAX).default(1),
   // Full-playlist search deliberately uses a fixed page size so the page
-  // ceiling always covers the complete supported 8,192-track range.
+  // ceiling always covers the complete supported 10,000-track range.
   limit: z.coerce
     .number()
     .int()

@@ -18,6 +18,7 @@ interface PlaylistDetailProps {
   playlistType: 'playlist' | 'album'
   tracks: Track[]
   loading: boolean
+  loadError: string | null
   loadingMore: boolean
   hasMore: boolean
   total: number
@@ -64,6 +65,7 @@ export function PlaylistDetail({
   playlistType,
   tracks,
   loading,
+  loadError,
   loadingMore,
   hasMore,
   total,
@@ -268,7 +270,9 @@ export function PlaylistDetail({
               ? searchError
                 ? '搜索失败'
                 : `搜索到 ${searchTotal} 首 · 第 ${searchResultPage} / ${searchTotalPages} 页`
-              : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
+              : loadError
+                ? '加载失败'
+                : `${total} 首${tracks.length < total ? `（已加载 ${tracks.length}）` : ''}${playlist?.creator ? ` · ${playlist.creator}` : ''}`}
         </p>
         <div className="flex shrink-0 items-center gap-1.5">
           {onAddToDefault && (
@@ -309,7 +313,7 @@ export function PlaylistDetail({
         onAddTrack={handleAddTrack}
         onInsertAfterCurrent={onInsertAfterCurrent ? handleInsertAfterCurrent : undefined}
         emptyIcon={<Music className="h-8 w-8" />}
-        emptyMessage={isSearching ? searchError || '没有匹配的歌曲' : '歌单为空'}
+        emptyMessage={isSearching ? searchError || '没有匹配的歌曲' : loadError || '歌单为空'}
         className="border-0 rounded-none"
       />
 

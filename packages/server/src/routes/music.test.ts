@@ -6,13 +6,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const mocks = vi.hoisted(() => {
   class MockPlaylistSearchLimitError extends Error {
     readonly code = 'PLAYLIST_TRACK_LIMIT_EXCEEDED'
-    readonly maxTracks = 8_192
+    readonly maxTracks = 10_000
 
     constructor(readonly actualTracks?: number) {
       super(
         actualTracks === undefined
-          ? '歌单超过支持上限 8192 首'
-          : `歌单包含 ${actualTracks} 首歌曲，超过支持上限 8192 首`,
+          ? '歌单超过支持上限 10000 首'
+          : `歌单包含 ${actualTracks} 首歌曲，超过支持上限 10000 首`,
       )
       this.name = 'PlaylistSearchLimitError'
     }
@@ -242,7 +242,7 @@ describe('GET /playlist/search', () => {
     expect(mocks.searchPlaylistTracks).not.toHaveBeenCalled()
   })
 
-  it('maps the recognizable over-8192 service error to a stable 422 response', async () => {
+  it('maps the recognizable over-10000 service error to a stable 422 response', async () => {
     const actualTracks = LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1
     mocks.searchPlaylistTracks.mockRejectedValue(new PlaylistSearchLimitError(actualTracks))
 
