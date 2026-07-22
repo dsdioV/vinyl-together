@@ -1,4 +1,12 @@
-import { EVENTS, ERROR_CODE, defineAbilityFor, playerSeekSchema, playerSetModeSchema, playerSyncSchema } from '@music-together/shared'
+import {
+  EVENTS,
+  ERROR_CODE,
+  defineAbilityFor,
+  playerPlaySchema,
+  playerSeekSchema,
+  playerSetModeSchema,
+  playerSyncSchema,
+} from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -14,13 +22,28 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
 
   socket.on(
     EVENTS.PLAYER_PLAY,
-    withPermission('play', 'Player', async (ctx, data) => {
+    withPermission('play', 'Player', async (ctx, raw) => {
       if (!(await checkSocketRateLimit(ctx.socket))) return
-      const track = data?.track ?? ctx.room.currentTrack ?? ctx.room.queue[0]
+
+      const parsed = playerPlaySchema.safeParse(raw === undefined ? {} : raw)
+      if (!parsed.success) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的播放请求' })
+        return
+      }
+
+      const trackId = 'track' in parsed.data ? parsed.data.track.id : parsed.data.trackId
+      const track = trackId
+        ? ctx.room.queue.find((candidate) => candidate.id === trackId)
+        : (ctx.room.currentTrack ?? ctx.room.queue[0])
+
+      if (trackId && !track) {
+        ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲不在播放列表中' })
+        return
+      }
       if (!track) return
 
       // Resume: same track already loaded and has stream URL → keep position
-      if (!data?.track && ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
+      if (!trackId && ctx.room.currentTrack?.id === track.id && ctx.room.currentTrack?.streamUrl) {
         await playerService.resumeTrack(ctx.io, ctx.roomId, ctx.socket)
         return
       }

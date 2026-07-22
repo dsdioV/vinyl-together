@@ -137,7 +137,7 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
   const handlePlayTrack = (track: Track) => {
     if (canPlay) {
-      socket.emit(EVENTS.PLAYER_PLAY, { track })
+      socket.emit(EVENTS.PLAYER_PLAY, { trackId: track.id })
     } else if (canVote) {
       socket.emit(EVENTS.VOTE_START, {
         action: 'play-track' as const,

@@ -61,6 +61,15 @@ export const roomAutoFallbackSchema = z.object({
 // Player
 // ---------------------------------------------------------------------------
 
+const trackIdSchema = z.string().min(1).max(200)
+
+export const playerPlaySchema = z.union([
+  z.strictObject({ trackId: trackIdSchema.optional() }),
+  // Backward compatibility for already-open clients. Only the ID survives;
+  // every other Track field (especially streamUrl) is discarded.
+  z.strictObject({ track: z.object({ id: trackIdSchema }) }),
+])
+
 export const playerSeekSchema = z.object({
   currentTime: z.number().finite().nonnegative(),
 })
@@ -78,7 +87,12 @@ export const playerSetModeSchema = z.object({
 // Queue
 // ---------------------------------------------------------------------------
 
-const trackSchema = z.object({
+/**
+ * Track fields accepted from clients. `streamUrl` and `requestedBy` are
+ * deliberately omitted so Zod strips these server-owned fields at the
+ * socket boundary.
+ */
+const clientTrackSchema = z.object({
   id: z.string().max(200),
   title: z.string().max(500),
   artist: z.array(z.string().max(200)).max(20),
@@ -90,18 +104,17 @@ const trackSchema = z.object({
   urlId: z.string().max(200),
   lyricId: z.string().max(200).optional(),
   picId: z.string().max(200).optional(),
-  streamUrl: z.string().max(2000).optional(),
   vip: z.boolean().optional(),
 })
 
 export const queueAddSchema = z.object({
-  track: trackSchema,
+  track: clientTrackSchema,
 })
 
 export const queueInsertAfterCurrentSchema = queueAddSchema
 
 export const queueAddBatchSchema = z.object({
-  tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+  tracks: z.array(clientTrackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
   playlistName: z.string().max(200).optional(),
 })
 
@@ -115,11 +128,11 @@ export const queueReorderSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const defaultQueueAddSchema = z.object({
-  track: trackSchema,
+  track: clientTrackSchema,
 })
 
 export const defaultQueueAddBatchSchema = z.object({
-  tracks: z.array(trackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+  tracks: z.array(clientTrackSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
 })
 
 export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })

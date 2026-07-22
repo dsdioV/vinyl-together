@@ -19,6 +19,8 @@ import type {
   RoomAutoFallbackEvent,
 } from './types.js'
 
+export type ClientTrackInput = Omit<Track, 'streamUrl' | 'requestedBy'>
+
 /** 服务端 → 客户端 事件接口 */
 export interface ServerToClientEvents {
   [EVENTS.ROOM_CREATED]: (data: { roomId: string; userId: string }) => void
@@ -105,7 +107,7 @@ export interface ClientToServerEvents {
   }) => void
   [EVENTS.ROOM_SET_ROLE]: (data: { userId: string; role: 'admin' | 'member' }) => void
 
-  [EVENTS.PLAYER_PLAY]: (data?: { track?: Track }) => void
+  [EVENTS.PLAYER_PLAY]: (data?: { trackId?: string }) => void
   [EVENTS.PLAYER_PAUSE]: () => void
   [EVENTS.PLAYER_SEEK]: (data: { currentTime: number }) => void
   [EVENTS.PLAYER_NEXT]: () => void
@@ -114,22 +116,22 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void
   [EVENTS.PLAYER_SET_MODE]: (data: { mode: PlayMode }) => void
 
-  [EVENTS.QUEUE_ADD]: (data: { track: Track }) => void
-  [EVENTS.QUEUE_INSERT_AFTER_CURRENT]: (data: { track: Track }) => void
+  [EVENTS.QUEUE_ADD]: (data: { track: ClientTrackInput }) => void
+  [EVENTS.QUEUE_INSERT_AFTER_CURRENT]: (data: { track: ClientTrackInput }) => void
   [EVENTS.QUEUE_REMOVE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_REORDER]: (data: { trackIds: string[] }) => void
   [EVENTS.QUEUE_CLEAR]: () => void
 
   // Queue batch
-  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: Track[]; playlistName?: string }) => void
+  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: ClientTrackInput[]; playlistName?: string }) => void
 
   // Song likes
   [EVENTS.QUEUE_LIKE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_UNLIKE]: (data: { trackId: string }) => void
 
   // Default queue
-  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: Track }) => void
-  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: Track[] }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: ClientTrackInput }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: ClientTrackInput[] }) => void
   [EVENTS.DEFAULT_QUEUE_REMOVE]: (data: { trackId: string }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
