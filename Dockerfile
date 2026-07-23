@@ -20,6 +20,8 @@ RUN pnpm --filter @music-together/client run build
 # ---- 阶段 3: 生产镜像 ----
 FROM node:22-alpine AS production
 RUN corepack enable
+# Local-audio uploads are validated/transcoded at runtime.
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 
 # 复制所有 workspace 包的 package.json（pnpm workspace 需要完整结构）

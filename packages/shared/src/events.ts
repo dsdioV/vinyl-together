@@ -92,6 +92,17 @@ export const EVENTS = {
 
   // Played history
   PLAYED_HISTORY_UPDATED: 'played_history:updated',
+
+  // Room-local audio assets and upload tasks
+  LOCAL_AUDIO_STATE: 'local_audio:state',
+  LOCAL_AUDIO_STATE_REQUEST: 'local_audio:state_request',
+  LOCAL_AUDIO_TASK_UPDATED: 'local_audio:task_updated',
+  LOCAL_AUDIO_TASK_REMOVED: 'local_audio:task_removed',
+  LOCAL_AUDIO_TASK_CANCEL: 'local_audio:task_cancel',
+  LOCAL_AUDIO_ASSET_UPDATED: 'local_audio:asset_updated',
+  LOCAL_AUDIO_ASSET_REMOVED: 'local_audio:asset_removed',
+  LOCAL_AUDIO_ASSET_UPDATE: 'local_audio:asset_update',
+  LOCAL_AUDIO_ASSET_DELETE: 'local_audio:asset_delete',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

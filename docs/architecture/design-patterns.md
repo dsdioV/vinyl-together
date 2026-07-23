@@ -4,15 +4,16 @@
 
 ## Zustand Store 模式
 
-5 个独立 store，各自管理一个领域的状态：
+6 个独立 store，各自管理一个领域的状态：
 
-| Store           | 职责                                                | 持久化                    |
-| --------------- | --------------------------------------------------- | ------------------------- |
-| `playerStore`   | 播放状态（曲目、进度、音量、歌词）                  | 音量持久化到 localStorage |
-| `roomStore`     | 房间状态（room、currentUser 自动推导自 room.users） | 无                        |
-| `chatStore`     | 聊天（消息列表、未读数、开关状态）                  | 无                        |
-| `lobbyStore`    | 大厅（房间列表、加载状态）                          | 无                        |
-| `settingsStore` | 设置（歌词对齐/动画/字体/翻译字体大小、背景参数）   | 全部持久化到 localStorage |
+| Store             | 职责                                                | 持久化                    |
+| ----------------- | --------------------------------------------------- | ------------------------- |
+| `playerStore`     | 播放状态（曲目、进度、音量、歌词）                  | 音量持久化到 localStorage |
+| `roomStore`       | 房间状态（room、currentUser 自动推导自 room.users） | 无                        |
+| `chatStore`       | 聊天（消息列表、未读数、开关状态）                  | 无                        |
+| `lobbyStore`      | 大厅（房间列表、加载状态）                          | 无                        |
+| `localAudioStore` | 房间本地音频资产、上传任务与配额状态                | 无                        |
+| `settingsStore`   | 设置（歌词对齐/动画/字体/翻译字体大小、背景参数）   | 全部持久化到 localStorage |
 
 使用方式：通过选择器订阅特定字段，避免不必要的渲染：
 
@@ -47,6 +48,8 @@ RoomPage
 通用工具 Hook：`useSocketEvent(event, handler)` 封装 `socket.on/off` 样板代码，已在 `useLobby` 和 `useVote` 中使用。
 
 其他独立 hook：`useChat`、`useLobby`、`useQueue`、`useVote`、`useAuth`、`usePlaylist`，每个 hook 负责将 Socket 事件绑定到对应 Store。
+
+`useLocalAudioSync` 订阅房间本地音频任务/资产事件，并把上传状态写入 `localAudioStore`；原始文件通过 REST 上传，完成后由服务端 canonicalize 为仅含 `assetId` 的本地 Track。本地音频的搜索词与排序方式是 `LocalAudioPanel` 的组件内状态，不由 store 持久管理。
 
 `usePlaylist` 管理歌单功能：通过 Socket 获取用户歌单列表（`playlist:get_my` → `playlist:my_list`），通过 REST 分页获取普通浏览曲目（`GET /api/music/playlist?limit=1000&offset=0`），并通过 `GET /api/music/playlist/search` 在服务端搜索最多 10,000 首的完整歌单、每页返回 50 个命中结果。它还提供 `loadMoreTracks()` 无限加载、URL/ID 解析（`parsePlaylistInput`）以及单曲/批量添加到队列。普通浏览与搜索分别使用 `AbortController`、请求序号和独立状态阻止过期响应；`loadingMoreRef` 做同步防重，持续加载失败时停止自动请求并显示明确错误。
 
@@ -121,6 +124,7 @@ Controller → Service → Repository / Utils
   - `roomService`：房间 CRUD + 角色管理 + conductor 选举（`electConductor`）+ 加入校验（`validateJoinRequest`）。Re-export `toPublicRoomState` 和 `broadcastRoomList` 以保持控制器调用方式不变。
   - `roomLifecycleService`：房间空置删除定时器 + 防抖广播。不依赖 `roomService`，消除循环依赖。API：`scheduleDeletion`、`cancelDeletionTimer`、`broadcastRoomList`、`clearAllTimers`。角色宽限期已移除（conductor 自动选举，无需 grace period）。
   - `playerService`：播放状态管理 + 流 URL 解析 + 切歌防抖 + 加入播放同步（`syncPlaybackToSocket`）+ 房间清理（`cleanupRoom`）。`playTrackInRoom` 通过 per-room Promise 链互斥锁防止并发竞态。`playNextTrackInRoom` / `playPrevTrackInRoom` 将 debounce + 队列导航 + 播放统一封装在 mutex 内部。`autoPlayIfEmpty` 在 mutex 内重新检查 `room.currentTrack`，防止并发 QUEUE_ADD 双重自动播放。
+  - `localAudioService`：本地音频两阶段上传、FFprobe/FFmpeg 处理、配额与磁盘下限、HMAC 媒体 URL、队列引用及房间销毁清理；全服仅运行一个媒体处理任务。
 - **Repository**：数据存取（当前为内存 Map，接口抽象，可替换为数据库）
 - **Utils**：纯函数工具（`toPublicRoomState` 等），无状态，可被任意层引用
 

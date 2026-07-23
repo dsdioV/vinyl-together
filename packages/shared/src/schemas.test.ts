@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { LIMITS } from './constants.js'
-import { playlistQuerySchema, playlistSearchQuerySchema, queueReorderSchema, roomSettingsSchema } from './schemas.js'
+import type { LocalAudioState, LocalAudioUsage } from './types.js'
+import type { QueueTrackInput } from './socket-types.js'
+import {
+  defaultQueueAddBatchSchema,
+  defaultQueueAddSchema,
+  localAudioAssetDeleteSchema,
+  localAudioAssetUpdateSchema,
+  localAudioTaskCancelSchema,
+  localAudioTrackRefSchema,
+  playlistQuerySchema,
+  playlistSearchQuerySchema,
+  queueAddBatchSchema,
+  queueAddSchema,
+  queueInsertAfterCurrentSchema,
+  queueReorderSchema,
+  roomSettingsSchema,
+} from './schemas.js'
 
 const baseQuery = {
   source: 'netease',
@@ -110,5 +126,145 @@ describe('queueReorderSchema', () => {
     const trackIds = Array.from({ length: LIMITS.QUEUE_MAX_SIZE_MAX + 1 }, (_, index) => `track-${index}`)
 
     expect(queueReorderSchema.safeParse({ trackIds }).success).toBe(false)
+  })
+})
+
+const externalTrack = {
+  id: 'queue-item-1',
+  title: 'Online track',
+  artist: ['Artist'],
+  album: 'Album',
+  duration: 180,
+  cover: '',
+  source: 'netease' as const,
+  sourceId: 'source-1',
+  urlId: 'url-1',
+}
+
+describe('local audio queue input schemas', () => {
+  const localRef = { source: 'local' as const, assetId: 'asset_123-ABC' }
+
+  it('accepts an exact local asset reference in every queue entry point', () => {
+    expect(localAudioTrackRefSchema.parse(localRef)).toEqual(localRef)
+    expect(queueAddSchema.parse({ track: localRef }).track).toEqual(localRef)
+    expect(queueInsertAfterCurrentSchema.parse({ track: localRef }).track).toEqual(localRef)
+    expect(queueAddBatchSchema.parse({ tracks: [localRef] }).tracks).toEqual([localRef])
+    expect(defaultQueueAddSchema.parse({ track: localRef }).track).toEqual(localRef)
+    expect(defaultQueueAddBatchSchema.parse({ tracks: [localRef] }).tracks).toEqual([localRef])
+  })
+
+  it('keeps the existing online track shape compatible', () => {
+    expect(queueAddSchema.parse({ track: externalTrack }).track).toEqual(externalTrack)
+    expect(defaultQueueAddSchema.parse({ track: externalTrack }).track).toEqual(externalTrack)
+  })
+
+  it.each([
+    { source: 'local' },
+    { source: 'local', assetId: '' },
+    { source: 'local', assetId: '../asset' },
+    { source: 'local', assetId: 'x'.repeat(101) },
+  ])('rejects an invalid local reference: %j', (track) => {
+    expect(queueAddSchema.safeParse({ track }).success).toBe(false)
+  })
+
+  it('rejects client-supplied local metadata, paths, and stream URLs', () => {
+    const forgedLocalTrack = {
+      ...localRef,
+      id: 'forged-queue-item',
+      title: 'Forged title',
+      artist: ['Attacker'],
+      album: 'Forged album',
+      duration: 1,
+      cover: 'https://attacker.invalid/cover.jpg',
+      sourceId: localRef.assetId,
+      urlId: localRef.assetId,
+      streamUrl: 'https://attacker.invalid/audio.mp3',
+      filePath: '../../secret',
+    }
+
+    expect(queueAddSchema.safeParse({ track: forgedLocalTrack }).success).toBe(false)
+    expect(queueAddBatchSchema.safeParse({ tracks: [forgedLocalTrack] }).success).toBe(false)
+    expect(defaultQueueAddSchema.safeParse({ track: forgedLocalTrack }).success).toBe(false)
+    expect(defaultQueueAddBatchSchema.safeParse({ tracks: [forgedLocalTrack] }).success).toBe(false)
+  })
+
+  it('continues stripping server-owned URLs from online track input', () => {
+    const parsed = queueAddSchema.parse({
+      track: {
+        ...externalTrack,
+        streamUrl: 'https://attacker.invalid/audio.mp3',
+        fallbackStreamUrl: 'https://attacker.invalid/fallback.mp3',
+        localAudioAccessExpiresAt: Date.now() + 60_000,
+      },
+    })
+
+    expect(parsed.track).not.toHaveProperty('streamUrl')
+    expect(parsed.track).not.toHaveProperty('fallbackStreamUrl')
+    expect(parsed.track).not.toHaveProperty('localAudioAccessExpiresAt')
+  })
+})
+
+describe('local audio management schemas', () => {
+  it('validates task cancellation IDs strictly', () => {
+    expect(localAudioTaskCancelSchema.parse({ taskId: 'task_123' })).toEqual({ taskId: 'task_123' })
+    expect(localAudioTaskCancelSchema.safeParse({ taskId: '../task' }).success).toBe(false)
+    expect(localAudioTaskCancelSchema.safeParse({ taskId: 'task', assetId: 'extra' }).success).toBe(false)
+  })
+
+  it('accepts and trims editable metadata while requiring at least one change', () => {
+    expect(
+      localAudioAssetUpdateSchema.parse({
+        assetId: 'asset-1',
+        title: '  New title  ',
+        artist: ['  Artist  '],
+        album: '  Album  ',
+      }),
+    ).toEqual({
+      assetId: 'asset-1',
+      title: 'New title',
+      artist: ['Artist'],
+      album: 'Album',
+    })
+
+    expect(localAudioAssetUpdateSchema.safeParse({ assetId: 'asset-1' }).success).toBe(false)
+    expect(localAudioAssetUpdateSchema.safeParse({ assetId: 'asset-1', title: '' }).success).toBe(false)
+    expect(localAudioAssetUpdateSchema.safeParse({ assetId: 'asset-1', artist: [] }).success).toBe(false)
+  })
+
+  it('defaults asset deletion to preserving the current queue item', () => {
+    expect(localAudioAssetDeleteSchema.parse({ assetId: 'asset-1' })).toEqual({
+      assetId: 'asset-1',
+      removeFromQueue: false,
+    })
+    expect(localAudioAssetDeleteSchema.parse({ assetId: 'asset-1', removeFromQueue: true })).toEqual({
+      assetId: 'asset-1',
+      removeFromQueue: true,
+    })
+  })
+})
+
+describe('local audio shared snapshot contract', () => {
+  it('models quota usage and state snapshots without exposing filesystem fields', () => {
+    const usage: LocalAudioUsage = {
+      maxUploadBytes: 524_288_000,
+      roomBytes: 10,
+      roomLimitBytes: 1_073_741_824,
+      serverBytes: 20,
+      serverLimitBytes: 2_684_354_560,
+      tempBytes: 30,
+      tempLimitBytes: 1_342_177_280,
+    }
+    const state: LocalAudioState = { assets: [], tasks: [], usage }
+    expect(state.usage.tempLimitBytes).toBeGreaterThan(state.usage.tempBytes)
+    expect(state.assets).toEqual([])
+    expect(state.tasks).toEqual([])
+  })
+
+  it('keeps local queue input as an asset reference at the type boundary', () => {
+    const input: QueueTrackInput = { source: 'local', assetId: 'asset_123' }
+    // @ts-expect-error Local metadata must be resolved by the server from assetId.
+    const forged: QueueTrackInput = { source: 'local', assetId: 'asset_123', title: 'Forged' }
+    expect(input).toEqual({ source: 'local', assetId: 'asset_123' })
+    expect(forged).toHaveProperty('title', 'Forged')
   })
 })

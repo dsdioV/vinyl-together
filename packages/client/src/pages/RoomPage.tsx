@@ -8,7 +8,7 @@ import { InteractionGate } from '@/components/InteractionGate'
 import { AudioPlayer } from '@/components/Player/AudioPlayer'
 import { ChatPanel } from '@/components/Chat/ChatPanel'
 import { RoomHeader } from '@/components/Room/RoomHeader'
-import { SearchDialog } from '@/components/Overlays/SearchDialog'
+import { SearchDialog, type SearchDialogSection } from '@/components/Overlays/SearchDialog'
 import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
 import { HistoryDrawer } from '@/components/Overlays/HistoryDrawer'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
@@ -68,6 +68,7 @@ export default function RoomPage() {
   const [gatePasswordError, setGatePasswordError] = useState<string | null>(null)
 
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchInitialSection, setSearchInitialSection] = useState<SearchDialogSection | undefined>(undefined)
   const [queueOpen, setQueueOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -266,6 +267,11 @@ export default function RoomPage() {
     setSettingsOpen(true)
   }, [])
 
+  const handleOpenSearch = useCallback((section?: SearchDialogSection) => {
+    setSearchInitialSection(section)
+    setSearchOpen(true)
+  }, [])
+
   const handleLeaveRoom = useCallback(() => {
     isLeavingRef.current = true
     leaveRoom()
@@ -314,7 +320,7 @@ export default function RoomPage() {
       >
         <div className="flex h-dvh flex-col bg-background">
           <RoomHeader
-            onOpenSearch={() => setSearchOpen(true)}
+            onOpenSearch={handleOpenSearch}
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenMembers={handleOpenMembers}
             onLeaveRoom={handleLeaveRoom}
@@ -354,7 +360,16 @@ export default function RoomPage() {
             </Drawer>
           )}
 
-          <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} onAddToQueue={addTrack} onInsertAfterCurrent={insertAfterCurrent} />
+          <SearchDialog
+            open={searchOpen}
+            onOpenChange={(nextOpen) => {
+              setSearchOpen(nextOpen)
+              if (!nextOpen) setSearchInitialSection(undefined)
+            }}
+            initialSection={searchInitialSection}
+            onAddToQueue={addTrack}
+            onInsertAfterCurrent={insertAfterCurrent}
+          />
           <QueueDrawer
             open={queueOpen}
             onOpenChange={setQueueOpen}
@@ -362,10 +377,7 @@ export default function RoomPage() {
             onReorderQueue={reorderTracks}
             onClearQueue={clearQueue}
           />
-          <HistoryDrawer
-            open={historyOpen}
-            onOpenChange={setHistoryOpen}
-          />
+          <HistoryDrawer open={historyOpen} onOpenChange={setHistoryOpen} />
           <SettingsDialog
             open={settingsOpen}
             onOpenChange={(open) => {

@@ -17,6 +17,7 @@ import * as playerService from '../services/playerService.js'
 import { issueRejoinTicket, revokeRejoinTickets } from '../services/rejoinTicketService.js'
 import * as roomService from '../services/roomService.js'
 import { cancelDeletionTimer, deleteRoomData } from '../services/roomLifecycleService.js'
+import { localAudioService } from '../services/localAudioService.js'
 import * as voteService from '../services/voteService.js'
 import { logger } from '../utils/logger.js'
 
@@ -225,10 +226,11 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
 
       // 若非 owner，仅允许 autoRemovePlayed / songLikes / voteThreshold 变更
       if (!isOwner) {
-        const hasRestrictedKeys = parsed.data.name !== undefined
-          || parsed.data.password !== undefined
-          || parsed.data.audioQuality !== undefined
-          || parsed.data.maxQueueSize !== undefined
+        const hasRestrictedKeys =
+          parsed.data.name !== undefined ||
+          parsed.data.password !== undefined ||
+          parsed.data.audioQuality !== undefined ||
+          parsed.data.maxQueueSize !== undefined
         if (hasRestrictedKeys) {
           ctx.socket.emit(EVENTS.ROOM_ERROR, {
             code: ERROR_CODE.NO_PERMISSION,
@@ -303,7 +305,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
 
       const { userId, role } = parsed.data
-      const targetUser = ctx.room.users.find(u => u.id === userId)
+      const targetUser = ctx.room.users.find((u) => u.id === userId)
       const success = roomService.setUserRole(ctx.roomId, userId, role)
       if (!success) {
         ctx.socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.SET_ROLE_FAILED, message: '无法设置该用户的角色' })
@@ -324,9 +326,10 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
       }
       // System message for role change
       if (targetUser) {
-        const msg = role === 'admin'
-          ? `${targetUser.nickname} 被 ${ctx.user.nickname} 升级为管理员`
-          : `${targetUser.nickname} 被 ${ctx.user.nickname} 降级为成员`
+        const msg =
+          role === 'admin'
+            ? `${targetUser.nickname} 被 ${ctx.user.nickname} 升级为管理员`
+            : `${targetUser.nickname} 被 ${ctx.user.nickname} 降级为成员`
         const sysMsg = chatService.createSystemMessage(ctx.roomId, msg)
         io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, sysMsg)
       }
@@ -362,12 +365,7 @@ export function registerRoomController(io: TypedServer, socket: TypedSocket) {
  * - member → slim state (defaultQueue = [])
  * Optionally excludes a specific socket (e.g. the joining user).
  */
-function broadcastRoomStateToAll(
-  io: TypedServer,
-  roomId: string,
-  room: RoomData,
-  excludeSocketId?: string,
-): void {
+function broadcastRoomStateToAll(io: TypedServer, roomId: string, room: RoomData, excludeSocketId?: string): void {
   const adminSids: string[] = []
   const memberSids: string[] = []
 
@@ -398,6 +396,11 @@ function handleLeave(io: TypedServer, socket: TypedSocket, reason?: string, revo
   if (!result) return
 
   const { roomId, user, room, hostChanged, voteUpdated } = result
+  // A genuine leave cancels only request-body uploads in this room. Completed
+  // uploads that are already queued/probing/transcoding remain useful to the
+  // room, and stale disconnects return null above so a replacement socket is
+  // never mistaken for an explicit departure.
+  localAudioService.cancelReceivingForUser(roomId, user.id)
   if (revokeTicket) {
     revokeRejoinTickets(roomId, user.id)
   }

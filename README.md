@@ -42,6 +42,7 @@
 - **按 ID / 链接精确查找** -- 支持平台 ID 与官方链接；酷狗单曲支持 `#短码` 和 `#hash=` 链接
 - **点赞模式** -- 点赞数高的歌曲优先播放（需开启自动移出）
 - **长歌单浏览与搜索** -- 外部歌单分段加载并支持最多 10,000 首的全量搜索；默认队列及单次导入上限为 1,000 首，房主可将队列上限调整至 8,192 首
+- **本地音频共享** -- 房间成员可上传受支持的音频，服务端按房间音质处理后加入队列；文件仅在房间生命周期内保留
 - **实时聊天** -- 房间内文字聊天，支持系统消息
 - **角色宽限期** -- 特权用户断线后保留角色 30 秒，重连自动恢复
 - **移动端适配** -- 响应式设计，横竖屏自动切换布局
@@ -62,6 +63,8 @@ pnpm install
 pnpm dev
 ```
 
+需要自定义服务端环境变量时，请将根目录 `.env.example` 复制为 `packages/server/.env`；详见 [开发指南](docs/architecture/dev-guide.md)。
+
 前端: http://localhost:5173 | 后端: http://localhost:3001
 
 ## 部署
@@ -69,22 +72,28 @@ pnpm dev
 Docker 单镜像部署：
 
 ```bash
+IDENTITY_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
-  ghcr.io/dsdioV/vinyl-together:latest
+  -e IDENTITY_SECRET="$IDENTITY_SECRET" \
+  ghcr.io/dsdiov/vinyl-together:latest
 ```
 
 > 如果宿主机 `3001` 端口已被占用，修改 `-p 宿主机端口:容器端口` 左侧端口即可，例如 `-p 8080:3001`。
 
 默认自动模式下，前端会按当前访问地址自动连接后端；服务端默认开放所有来源访问，并根据当前请求协议自动决定 cookie 是否带 `Secure`。
 
+生产环境必须设置至少 32 个字符的随机 `IDENTITY_SECRET`。它同时保护身份 cookie 和本地音频签名 URL；上例生成的值会保存在容器配置中，后续重启无需重新生成。
+
 **需要显式限制来源时，再配置 `CLIENT_URL`：**
 
 ```bash
+IDENTITY_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
+  -e IDENTITY_SECRET="$IDENTITY_SECRET" \
   -e CLIENT_URL=https://music.example.com \
-  ghcr.io/dsdioV/vinyl-together:latest
+  ghcr.io/dsdiov/vinyl-together:latest
 ```
 
 > `CLIENT_URL` 现在主要用于显式白名单模式或前后端分离部署；默认自动模式下通常不再需要手动设置。
@@ -92,6 +101,8 @@ docker run -d --name vinyl-together --restart unless-stopped \
 > 如果你通过 Nginx / Caddy / 1Panel / Lucky 等反向代理暴露 HTTPS，请确保代理正确透传 `X-Forwarded-Proto`，否则服务端无法自动判断应该下发 Secure cookie。
 
 push 到 main 后 GitHub Actions 自动构建镜像。详见 [架构文档](docs/PROJECT_ARCHITECTURE.md)。
+
+本地音频共享需要可写存储（镜像已内置 FFmpeg/FFprobe），启动时挂载一个 Docker volume 即可；环境变量与反向代理配置详见 [部署文档](docs/architecture/deployment.md)。
 
 ## 项目结构
 
@@ -104,17 +115,17 @@ packages/
 
 ## 致谢
 
-| 库 | 说明 |
-|---|---|
-| [Howler.js](https://github.com/goldfire/howler.js) | Web 音频播放 |
-| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics) | 歌词组件 (GPL-3.0) |
-| [Meting](https://github.com/metowolf/Meting) | 多平台音乐 API |
-| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API |
-| [CASL](https://github.com/stalniy/casl) | 权限管理 |
-| [Zustand](https://github.com/pmndrs/zustand) | 状态管理 |
-| [shadcn/ui](https://github.com/shadcn-ui/ui) | UI 组件库 |
-| [Motion](https://github.com/motiondivision/motion) | 动画库 |
-| [qq-music-download](https://github.com/tooplick/qq-music-download) | QQ 音乐登录参考 |
+| 库                                                                                            | 说明               |
+| --------------------------------------------------------------------------------------------- | ------------------ |
+| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web 音频播放       |
+| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | 歌词组件 (GPL-3.0) |
+| [Meting](https://github.com/metowolf/Meting)                                                  | 多平台音乐 API     |
+| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API     |
+| [CASL](https://github.com/stalniy/casl)                                                       | 权限管理           |
+| [Zustand](https://github.com/pmndrs/zustand)                                                  | 状态管理           |
+| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI 组件库          |
+| [Motion](https://github.com/motiondivision/motion)                                            | 动画库             |
+| [qq-music-download](https://github.com/tooplick/qq-music-download)                            | QQ 音乐登录参考    |
 
 ## 协议
 

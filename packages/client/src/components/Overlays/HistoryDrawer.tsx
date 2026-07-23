@@ -2,10 +2,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn, getSourceUrl } from '@/lib/utils'
+import { cn, getSourceUrl, getTrackCoverUrl, toQueueTrackInput } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
-import type { PlayedTrack, Track } from '@music-together/shared'
+import type { PlayedTrack } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useCallback, useContext, useState } from 'react'
@@ -72,9 +72,12 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
   const handleReAdd = useCallback(
     (entry: PlayedTrack) => {
       if (!canAdd) return
-      const track: Track = { ...entry.track, streamUrl: undefined }
-      socket.emit(EVENTS.QUEUE_ADD, { track })
-      toast.success(`已重新点歌「${track.title}」`)
+      try {
+        socket.emit(EVENTS.QUEUE_ADD, { track: toQueueTrackInput(entry.track) })
+        toast.success(`已重新点歌「${entry.track.title}」`)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : '无法重新点歌')
+      }
     },
     [socket, canAdd],
   )
@@ -115,6 +118,10 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
                 if (!entry) return null
                 const track = entry.track
                 const isCurrent = currentTrack?.id === track.id
+                const sourceUrl = getSourceUrl(track)
+                const coverUrl = getTrackCoverUrl(track)
+                const isLocalTrack = track.source === 'local'
+                const sourceStyle = isLocalTrack ? null : SOURCE_STYLE[track.source as MusicSource]
 
                 return (
                   <div
@@ -137,13 +144,15 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
                       )}
                     >
                       {/* Index */}
-                      <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{i + 1}</span>
+                      <span className="w-5 shrink-0 text-center text-xs tabular-nums text-muted-foreground">
+                        {i + 1}
+                      </span>
 
                       {/* Cover + source badge */}
                       <div className="relative shrink-0">
-                        {track.cover ? (
+                        {coverUrl ? (
                           <img
-                            src={track.cover}
+                            src={coverUrl}
                             alt={track.title}
                             className="h-10 w-10 rounded object-cover"
                             onError={(e) => {
@@ -155,33 +164,38 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
                         <div
                           className={cn(
                             'flex h-10 w-10 items-center justify-center rounded bg-muted',
-                            track.cover && 'hidden',
+                            coverUrl && 'hidden',
                           )}
                         >
                           <Music className="h-4 w-4 text-muted-foreground" />
                         </div>
-                        {track.source && SOURCE_STYLE[track.source] && (
+                        {sourceUrl && sourceStyle ? (
                           <a
-                            href={getSourceUrl(track)}
+                            href={sourceUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className={cn(
                               'absolute -bottom-1 -right-1 rounded px-0.5 text-[8px] font-bold leading-tight ring-1 transition-transform hover:scale-110',
-                              SOURCE_STYLE[track.source].className,
+                              sourceStyle.className,
                             )}
                             title={`在源平台打开 ${track.title}`}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {SOURCE_STYLE[track.source].label}
+                            {sourceStyle.label}
                           </a>
-                        )}
+                        ) : isLocalTrack ? (
+                          <span
+                            className="absolute -bottom-1 -right-1 rounded bg-muted px-0.5 text-[8px] font-bold leading-tight text-muted-foreground ring-1 ring-border"
+                            title="房间本地音频"
+                          >
+                            本地
+                          </span>
+                        ) : null}
                       </div>
 
                       {/* Track info */}
                       <div className="min-w-0 flex-1 overflow-hidden [contain:inline-size]">
-                        <MarqueeText
-                          className={cn('text-sm', isCurrent && 'font-medium text-primary')}
-                        >
+                        <MarqueeText className={cn('text-sm', isCurrent && 'font-medium text-primary')}>
                           {track.title}
                         </MarqueeText>
                         <div className="flex items-center gap-1.5">
@@ -209,20 +223,22 @@ export function HistoryDrawer({ open, onOpenChange }: HistoryDrawerProps) {
                       {/* Actions */}
                       <div className="flex shrink-0 items-center gap-0.5">
                         {/* External link */}
-                        <Tooltip delayDuration={400}>
-                          <TooltipTrigger asChild>
-                            <a
-                              href={getSourceUrl(track)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent active:scale-90 transition-all min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
-                              aria-label={`在源平台打开 ${track.title}`}
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom">在源平台打开</TooltipContent>
-                        </Tooltip>
+                        {sourceUrl && (
+                          <Tooltip delayDuration={400}>
+                            <TooltipTrigger asChild>
+                              <a
+                                href={sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent active:scale-90 transition-all min-h-9 min-w-9 sm:min-h-0 sm:min-w-0"
+                                aria-label={`在源平台打开 ${track.title}`}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom">在源平台打开</TooltipContent>
+                          </Tooltip>
+                        )}
 
                         {/* Re-add to queue */}
                         {canAdd && (

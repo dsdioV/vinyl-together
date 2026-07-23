@@ -1,5 +1,6 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
+import { getTrackCoverUrl } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import type { VoteAction } from '@music-together/shared'
 import { defineAbilityFor, EVENTS, TIMING, getVoteActionLabel } from '@music-together/shared'
@@ -142,11 +143,12 @@ export function useMediaSession({ play, pause, next, prev, seek }: MediaSessionC
     const ms = navigator.mediaSession
 
     if (currentTrack) {
+      const coverUrl = getTrackCoverUrl(currentTrack)
       ms.metadata = new MediaMetadata({
         title: currentTrack.title,
         artist: currentTrack.artist.join(' / '),
         album: currentTrack.album || '',
-        artwork: currentTrack.cover ? [{ src: currentTrack.cover, sizes: '512x512', type: 'image/jpeg' }] : [],
+        artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }] : [],
       })
     } else {
       ms.metadata = null

@@ -10,6 +10,8 @@ import {
   MAX_LOAD_COMPENSATION_S,
 } from '@/lib/constants'
 import { toast } from 'sonner'
+import { resolveLocalAudioMediaUrl } from '@/lib/utils'
+import { getHowlSourceFormats } from '@/lib/localAudioPlayback'
 
 /** Max wait (ms) for Howler `unlock` event before giving up and skipping */
 const PLAY_ERROR_TIMEOUT_MS = 3000
@@ -22,6 +24,8 @@ const STALLED_TIMEOUT_MS = 8000
  *  Retries continue indefinitely until onplay fires or the track changes,
  *  so a temporary network issue won't cause the user to miss the song. */
 const PLAY_START_RETRY_DELAY_MS = 2000
+
+type LoadTrack = (track: Track, seekTo?: number, autoPlay?: boolean) => void
 
 /**
  * Manages a Howl audio instance with two-phase loading strategy:
@@ -39,6 +43,10 @@ export function useHowl(onTrackEnd: () => void) {
   const stalledRef = useRef<{ lastSeek: number; since: number }>({ lastSeek: -1, since: 0 })
   const trackTitleRef = useRef<string>('')
   const retryRef = useRef(false)
+  /** Whether the compatibility output has already been attempted for the current track. */
+  const fallbackAttemptedRef = useRef(false)
+  /** Internal reloads (retry/fallback) must keep the selected source. */
+  const preserveFallbackForTrackRef = useRef<Track | null>(null)
   /** Set to true when the HTML5 Audio element fires the play event.
    *  Reset on each loadTrack; the retry timer checks this to decide if
    *  a reload is needed. */
@@ -47,6 +55,7 @@ export function useHowl(onTrackEnd: () => void) {
   const retryToastShownRef = useRef(false)
   /** Snapshot of the last loadTrack arguments for local retry. */
   const lastLoadParamsRef = useRef<{ track: Track; seekTo?: number; autoPlay: boolean } | null>(null)
+  const loadTrackRef = useRef<LoadTrack | null>(null)
 
   // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
@@ -118,19 +127,34 @@ export function useHowl(onTrackEnd: () => void) {
       soundIdRef.current = undefined
       trackTitleRef.current = track.title
       retryRef.current = false
+      const preserveFallback = preserveFallbackForTrackRef.current === track
+      preserveFallbackForTrackRef.current = null
+      if (!preserveFallback) fallbackAttemptedRef.current = false
       playStartedRef.current = false
       retryToastShownRef.current = false
       lastLoadParamsRef.current = { track, seekTo, autoPlay }
 
-      if (!track.streamUrl) return
+      const initialUrl = track.streamUrl
+      if (!initialUrl) return
+
+      const selectedUrl =
+        fallbackAttemptedRef.current && track.source === 'local' && track.fallbackStreamUrl
+          ? track.fallbackStreamUrl
+          : initialUrl
+      const streamUrl = track.source === 'local' ? (resolveLocalAudioMediaUrl(selectedUrl) ?? selectedUrl) : selectedUrl
+      // Howler's format array is positional to `src`, not a codec preference
+      // list. A single local URL therefore needs its actual generated format;
+      // otherwise a WebView without FLAC support would reject even the MP3
+      // primary/fallback before handing the URL to HTMLAudioElement.
+      const format = getHowlSourceFormats(track, fallbackAttemptedRef.current)
 
       const loadStartTime = Date.now()
       const currentVolume = usePlayerStore.getState().volume
 
       const howl = new Howl({
-        src: [track.streamUrl],
+        src: [streamUrl],
         html5: true,
-        format: ['flac', 'm4a', 'ogg', 'mp3'],
+        format,
         volume: 0,
         onload: () => {
           if (howlRef.current !== howl) return // Stale instance guard
@@ -152,7 +176,7 @@ export function useHowl(onTrackEnd: () => void) {
             // until onplay fires or the track changes.
             const retryTimer = setTimeout(() => {
               if (howlRef.current !== howl) return // stale — newer track loaded
-              if (playStartedRef.current) return   // onplay fired after all
+              if (playStartedRef.current) return // onplay fired after all
               if (!retryToastShownRef.current) {
                 retryToastShownRef.current = true
                 toast.error('歌曲加载中，请稍候…')
@@ -161,9 +185,17 @@ export function useHowl(onTrackEnd: () => void) {
               const params = lastLoadParamsRef.current
               if (params) {
                 // Unload the current Howl so loadTrack starts fresh
-                try { howl.unload() } catch { /* ignore */ }
+                try {
+                  howl.unload()
+                } catch {
+                  /* ignore */
+                }
                 if (howlRef.current === howl) howlRef.current = null
-                setTimeout(() => loadTrack(params.track, params.seekTo, params.autoPlay), PLAY_START_RETRY_DELAY_MS)
+                setTimeout(() => {
+                  if (lastLoadParamsRef.current !== params) return
+                  preserveFallbackForTrackRef.current = params.track
+                  loadTrackRef.current?.(params.track, params.seekTo, params.autoPlay)
+                }, PLAY_START_RETRY_DELAY_MS)
               }
             }, PLAY_START_RETRY_DELAY_MS)
             // Cancel the retry timer if onplay fires normally
@@ -226,6 +258,29 @@ export function useHowl(onTrackEnd: () => void) {
             howl.load()
             return
           }
+          if (track.source === 'local' && track.fallbackStreamUrl && !fallbackAttemptedRef.current) {
+            fallbackAttemptedRef.current = true
+            retryRef.current = false
+            console.warn('Local audio primary output failed; trying compatibility fallback:', msg)
+            toast.info(`「${track.title}」正在切换兼容音频`)
+            try {
+              howl.unload()
+            } catch {
+              /* ignore */
+            }
+            if (howlRef.current === howl) howlRef.current = null
+            const params = lastLoadParamsRef.current
+            if (params) {
+              // Defer construction until Howler has released the failed
+              // HTMLAudioElement, otherwise Safari can retain the old source.
+              setTimeout(() => {
+                if (lastLoadParamsRef.current !== params) return
+                preserveFallbackForTrackRef.current = params.track
+                loadTrackRef.current?.(params.track, params.seekTo, params.autoPlay)
+              }, 0)
+            }
+            return
+          }
           retryRef.current = false
           console.error('Howl load error (after retry):', msg)
           toast.error(`「${trackTitleRef.current}」加载失败，已跳到下一首`)
@@ -257,6 +312,15 @@ export function useHowl(onTrackEnd: () => void) {
     [onTrackEnd, startTimeUpdate, stopTimeUpdate],
   )
 
+  // Retry timers are created inside loadTrack's Howler callbacks. Keep a ref
+  // to the latest callback so those timers do not close over a stale render.
+  useEffect(() => {
+    loadTrackRef.current = loadTrack
+    return () => {
+      if (loadTrackRef.current === loadTrack) loadTrackRef.current = null
+    }
+  }, [loadTrack])
+
   // Volume sync
   useEffect(() => {
     if (howlRef.current && syncReadyRef.current) {
@@ -283,6 +347,7 @@ export function useHowl(onTrackEnd: () => void) {
         }
         howlRef.current = null
       }
+      preserveFallbackForTrackRef.current = null
       stopTimeUpdate()
     }
   }, [stopTimeUpdate])

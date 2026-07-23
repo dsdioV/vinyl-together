@@ -5,6 +5,7 @@ import { registerChatController } from './chatController.js'
 import { registerVoteController } from './voteController.js'
 import { registerAuthController } from './authController.js'
 import { registerPlaylistController } from './playlistController.js'
+import { registerLocalAudioController } from './localAudioController.js'
 import { logger } from '../utils/logger.js'
 import type { TypedServer } from '../middleware/types.js'
 
@@ -22,6 +23,7 @@ export function initializeSocket(io: TypedServer) {
     registerVoteController(io, socket)
     registerAuthController(io, socket)
     registerPlaylistController(io, socket)
+    registerLocalAudioController(io, socket)
   })
 
   logger.info('Socket.IO initialized with typed events')

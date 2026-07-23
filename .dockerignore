@@ -8,3 +8,5 @@ docs
 .env
 screenshots
 *.md
+*.tsbuildinfo
+**/data/local-audio/

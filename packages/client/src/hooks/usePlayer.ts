@@ -47,7 +47,7 @@ export function usePlayer() {
   const { fetchLyric } = useLyric()
 
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
-  usePlayerSync(howlRef, soundIdRef)
+  usePlayerSync(howlRef, soundIdRef, loadTrack)
 
   // Reset dedup ref on disconnect so reconnect PLAYER_PLAY is never blocked
   useEffect(() => {

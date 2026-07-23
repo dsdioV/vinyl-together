@@ -1,5 +1,5 @@
 import { MarqueeText } from '@/components/ui/marquee-text'
-import { cn, getSourceUrl } from '@/lib/utils'
+import { cn, getSourceUrl, getTrackCoverUrl } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { Disc3, ExternalLink } from 'lucide-react'
 import { motion } from 'motion/react'
@@ -16,6 +16,8 @@ interface NowPlayingProps {
 export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const [coverError, setCoverError] = useState(false)
+  const coverUrl = currentTrack ? getTrackCoverUrl(currentTrack) : undefined
+  const sourceUrl = currentTrack ? getSourceUrl(currentTrack) : null
 
   // Skip layoutId on first frame to prevent unwanted entry animation
   const [ready, setReady] = useState(false)
@@ -29,12 +31,12 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
     setCoverError(false)
   }, [currentTrack?.id])
 
-  const showCover = currentTrack?.cover && !coverError
+  const showCover = coverUrl && !coverError
 
   const coverContent = showCover ? (
     <img
-      src={currentTrack.cover}
-      alt={currentTrack.title}
+      src={coverUrl}
+      alt={currentTrack?.title ?? ''}
       className="h-full w-full object-cover"
       onError={() => setCoverError(true)}
     />
@@ -81,9 +83,9 @@ export function NowPlaying({ compact = false, onCoverClick }: NowPlayingProps) {
             <MarqueeText>{currentTrack ? currentTrack.artist.join(' / ') : '...'}</MarqueeText>
           </motion.div>
         </motion.div>
-        {currentTrack && (
+        {currentTrack && sourceUrl && (
           <a
-            href={getSourceUrl(currentTrack)}
+            href={sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white/50 hover:text-white/80 hover:bg-white/10 active:scale-90 transition-all"

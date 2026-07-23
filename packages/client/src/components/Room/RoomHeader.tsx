@@ -11,11 +11,14 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getMedianRTT } from '@/lib/clockSync'
 import { useRoomStore } from '@/stores/roomStore'
+import { getActiveLocalAudioTaskCount, useLocalAudioStore } from '@/stores/localAudioStore'
+import { isLocalAudioTerminal, localAudioStatusProgress } from '@/lib/localAudioProtocol'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { toast } from 'sonner'
+import type { SearchDialogSection } from '@/components/Overlays/SearchDialog'
 
 interface RoomHeaderProps {
-  onOpenSearch: () => void
+  onOpenSearch: (section?: SearchDialogSection) => void
   onOpenSettings: () => void
   onOpenMembers: () => void
   onLeaveRoom: () => void
@@ -26,6 +29,19 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
   const roomName = useRoomStore((s) => s.room?.name)
   const roomId = useRoomStore((s) => s.room?.id)
   const userCount = useRoomStore((s) => s.room?.users.length ?? 0)
+  const localAudioTasks = useLocalAudioStore((state) => state.tasks)
+  const activeUploadCount = getActiveLocalAudioTaskCount(localAudioTasks)
+  const progressTask =
+    localAudioTasks.find((task) => !isLocalAudioTerminal(task.stage) && task.stage !== 'waiting-upload') ??
+    localAudioTasks.find((task) => !isLocalAudioTerminal(task.stage))
+  const activeProgress = progressTask ? localAudioStatusProgress(progressTask) : null
+  const roundedProgress = activeProgress === null ? null : Math.round(activeProgress)
+  const taskBadge =
+    activeUploadCount > 1
+      ? `${activeUploadCount > 99 ? '99+' : activeUploadCount}${roundedProgress === null ? '' : ` · ${roundedProgress}%`}`
+      : roundedProgress === null
+        ? String(activeUploadCount)
+        : `${roundedProgress}%`
   const { isConnected } = useSocketContext()
 
   // Poll RTT from clockSync module every 3s
@@ -127,14 +143,27 @@ export function RoomHeader({ onOpenSearch, onOpenSettings, onOpenMembers, onLeav
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
-              onClick={onOpenSearch}
-              aria-label="搜索点歌"
+              className="relative h-8 w-8 min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+              onClick={() => onOpenSearch(activeUploadCount > 0 ? 'local' : undefined)}
+              aria-label={
+                activeUploadCount > 0
+                  ? `点歌，${activeUploadCount} 个本地音频任务进行中${roundedProgress === null ? '' : `，当前进度 ${roundedProgress}%`}`
+                  : '搜索点歌'
+              }
             >
               <Search className="h-4 w-4" />
+              {activeUploadCount > 0 && (
+                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 translate-x-1/3 -translate-y-1/3 items-center justify-center whitespace-nowrap rounded-full bg-primary px-1 text-[9px] font-semibold leading-none text-primary-foreground ring-2 ring-background">
+                  {taskBadge}
+                </span>
+              )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>搜索点歌</TooltipContent>
+          <TooltipContent>
+            {activeUploadCount > 0
+              ? `${activeUploadCount} 个本地音频任务${roundedProgress === null ? '' : ` · ${roundedProgress}%`}`
+              : '搜索点歌'}
+          </TooltipContent>
         </Tooltip>
 
         {/* Desktop: inline settings & leave buttons */}

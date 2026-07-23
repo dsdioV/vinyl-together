@@ -10,6 +10,7 @@ import { useChatSync } from './room/useChatSync'
 import { useQueueSync } from './room/useQueueSync'
 import { useAuthSync } from './room/useAuthSync'
 import { useConnectionGuard } from './room/useConnectionGuard'
+import { abortActiveLocalAudioUpload, useLocalAudioSync, useLocalAudioUploadRunner } from './room/useLocalAudioSync'
 
 /**
  * Composition hook that wires up all room-related socket event listeners.
@@ -25,9 +26,15 @@ export function useRoom() {
   useQueueSync()
   useAuthSync()
   useConnectionGuard()
+  useLocalAudioSync()
+  useLocalAudioUploadRunner()
 
   const leaveRoom = useCallback(() => {
     const roomId = useRoomStore.getState().room?.id
+    // Abort only the active raw-file request. Tasks that have already been
+    // fully received may still be transcoding on the server and intentionally
+    // remain room-owned after this client leaves.
+    abortActiveLocalAudioUpload(undefined, 'detach')
     if (roomId) storage.clearRejoinToken(roomId)
     socket.emit(EVENTS.ROOM_LEAVE)
     resetAllRoomState()

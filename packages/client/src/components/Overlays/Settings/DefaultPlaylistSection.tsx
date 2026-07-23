@@ -4,7 +4,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
-import { cn, trackKey } from '@/lib/utils'
+import { cn, toQueueTrackInput, trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
@@ -128,7 +128,7 @@ export function DefaultPlaylistSection() {
         toast.info(`「${track.title}」已在默认播放列表中`)
         return
       }
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD, { track })
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD, { track: toQueueTrackInput(track) })
       toast.success(`「${track.title}」已加入默认播放列表`)
     },
     [socket, defaultKeys, remainingCapacity],
@@ -138,7 +138,7 @@ export function DefaultPlaylistSection() {
     (tracks: Track[]) => {
       const tracksToAdd = tracks.slice(0, remainingCapacity)
       if (tracksToAdd.length === 0) return
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd })
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd.map(toQueueTrackInput) })
     },
     [socket, remainingCapacity],
   )

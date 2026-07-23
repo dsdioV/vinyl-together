@@ -1,5 +1,6 @@
 import { useSocketContext } from '@/providers/SocketProvider'
 import { resetAllRoomState } from '@/lib/resetStores'
+import { abortActiveLocalAudioUpload } from './useLocalAudioSync'
 import { useEffect } from 'react'
 
 /**
@@ -11,6 +12,7 @@ export function useConnectionGuard() {
 
   useEffect(() => {
     const onDisconnect = () => {
+      abortActiveLocalAudioUpload(undefined, 'detach')
       resetAllRoomState()
     }
 

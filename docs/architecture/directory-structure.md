@@ -47,6 +47,7 @@ src/
 │   ├── Overlays/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
 │   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护）
+│   │   ├── LocalAudioPanel.tsx #     房间本地音频上传任务、资产编辑/删除与排序
 │   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/账号/个人/外观，移动端 nav scrollbar-hide）
 │   │   └── Settings/
 │   │       ├── SettingRow.tsx              # 设置行共享组件
@@ -105,11 +106,12 @@ src/
 │   ├── useLyric.ts             #   歌词加载（TTML → 平台逐词 YRC/KRC → LRC）
 │   ├── usePlayerSync.ts        #   播放同步（Scheduled Execution + Host 上报 + 周期性漂移校正）
 │   ├── useClockSync.ts         #   NTP 时钟同步 hook（校准客户端时钟与服务器对齐）
-│   ├── useRoom.ts              #   房间组合 hook（编排 5 个子 hook，对外 API 不变）
+│   ├── useRoom.ts              #   房间组合 hook（编排房间同步与本地音频上传子 hook，对外 API 不变）
 │   ├── room/                   #   useRoom 子 hook（按职责拆分）
 │   │   ├── useRoomState.ts     #     ROOM_STATE / JOIN / LEFT / SETTINGS / ROLE_CHANGED / ERROR + 挂载时补发 cookie（覆盖 HomePage 提前消费 ROOM_STATE 的场景）
 │   │   ├── useChatSync.ts      #     CHAT_HISTORY / CHAT_MESSAGE
 │   │   ├── useQueueSync.ts     #     QUEUE_UPDATED
+│   │   ├── useLocalAudioSync.ts #    本地音频任务/资产 Socket 同步与快照
 │   │   ├── useAuthSync.ts      #     AUTH_SET_COOKIE_RESULT + localStorage 持久化（验证失败只做 toast 反馈，永不删除 cookie；删除权仅在 useAuth.logout）
 │   │   └── useConnectionGuard.ts #   disconnect → resetAllRoomState
 │   ├── useAuth.ts              #   平台认证 UI & Socket 事件
@@ -128,6 +130,7 @@ src/
 │   ├── roomStore.ts            #   房间状态（room, currentUser, users）
 │   ├── chatStore.ts            #   聊天（messages, unreadCount, isChatOpen）
 │   ├── lobbyStore.ts           #   大厅（rooms 列表, isLoading）
+│   ├── localAudioStore.ts      #   房间本地音频资产、上传任务与配额状态（搜索/排序由 LocalAudioPanel 管理）
 │   └── settingsStore.ts        #   设置（歌词参数、背景参数，持久化到 localStorage）
 │
 ├── providers/                  # React Context Provider
@@ -144,6 +147,7 @@ src/
     ├── platform.ts             #   平台常量（PLATFORM_LABELS / PLATFORM_SHORT_LABELS / PLATFORM_COLORS / VIP_LABELS / 状态查找函数）
     ├── format.ts               #   格式化工具（时间、文本等）
     ├── audioUnlock.ts          #   浏览器音频自动播放解锁
+    ├── localAudioProtocol.ts   #   本地媒体 URL 与上传 API 协议工具
     └── utils.ts                #   cn() + trackKey() 等通用工具
 ```
 
@@ -152,7 +156,7 @@ src/
 ```
 src/
 ├── index.ts                    # 入口：Express + HTTP + Socket.IO 服务启动与优雅关闭
-├── config.ts                   # 环境变量配置（PORT, CLIENT_URL, CORS）
+├── config.ts                   # 环境变量配置（PORT, CLIENT_URL, CORS、本地音频路径/配额/FFmpeg）
 │
 ├── controllers/                # 控制器：注册 Socket 事件处理器（薄编排层，不含业务逻辑）
 │   ├── index.ts                #   统一注册入口
@@ -162,6 +166,7 @@ src/
 │   ├── chatController.ts       #   聊天消息（含限流反馈）
 │   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode / play-track / remove-track 投票）
 │   ├── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询；支持网易云/酷狗/QQ 音乐三平台；策略模式——通过 AUTH_PROVIDERS 映射表统一处理；fast path: 内存池命中跳过 API；slow path: getUserInfo + 任意失败重试 1 次）
+│   ├── localAudioController.ts #   房间本地音频任务取消、资产编辑/删除
 │   └── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
 │
 ├── services/                   # 服务层：业务逻辑
@@ -177,6 +182,9 @@ src/
 │   ├── neteaseAuthService.ts   #   网易云 API 认证（QR / Cookie 验证 / 用户信息 / 用户歌单列表；getUserInfo 返回 { ok, data? } | { ok: false, reason: 'expired' | 'error' } 区分过期与临时故障）
 │   ├── kugouAuthService.ts    #   酷狗 API 认证（QR 扫码登录 + VIP 检查 + 用户昵称(RSA) + 用户歌单列表 + 歌单歌曲获取；kugouRequest 含 HTTP 状态检查与 JSON 安全解析；自包含签名实现，状态码归一化为 800-803 与网易云统一）
 │   ├── tencentAuthService.ts  #   QQ 音乐认证（5 步 OAuth QR 扫码登录：ptqrshow/ptqrlogin/check_sig/authorize/QQLogin 换取 musickey；zzc 签名防风控；getUserInfo 获取昵称 + VIP 状态；getUserPlaylists 获取自建 + 收藏歌单；getPlaylistTracks 分页获取歌单歌曲）
+│   ├── localAudioAccess.ts     #   房间/资产/variant 绑定的 HMAC 媒体访问签名
+│   ├── localAudioMedia.ts      #   FFprobe 白名单校验、FFmpeg 转码/封面提取与 Range 解析
+│   ├── localAudioService.ts    #   上传任务、配额、资产生命周期、队列引用与房间清理
 │   └── voteService.ts          #   投票状态管理
 │
 ├── repositories/               # 数据仓库：内存存储
@@ -192,6 +200,7 @@ src/
 │
 ├── routes/                     # Express REST 路由
 │   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|playlist/search|ttml（统一 validated() 路由包装器 + Zod 模式）
+│   ├── localAudio.ts           #   本地音频任务/资产 REST、签名媒体 Range/HEAD（成员鉴权）
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
@@ -207,8 +216,8 @@ src/
 ```
 src/
 ├── index.ts           # 统一导出（re-export 所有模块）
-├── types.ts           # 核心类型：ERROR_CODE, Track, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction (incl. play-track, remove-track), VoteState, RoomListItem, Playlist
-├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*, playlist:*）
+├── types.ts           # 核心类型：MusicSource（仅在线平台）, TrackSource（含 local）, Track（含 assetId/fallbackStreamUrl）, RoomState, PlayState, ScheduledPlayState, PlayMode, AudioQuality, User, ChatMessage, VoteAction (incl. play-track, remove-track), VoteState, RoomListItem, Playlist
+├── events.ts          # 事件常量：EVENTS 对象（room:*, player:*, queue:*, chat:*, auth:*, ntp:*, playlist:*, local_audio:*）
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema

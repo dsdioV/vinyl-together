@@ -49,9 +49,7 @@ function VolumeControl({
             {volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
           </Button>
           <Slider min={0} max={100} value={[volume * 100]} onValueChange={([v]) => setVolume(v / 100)} />
-          <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">
-            {Math.round(volume * 100)}
-          </span>
+          <span className="w-8 shrink-0 text-right text-xs tabular-nums text-white/50">{Math.round(volume * 100)}</span>
         </PopoverContent>
       </Popover>
     </Tooltip>
@@ -120,11 +118,11 @@ export const SongInfoBar = memo(function SongInfoBar({ onOpenChat, chatUnreadCou
         {/* Right-bottom: volume + chat + external link buttons (always visible, aligned to bottom) */}
         <div className="flex shrink-0 items-center">
           <VolumeControl volume={volume} setVolume={setVolume} toggleMute={toggleMute} />
-          {currentTrack && (
+          {currentTrack && getSourceUrl(currentTrack) && (
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <a
-                  href={getSourceUrl(currentTrack)}
+                  href={getSourceUrl(currentTrack) ?? undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex h-9 w-9 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white active:scale-90 transition-transform"

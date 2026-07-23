@@ -1,19 +1,24 @@
 import { useCallback } from 'react'
 import { EVENTS, type Track } from '@music-together/shared'
 import { useSocketContext } from '@/providers/SocketProvider'
+import { toQueueTrackInput } from '@/lib/utils'
 
 export function useQueue() {
   const { socket } = useSocketContext()
 
-  const addTrack = useCallback((track: Track) => socket.emit(EVENTS.QUEUE_ADD, { track }), [socket])
+  const addTrack = useCallback(
+    (track: Track) => socket.emit(EVENTS.QUEUE_ADD, { track: toQueueTrackInput(track) }),
+    [socket],
+  )
 
   const insertAfterCurrent = useCallback(
-    (track: Track) => socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track }),
+    (track: Track) => socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track: toQueueTrackInput(track) }),
     [socket],
   )
 
   const addBatchTracks = useCallback(
-    (tracks: Track[], playlistName?: string) => socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName }),
+    (tracks: Track[], playlistName?: string) =>
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks: tracks.map(toQueueTrackInput), playlistName }),
     [socket],
   )
 
@@ -27,5 +32,14 @@ export function useQueue() {
 
   const unlikeTrack = useCallback((trackId: string) => socket.emit(EVENTS.QUEUE_UNLIKE, { trackId }), [socket])
 
-  return { addTrack, insertAfterCurrent, addBatchTracks, removeTrack, reorderTracks, clearQueue, likeTrack, unlikeTrack }
+  return {
+    addTrack,
+    insertAfterCurrent,
+    addBatchTracks,
+    removeTrack,
+    reorderTracks,
+    clearQueue,
+    likeTrack,
+    unlikeTrack,
+  }
 }

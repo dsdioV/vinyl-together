@@ -1,4 +1,12 @@
-import type { AudioQuality, MusicSource, PlayMode, PlayState, PlayedTrack, ScheduledPlayState, Track } from '@music-together/shared'
+import type {
+  AudioQuality,
+  MusicSource,
+  PlayMode,
+  PlayState,
+  PlayedTrack,
+  ScheduledPlayState,
+  Track,
+} from '@music-together/shared'
 import { EVENTS, ERROR_CODE, LIMITS, NTP } from '@music-together/shared'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { nanoid } from 'nanoid'
@@ -47,9 +55,14 @@ function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
   const next = prev.then(fn, fn)
   playMutexes.set(roomId, next)
   // Cleanup entry when chain settles to avoid unbounded growth
-  next.finally(() => {
+  const cleanup = () => {
     if (playMutexes.get(roomId) === next) playMutexes.delete(roomId)
-  })
+  }
+  // Do not ignore a Promise returned by finally(): when `next` rejects, that
+  // derived Promise rejects too and becomes an unhandled rejection. Supplying
+  // both handlers keeps cleanup rejection-neutral while callers still receive
+  // the original `next` Promise below.
+  void next.then(cleanup, cleanup)
   return next
 }
 
@@ -111,6 +124,12 @@ async function resolveStreamUrl(
   return null
 }
 
+/** Load the room-local registry lazily to avoid a module initialization cycle. */
+async function refreshLocalTrack(roomId: string, track: Track, allowPendingCurrent = false): Promise<Track | null> {
+  const { localAudioService } = await import('./localAudioService.js')
+  return localAudioService.refreshTrack(roomId, track, allowPendingCurrent)
+}
+
 /**
  * Resolve stream URL / cover, set current track, and broadcast PLAYER_PLAY.
  * Returns true on success, false on failure.
@@ -137,18 +156,40 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   const room = roomRepo.get(roomId)
   if (!room) return false
 
-  const resolved = { ...track }
+  let resolved = { ...track }
+
+  // Local URLs are short-lived signed URLs. Resolve a fresh canonical Track
+  // every time playback starts so an old queue item cannot expire silently.
+  if (resolved.source === 'local') {
+    const refreshed = await refreshLocalTrack(roomId, resolved)
+    if (!refreshed) {
+      queueService.removeTrack(roomId, resolved.id)
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [resolved.id] })
+      io.to(roomId).emit(EVENTS.ROOM_ERROR, {
+        code: ERROR_CODE.LOCAL_AUDIO_NOT_FOUND,
+        message: `本地歌曲「${resolved.title}」已被删除，已从列表移除`,
+      })
+      return false
+    }
+    resolved = refreshed
+    const localIndex = room.queue.findIndex((candidate) => candidate.id === resolved.id)
+    if (localIndex >= 0) {
+      room.queue[localIndex] = resolved
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'replace', track: resolved, atIndex: localIndex })
+    }
+  }
 
   // Fetch stream URL if missing
-  if (!resolved.streamUrl) {
+  if (!resolved.streamUrl && resolved.source !== 'local') {
+    const onlineSource = resolved.source
     try {
       // Get cookie from the room's pool for this platform (enables VIP access)
-      const cookie = authService.getAnyCookie(resolved.source, roomId)
-      const url = await resolveStreamUrl(resolved.source, resolved.urlId, room.audioQuality, cookie ?? undefined)
+      const cookie = authService.getAnyCookie(onlineSource, roomId)
+      const url = await resolveStreamUrl(onlineSource, resolved.urlId, room.audioQuality, cookie ?? undefined)
 
       if (!url) {
         const isVip = resolved.vip
-        const isKugou = resolved.source === 'kugou'
+        const isKugou = onlineSource === 'kugou'
         let hint = ''
         if (isVip && !cookie) {
           hint = '（VIP 歌曲，需要有用户登录 VIP 账号）'
@@ -162,12 +203,12 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
         // -------------------------------------------------------------------
         if (
           config.autoFallback.enabled &&
-          (resolved.source === 'netease' || resolved.source === 'tencent') &&
+          (onlineSource === 'netease' || onlineSource === 'tencent') &&
           canAutoFallback(roomId, resolved.id)
         ) {
           // Prevent repeated fallback attempts for this queue item
           markAutoFallback(roomId, resolved.id, 60_000)
-          const fromSource = resolved.source
+          const fromSource = onlineSource
           const trackTitle = resolved.title
           const toSource = trackFallbackService.getFallbackTargetSource(fromSource)
           if (toSource) {
@@ -184,7 +225,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
 
             try {
               const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
-              if (best) {
+              if (best && best.track.source !== 'local') {
                 const cookie2 = authService.getAnyCookie(best.track.source, roomId)
                 const url2 = await resolveStreamUrl(
                   best.track.source,
@@ -206,7 +247,11 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                     const replaceIndex = roomBefore.queue.findIndex((t) => t.id === resolved.id)
                     if (replaceIndex >= 0) {
                       roomBefore.queue[replaceIndex] = replacement
-                      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'replace', track: replacement, atIndex: replaceIndex })
+                      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, {
+                        type: 'replace',
+                        track: replacement,
+                        atIndex: replaceIndex,
+                      })
                     }
                   }
 
@@ -272,7 +317,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   }
 
   // Fetch cover if missing
-  if (!resolved.cover && resolved.picId) {
+  if (resolved.source !== 'local' && !resolved.cover && resolved.picId) {
     try {
       const cover = await musicProvider.getCover(resolved.source, resolved.picId)
       if (cover) resolved.cover = cover
@@ -307,6 +352,24 @@ export async function resumeTrack(io: TypedServer, roomId: string, _initiatorSoc
   const room = roomRepo.get(roomId)
   if (!room || !room.currentTrack) return
 
+  if (room.currentTrack.source === 'local') {
+    const expectedTrack = room.currentTrack
+    const expectedPlayState = room.playState
+    const refreshed = await refreshLocalTrack(roomId, expectedTrack, true)
+    // A next/play/pause/seek action may have won while the dynamic local-audio
+    // lookup was pending. Never let this stale resume overwrite newer state.
+    if (roomRepo.get(roomId) !== room || room.currentTrack !== expectedTrack || room.playState !== expectedPlayState) {
+      return
+    }
+    if (!refreshed) {
+      await playNextTrackInRoom(io, roomId, room.playMode, { skipDebounce: true, skipHistory: true })
+      return
+    }
+    room.currentTrack = refreshed
+    const queueIndex = room.queue.findIndex((track) => track.id === refreshed.id)
+    if (queueIndex >= 0) room.queue[queueIndex] = refreshed
+  }
+
   // If the current track has no streamUrl, re-resolve it instead of just
   // flipping isPlaying (the client has no Howl instance and would silently
   // ignore the RESUME event).  This can happen after long uptime when a
@@ -325,7 +388,12 @@ export async function resumeTrack(io: TypedServer, roomId: string, _initiatorSoc
   const scheduleTime = getScheduleTime(roomId)
   room.playState = { ...room.playState, isPlaying: true, serverTimestamp: scheduleTime }
   // All clients (including initiator) must execute at the same scheduled moment
-  io.to(roomId).emit(EVENTS.PLAYER_RESUME, { playState: scheduled(room.playState, roomId, scheduleTime) })
+  io.to(roomId).emit(EVENTS.PLAYER_RESUME, {
+    playState: scheduled(room.playState, roomId, scheduleTime),
+    // Each client decides whether its currently loaded signed URL will remain
+    // valid for the rest of the recording. Only stale clients reload.
+    track: room.currentTrack.source === 'local' ? room.currentTrack : undefined,
+  })
 }
 
 export function pauseTrack(io: TypedServer, roomId: string, _initiatorSocket?: TypedSocket): void {
@@ -414,7 +482,13 @@ export function playNextTrackInRoom(
   io: TypedServer,
   roomId: string,
   playMode: PlayMode,
-  options?: { skipDebounce?: boolean },
+  options?: {
+    skipDebounce?: boolean
+    previousIndex?: number
+    currentAlreadyRemoved?: boolean
+    skipHistory?: boolean
+    stopBeforeResolve?: boolean
+  },
 ): Promise<void> {
   return withPlayMutex(roomId, async () => {
     // Guard: if a NEXT is already in progress for this room, drop this event.
@@ -454,7 +528,13 @@ async function _executePlayNext(
   io: TypedServer,
   roomId: string,
   playMode: PlayMode,
-  options?: { skipDebounce?: boolean },
+  options?: {
+    skipDebounce?: boolean
+    previousIndex?: number
+    currentAlreadyRemoved?: boolean
+    skipHistory?: boolean
+    stopBeforeResolve?: boolean
+  },
 ): Promise<void> {
   const room = roomRepo.get(roomId)
   if (!room) return
@@ -462,10 +542,16 @@ async function _executePlayNext(
   // Capture current state BEFORE any mutations so we can compute the next
   // track correctly even after auto-removing the current one from the queue.
   const currentTrack = room.currentTrack
-  const oldCurrentIndex = currentTrack ? room.queue.findIndex((t) => t.id === currentTrack.id) : -1
+  const oldCurrentIndex =
+    options?.previousIndex ?? (currentTrack ? room.queue.findIndex((t) => t.id === currentTrack.id) : -1)
+
+  // Destructive local-file deletion must stop the buffered old track before
+  // resolving the next stream URL. Keep the captured track/index above so the
+  // queue transition remains correct after stopPlayback clears currentTrack.
+  if (options?.stopBeforeResolve && currentTrack) stopPlayback(io, roomId)
 
   // Record finished track to play history (regardless of autoRemovePlayed)
-  if (currentTrack) {
+  if (currentTrack && !options?.skipHistory) {
     const entry: PlayedTrack = {
       track: currentTrack,
       playedAt: Date.now(),
@@ -479,7 +565,8 @@ async function _executePlayNext(
   }
 
   // Auto-remove played track from queue (if enabled AND track is still in queue)
-  const autoRemoved = !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)
+  const autoRemoved =
+    !options?.currentAlreadyRemoved && !!(room.autoRemovePlayed && currentTrack && oldCurrentIndex >= 0)
   if (autoRemoved) {
     room.queue = room.queue.filter((t) => t.id !== currentTrack.id)
     io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: [currentTrack.id] })
@@ -494,7 +581,8 @@ async function _executePlayNext(
   if (room.songLikes && room.autoRemovePlayed) {
     nextTrack = queueService.getNextTrackByLikes(roomId, playMode)
   } else {
-    const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, autoRemoved)
+    const previousRemoved = Boolean(options?.currentAlreadyRemoved || autoRemoved)
+    const nextIndex = queueService.computeNextIndex(roomId, playMode, oldCurrentIndex, previousRemoved)
     nextTrack = nextIndex >= 0 ? room.queue[nextIndex] : null
   }
 
@@ -533,7 +621,11 @@ async function _executePlayNext(
     // already set to the failed track by _playTrackInRoom; skipDebounce
     // not needed since it was already cleared by the first call).
     const fallbackTrack = queueService.getNextTrack(roomId, playMode)
-    if (fallbackTrack) await _playTrackInRoom(io, roomId, fallbackTrack)
+    if (fallbackTrack && (await _playTrackInRoom(io, roomId, fallbackTrack))) return
+    // A pending-delete local asset may have been the only loop-one/loop-all
+    // candidate. Once both the candidate and fallback are unavailable, clear
+    // currentTrack so physical deletion is no longer pinned forever.
+    stopPlayback(io, roomId)
   }
 }
 
@@ -581,6 +673,15 @@ export async function syncPlaybackToSocket(
   room: RoomData,
 ): Promise<void> {
   const isAloneInRoom = room.users.length === 1
+
+  if (room.currentTrack?.source === 'local') {
+    const refreshed = await refreshLocalTrack(roomId, room.currentTrack, true)
+    if (refreshed) {
+      room.currentTrack = refreshed
+      const queueIndex = room.queue.findIndex((track) => track.id === refreshed.id)
+      if (queueIndex >= 0) room.queue[queueIndex] = refreshed
+    }
+  }
 
   if (room.currentTrack?.streamUrl) {
     // Alone in room + track was paused → auto-resume (user rejoining)

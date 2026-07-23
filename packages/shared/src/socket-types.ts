@@ -2,6 +2,9 @@ import type { EVENTS } from './events.js'
 import type {
   AudioQuality,
   ChatMessage,
+  LocalAudioAsset,
+  LocalAudioState,
+  LocalAudioTask,
   MusicSource,
   MyPlatformAuth,
   PlayMode,
@@ -19,7 +22,29 @@ import type {
   RoomAutoFallbackEvent,
 } from './types.js'
 
-export type ClientTrackInput = Omit<Track, 'streamUrl' | 'requestedBy'>
+/**
+ * Legacy online-track input. Keep the source explicitly restricted to the
+ * three providers so a local asset can only enter through LocalAudioTrackRef.
+ */
+export type ClientTrackInput = Omit<
+  Track,
+  'source' | 'assetId' | 'streamUrl' | 'fallbackStreamUrl' | 'localAudioAccessExpiresAt' | 'requestedBy'
+> & {
+  source: MusicSource
+}
+
+/**
+ * Reference accepted for a room-local track. The server resolves this to a
+ * canonical Track and supplies all metadata/URLs; clients must not send a
+ * local file path or stream URL.
+ */
+export interface LocalAudioTrackRef {
+  source: 'local'
+  assetId: string
+}
+
+/** Queue input remains compatible with legacy full online Track payloads. */
+export type QueueTrackInput = ClientTrackInput | LocalAudioTrackRef
 
 /** 服务端 → 客户端 事件接口 */
 export interface ServerToClientEvents {
@@ -46,7 +71,7 @@ export interface ServerToClientEvents {
 
   [EVENTS.PLAYER_PLAY]: (data: { track: Track; playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_PAUSE]: (data: { playState: ScheduledPlayState }) => void
-  [EVENTS.PLAYER_RESUME]: (data: { playState: ScheduledPlayState }) => void
+  [EVENTS.PLAYER_RESUME]: (data: { playState: ScheduledPlayState; track?: Track }) => void
   [EVENTS.PLAYER_SEEK]: (data: { playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_SYNC_RESPONSE]: (data: { currentTime: number; isPlaying: boolean; serverTimestamp: number }) => void
 
@@ -59,7 +84,12 @@ export interface ServerToClientEvents {
   [EVENTS.CHAT_HISTORY]: (messages: ChatMessage[]) => void
 
   [EVENTS.VOTE_STARTED]: (vote: VoteState) => void
-  [EVENTS.VOTE_RESULT]: (data: { passed: boolean; action: VoteAction; reason?: string; payload?: Record<string, unknown> }) => void
+  [EVENTS.VOTE_RESULT]: (data: {
+    passed: boolean
+    action: VoteAction
+    reason?: string
+    payload?: Record<string, unknown>
+  }) => void
   [EVENTS.VOTE_FORCE_APPROVE]: () => void
   [EVENTS.VOTE_FORCE_REJECT]: () => void
 
@@ -87,11 +117,25 @@ export interface ServerToClientEvents {
 
   // Played history
   [EVENTS.PLAYED_HISTORY_UPDATED]: (data: { playedHistory: PlayedTrack[] }) => void
+
+  // Room-local audio
+  [EVENTS.LOCAL_AUDIO_STATE]: (data: LocalAudioState) => void
+  [EVENTS.LOCAL_AUDIO_TASK_UPDATED]: (task: LocalAudioTask) => void
+  [EVENTS.LOCAL_AUDIO_TASK_REMOVED]: (data: { taskId: string }) => void
+  [EVENTS.LOCAL_AUDIO_ASSET_UPDATED]: (asset: LocalAudioAsset) => void
+  [EVENTS.LOCAL_AUDIO_ASSET_REMOVED]: (data: { assetId: string }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
 export interface ClientToServerEvents {
-  [EVENTS.ROOM_CREATE]: (data: { nickname: string; roomName?: string; password?: string; persistent?: boolean; persistentTtlHours?: number; roomId?: string }) => void
+  [EVENTS.ROOM_CREATE]: (data: {
+    nickname: string
+    roomName?: string
+    password?: string
+    persistent?: boolean
+    persistentTtlHours?: number
+    roomId?: string
+  }) => void
   [EVENTS.ROOM_JOIN]: (data: { roomId: string; nickname: string; password?: string; rejoinToken?: string }) => void
   [EVENTS.ROOM_LEAVE]: () => void
   [EVENTS.ROOM_DELETE]: () => void
@@ -116,23 +160,34 @@ export interface ClientToServerEvents {
   [EVENTS.PLAYER_SYNC_REQUEST]: () => void
   [EVENTS.PLAYER_SET_MODE]: (data: { mode: PlayMode }) => void
 
-  [EVENTS.QUEUE_ADD]: (data: { track: ClientTrackInput }) => void
-  [EVENTS.QUEUE_INSERT_AFTER_CURRENT]: (data: { track: ClientTrackInput }) => void
+  [EVENTS.QUEUE_ADD]: (data: { track: QueueTrackInput }) => void
+  [EVENTS.QUEUE_INSERT_AFTER_CURRENT]: (data: { track: QueueTrackInput }) => void
   [EVENTS.QUEUE_REMOVE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_REORDER]: (data: { trackIds: string[] }) => void
   [EVENTS.QUEUE_CLEAR]: () => void
 
   // Queue batch
-  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: ClientTrackInput[]; playlistName?: string }) => void
+  [EVENTS.QUEUE_ADD_BATCH]: (data: { tracks: QueueTrackInput[]; playlistName?: string }) => void
 
   // Song likes
   [EVENTS.QUEUE_LIKE]: (data: { trackId: string }) => void
   [EVENTS.QUEUE_UNLIKE]: (data: { trackId: string }) => void
 
   // Default queue
-  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: ClientTrackInput }) => void
-  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: ClientTrackInput[] }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: QueueTrackInput }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: QueueTrackInput[] }) => void
   [EVENTS.DEFAULT_QUEUE_REMOVE]: (data: { trackId: string }) => void
+
+  // Room-local audio
+  [EVENTS.LOCAL_AUDIO_STATE_REQUEST]: () => void
+  [EVENTS.LOCAL_AUDIO_TASK_CANCEL]: (data: { taskId: string }) => void
+  [EVENTS.LOCAL_AUDIO_ASSET_UPDATE]: (data: {
+    assetId: string
+    title?: string
+    artist?: string[]
+    album?: string
+  }) => void
+  [EVENTS.LOCAL_AUDIO_ASSET_DELETE]: (data: { assetId: string; removeFromQueue?: boolean }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 

@@ -14,7 +14,9 @@ import type { SocketData } from './middleware/types.js'
 import authRoutes from './routes/auth.js'
 import musicRoutes from './routes/music.js'
 import roomRoutes from './routes/rooms.js'
+import localAudioRoutes from './routes/localAudio.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
+import { localAudioService } from './services/localAudioService.js'
 import { logger } from './utils/logger.js'
 
 const app = express()
@@ -25,14 +27,17 @@ const httpServer = createServer(app)
 // dev (localhost) and LAN access working consistently.
 app.use(
   cors({
-    origin: config.explicitOrigins.length > 0
-      ? config.explicitOrigins
-      : (true as const),
+    origin: config.explicitOrigins.length > 0 ? config.explicitOrigins : (true as const),
     credentials: true,
   }),
 )
-app.use(express.json({ limit: '1mb' }))
 app.use('/api', identityHttpMiddleware)
+
+// Mount raw local-audio upload routes before JSON parsing. This guarantees
+// identity/membership/quota checks run before any potentially large body is
+// consumed, even if a malicious client labels the audio as application/json.
+app.use('/api/rooms', localAudioRoutes)
+app.use(express.json({ limit: '1mb' }))
 
 // REST API routes
 app.use('/api/auth', authRoutes)
@@ -96,6 +101,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
 })
 
 attachSocketIdentity(io)
+localAudioService.setIo(io)
 initializeSocket(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
@@ -105,6 +111,8 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
   }
   throw err
 })
+
+await localAudioService.initialize()
 
 httpServer.listen(config.port, () => {
   logger.info(`Server running on http://localhost:${config.port}`)
@@ -116,18 +124,48 @@ httpServer.listen(config.port, () => {
 })
 
 // Graceful shutdown
-function shutdown(signal: string) {
+let shuttingDown = false
+async function shutdown(signal: string) {
+  if (shuttingDown) return
+  shuttingDown = true
   logger.info(`Received ${signal}, shutting down gracefully...`)
+  // Close the upload admission gate synchronously before any cleanup yields.
+  // HTTP/Socket shutdown and media cleanup then proceed together so an active
+  // upload cannot keep the listeners open while cleanup races a new task.
+  localAudioService.beginShutdown()
   clearAllTimers()
-  io.close(() => {
-    httpServer.close(() => {
-      logger.info('Server closed')
-      process.exit(0)
+  // Do not let a stuck filesystem/FFmpeg cleanup keep the process alive.
+  const forceExitTimer = setTimeout(() => {
+    logger.error('Graceful shutdown timed out; forcing exit')
+    process.exit(1)
+  }, 10_000)
+  let exitCode = 0
+  try {
+    const httpClosed = new Promise<void>((resolve) => {
+      httpServer.close((error) => {
+        if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+          logger.error('HTTP server close failed', error)
+        }
+        resolve()
+      })
     })
-  })
-  // Force exit after 10s
-  setTimeout(() => process.exit(1), 10_000).unref()
+    const socketsClosed = new Promise<void>((resolve) => {
+      io.close(() => resolve())
+    })
+    const results = await Promise.allSettled([localAudioService.shutdown(), httpClosed, socketsClosed])
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failures.length > 0) {
+      throw new AggregateError(failures.map((result) => result.reason))
+    }
+    logger.info('Server closed')
+  } catch (error) {
+    exitCode = 1
+    logger.error('Graceful shutdown failed', error)
+  } finally {
+    clearTimeout(forceExitTimer)
+  }
+  process.exit(exitCode)
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))

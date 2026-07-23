@@ -6,6 +6,7 @@ import { useRoomStore } from '@/stores/roomStore'
 import { SERVER_URL } from '@/lib/config'
 import { trackLookupFailure, type TrackLookupResult } from '@/lib/trackLookup'
 import { getPlaylistLoadError, PLAYLIST_NETWORK_ERROR } from '@/lib/playlistLoad'
+import { toQueueTrackInput } from '@/lib/utils'
 
 export { parsePlaylistInput } from '@/lib/musicInput'
 
@@ -362,14 +363,14 @@ export function usePlaylist() {
 
   const addTrackToQueue = useCallback(
     (track: Track) => {
-      socket.emit(EVENTS.QUEUE_ADD, { track })
+      socket.emit(EVENTS.QUEUE_ADD, { track: toQueueTrackInput(track) })
     },
     [socket],
   )
 
   const insertTrackAfterCurrent = useCallback(
     (track: Track) => {
-      socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track })
+      socket.emit(EVENTS.QUEUE_INSERT_AFTER_CURRENT, { track: toQueueTrackInput(track) })
     },
     [socket],
   )
@@ -403,7 +404,7 @@ export function usePlaylist() {
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks: tracks.map(toQueueTrackInput), playlistName })
     },
     [socket],
   )
@@ -417,7 +418,7 @@ export function usePlaylist() {
         toast.info('默认播放列表已满')
         return
       }
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd })
+      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd.map(toQueueTrackInput) })
       toast.success(`已添加 ${tracksToAdd.length} 首歌到默认播放列表`)
     },
     [socket],

@@ -12,10 +12,11 @@ import { storage } from '@/lib/storage'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
-import type { ScheduledPlayState } from '@music-together/shared'
+import type { ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import type { Howl } from 'howler'
 import { useEffect, useRef, type RefObject } from 'react'
+import { shouldReloadLocalAudioOnResume } from '@/lib/localAudioPlayback'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,7 +54,11 @@ function scheduleDelay(serverTimeToExecute: number): number {
  * during which all SYNC_RESPONSE messages are ignored, giving the audio
  * buffer time to stabilise.
  */
-export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefObject<number | undefined>) {
+export function usePlayerSync(
+  howlRef: RefObject<Howl | null>,
+  soundIdRef: RefObject<number | undefined>,
+  loadTrack: (track: Track, seekTo?: number, autoPlay?: boolean) => void,
+) {
   const { socket } = useSocketContext()
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
 
@@ -132,13 +137,37 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
     }
 
     // -- RESUME -------------------------------------------------------------
-    const onResume = (data: { playState: ScheduledPlayState }) => {
+    const onResume = (data: { playState: ScheduledPlayState; track?: Track }) => {
       clearScheduled()
       const id = ++actionIdRef.current
       const delay = scheduleDelay(data.playState.serverTimeToExecute)
 
       scheduledTimerRef.current = setTimeout(() => {
         if (actionIdRef.current !== id) return // stale callback
+        if (
+          data.track &&
+          (!howlRef.current ||
+            shouldReloadLocalAudioOnResume(
+              usePlayerStore.getState().currentTrack,
+              data.track,
+              data.playState.currentTime,
+              isCalibrated() ? getServerTime() : data.playState.serverTimeToExecute,
+            ))
+        ) {
+          largeDriftCountRef.current = 0
+          trackStartTimeRef.current = Date.now()
+          noSyncUntilRef.current = Date.now() + SYNC_INITIAL_WINDOW_MS
+          loadTrack(data.track, data.playState.currentTime, true)
+          useRoomStore.getState().updateRoom({
+            currentTrack: data.track,
+            playState: {
+              isPlaying: data.playState.isPlaying,
+              currentTime: data.playState.currentTime,
+              serverTimestamp: data.playState.serverTimestamp,
+            },
+          })
+          return
+        }
         if (!howlRef.current) {
           // No Howl instance — the track likely has no streamUrl or loadTrack
           // was never called.  Ask the server to re-resolve the stream URL
@@ -239,7 +268,7 @@ export function usePlayerSync(howlRef: RefObject<Howl | null>, soundIdRef: RefOb
       socket.off(EVENTS.PLAYER_PLAY, onPlay)
       socket.off(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
     }
-  }, [socket, howlRef, soundIdRef, setCurrentTime])
+  }, [socket, howlRef, soundIdRef, loadTrack, setCurrentTime])
 
   // -----------------------------------------------------------------------
   // Periodic sync request (client-initiated drift correction).

@@ -52,13 +52,35 @@ Docker 容器 (:3001)
 
 ```bash
 # 启动应用容器
-docker run -d --name music-together --restart unless-stopped -p 3001:3001 ghcr.io/<owner>/music-together:latest
+IDENTITY_SECRET="$(openssl rand -hex 32)"
+docker run -d --name vinyl-together --restart unless-stopped \
+  -p 3001:3001 \
+  -v vinyl-local-audio:/data/local-audio \
+  -e IDENTITY_SECRET="$IDENTITY_SECRET" \
+  -e LOCAL_AUDIO_DATA_DIR=/data/local-audio \
+  ghcr.io/dsdiov/vinyl-together:latest
 
 # 启动 Watchtower 自动更新
 docker run -d --name watchtower --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e WATCHTOWER_CLEANUP=true \
-  containrrr/watchtower --interval 300 music-together
+  containrrr/watchtower --interval 300 vinyl-together
 ```
 
-如使用 1Panel，创建反向代理网站指向 `127.0.0.1:3001`，启用 WebSocket 和 HTTPS。
+生产镜像已包含 FFmpeg/FFprobe。房间本地音频首版不跨服务重启持久化，服务启动时会清理无主文件；挂载存储可避免占用系统盘并提供临时上传空间。
+
+生产环境必须设置至少 32 个字符的随机 `IDENTITY_SECRET`，它用于签名身份 cookie 和本地音频访问 URL。密钥应在容器重建时保持不变，可存放在权限受限的 `--env-file` 中。
+
+本地音频默认单文件上限为 500 MiB、单房间配额为 1 GiB、全服配额为 2.5 GiB，并要求保留至少 1.5 GiB 可用空间。`LOCAL_AUDIO_FFMPEG_THREADS` 默认限制每个转码进程使用 1 个线程；`LOCAL_AUDIO_ACCESS_TOKEN_TTL_MS` 默认 86,400,000（24 小时），用于覆盖长录音的后续 Range/seek 请求。若要调低该值，仍应让它长于预期的最长单条录音，否则播放中的后续 Range 请求可能在曲终前过期。相关值可通过环境变量调整。
+
+如使用反向代理，请转发 `127.0.0.1:3001` 并启用 WebSocket 和 HTTPS。若启用了本地音频上传，还需在反向代理 `location` 中加入：
+
+```nginx
+client_max_body_size 512m;
+proxy_request_buffering off;
+client_body_timeout 70s;
+proxy_send_timeout 70s;
+proxy_read_timeout 70s;
+```
+
+`client_max_body_size` 应不小于 `LOCAL_AUDIO_MAX_UPLOAD_MIB`；关闭请求体缓冲可让 Node.js 边接收边写入 `LOCAL_AUDIO_DATA_DIR`，避免代理先把大型上传暂存到磁盘。三个 timeout 均按“连续无数据时间”计算，70 秒略高于应用的 60 秒上传空闲取消阈值。

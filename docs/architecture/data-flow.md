@@ -21,7 +21,10 @@ graph TB
 
   subgraph external [External]
     Meting["@meting/core 音乐源"]
+    FFmpeg["FFmpeg/FFprobe"]
   end
+
+  LocalStorage["Room-local media storage"]
 
   Pages --> Hooks
   Hooks --> Stores
@@ -29,30 +32,40 @@ graph TB
 
   SocketClient <-->|"WebSocket 双向通信"| SocketServer
   Pages -->|"HTTP GET /api/music/*"| Express
+  Pages -->|"Local audio REST / media"| Express
 
   SocketServer --> Controllers
   Controllers --> Services
   Services --> Repos
   Express --> Meting
   Services --> Meting
+  Services --> FFmpeg
+  Services --> LocalStorage
 ```
 
 ## Socket 事件清单
 
-| 分类         | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                            |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Room**     | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
-| **Player**   | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                      |
-| **Queue**    | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                            |
-| **Chat**     | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                             |
-| **Vote**     | `vote:start`, `vote:cast`                                                                                                           | `vote:started`, `vote:result`                                                                                                              |
-| **Auth**     | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status`                                             | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status`                                    |
-| **Playlist** | `playlist:get_my`                                                                                                                   | `playlist:my_list`                                                                                                                         |
-| **NTP**      | `ntp:ping`                                                                                                                          | `ntp:pong`                                                                                                                                 |
+| 分类            | 客户端 → 服务端                                                                                                                     | 服务端 → 客户端                                                                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Room**        | `room:create`, `room:join`, `room:leave`, `room:list`, `room:settings`, `room:set_role`                                             | `room:created`, `room:state`, `room:user_joined`, `room:user_left`, `room:settings`, `room:error`, `room:list_update`, `room:role_changed` |
+| **Player**      | `player:play`, `player:pause`, `player:seek`, `player:next`, `player:prev`, `player:sync`, `player:sync_request`, `player:set_mode` | `player:play`, `player:pause`, `player:resume`, `player:seek`, `player:sync_response`                                                      |
+| **Queue**       | `queue:add`, `queue:add_batch`, `queue:remove`, `queue:reorder`, `queue:clear`                                                      | `queue:updated`                                                                                                                            |
+| **Chat**        | `chat:message`                                                                                                                      | `chat:message`, `chat:history`                                                                                                             |
+| **Vote**        | `vote:start`, `vote:cast`                                                                                                           | `vote:started`, `vote:result`                                                                                                              |
+| **Auth**        | `auth:request_qr`, `auth:check_qr`, `auth:set_cookie`, `auth:logout`, `auth:get_status`                                             | `auth:qr_generated`, `auth:qr_status`, `auth:set_cookie_result`, `auth:status_update`, `auth:my_status`                                    |
+| **Playlist**    | `playlist:get_my`                                                                                                                   | `playlist:my_list`                                                                                                                         |
+| **Local audio** | `local_audio:state_request`, `local_audio:task_cancel`, `local_audio:asset_update`, `local_audio:asset_delete`                      | `local_audio:state`, `local_audio:task_updated`, `local_audio:task_removed`, `local_audio:asset_updated`, `local_audio:asset_removed`      |
+| **NTP**         | `ntp:ping`                                                                                                                          | `ntp:pong`                                                                                                                                 |
 
 ## 关键数据模型
 
 ```typescript
+// 在线音乐平台；用于搜索、歌单和平台 API
+type MusicSource = 'netease' | 'tencent' | 'kugou'
+
+// 队列曲目的来源；在线平台之外还可以是房间本地音频
+type TrackSource = MusicSource | 'local'
+
 // 音乐曲目
 interface Track {
   id: string
@@ -61,12 +74,14 @@ interface Track {
   album: string
   duration: number
   cover: string
-  source: 'netease' | 'tencent' | 'kugou'
-  sourceId: string
-  urlId: string
+  source: TrackSource
+  sourceId: string // platform ID, or asset ID for local audio
+  urlId: string // platform URL ID, or asset ID for local audio
   lyricId?: string
   picId?: string
   streamUrl?: string
+  fallbackStreamUrl?: string // MP3 fallback for lossless local assets
+  assetId?: string // local-audio asset identity; distinct from queue Track.id
   requestedBy?: string // 点歌人昵称
   vip?: boolean // 是否为 VIP / 付费歌曲（可能无法播放或仅试听）
 }
@@ -231,6 +246,13 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 - 三个平台（netease / tencent / kugou）统一使用同一 bitrate 参数，Meting 内部处理各平台差异
 - `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存
 
+本地音频在上传完成后按当时的 `room.audioQuality` 处理，之后修改房间音质不会回溯已有资产：
+
+- 128 / 192 / 320 档输出 MP3；如果输入本身不高于目标档位则直接复用 MP3
+- 999（无损）档对无损输入保留 FLAC，并额外生成 MP3 320 fallback；有损输入只生成 MP3
+- 接受 MP3、M4A/MP4 AAC/ALAC、FLAC、PCM/Float WAV、PCM/Float AIFF、Ogg/WebM Vorbis/Opus；拒绝 MIDI、WMA、APE 等格式
+- 单文件默认上限 500 MiB，单房间 1 GiB、全服 2.5 GiB；房间销毁或服务重启时清理本地资产
+
 ## 队列清空
 
 - Host/Admin 可通过播放列表抽屉的「清空」按钮（`ListX` 图标）一次性清空队列
@@ -258,15 +280,22 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 
 ## REST API
 
-| 路径                       | 方法 | 用途                                                                                                    |
-| -------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
-| `/api/music/search`        | GET  | 搜索曲目（`source` + `keyword` + `page`）                                                               |
-| `/api/music/url`           | GET  | 解析流媒体 URL（`source` + `id`）                                                                       |
-| `/api/music/lyric`         | GET  | 获取歌词                                                                                                |
-| `/api/music/cover`         | GET  | 获取封面图                                                                                              |
-| `/api/music/playlist`      | GET  | 获取最多 10,000 首的外部歌单，客户端每次最多加载 1,000 首，返回 `{ tracks, total, offset, hasMore }`   |
-| `/api/music/playlist/search` | GET | 服务端搜索完整外部歌单，每页固定返回 50 个命中结果，最多 200 页                                     |
-| `/api/rooms/:roomId/check` | GET  | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                     |
-| `/api/health`              | GET  | 健康检查                                                                                                |
+| 路径                                                      | 方法         | 用途                                                                                                 |
+| --------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------- |
+| `/api/music/search`                                       | GET          | 搜索曲目（`source` + `keyword` + `page`）                                                            |
+| `/api/music/url`                                          | GET          | 解析流媒体 URL（`source` + `id`）                                                                    |
+| `/api/music/lyric`                                        | GET          | 获取歌词                                                                                             |
+| `/api/music/cover`                                        | GET          | 获取封面图                                                                                           |
+| `/api/music/playlist`                                     | GET          | 获取最多 10,000 首的外部歌单，客户端每次最多加载 1,000 首，返回 `{ tracks, total, offset, hasMore }` |
+| `/api/music/playlist/search`                              | GET          | 服务端搜索完整外部歌单，每页固定返回 50 个命中结果，最多 200 页                                      |
+| `/api/rooms/:roomId/check`                                | GET          | 房间预检（存在性 + 是否需要密码），用于分享链接直接访问时的前置校验                                  |
+| `/api/rooms/:roomId/local-audio`                          | GET          | 获取房间本地音频资产与上传任务快照（仅成员）                                                         |
+| `/api/rooms/:roomId/local-audio/tasks`                    | POST         | 创建上传任务（仅成员）                                                                               |
+| `/api/rooms/:roomId/local-audio/tasks/:taskId/content`    | PUT          | 流式上传该任务的原始音频内容（仅任务创建者）                                                         |
+| `/api/rooms/:roomId/local-audio/assets/:assetId`          | PATCH/DELETE | 编辑或删除本地音频资产（删除可选择同步移出队列）                                                     |
+| `/api/rooms/:roomId/local-audio/assets/:assetId/:variant` | GET/HEAD     | 访问 `stream`、`fallback` 或 `cover`；音频 variant 支持 HTTP Range                                   |
+| `/api/health`                                             | GET          | 健康检查                                                                                             |
+
+媒体端点有两种授权方式：当前房间成员的身份 cookie，或 URL 中的短期签名 `token`。后者是为跨域 Howler/HTMLAudio 播放生成的 bearer capability，签名同时绑定 `roomId`、`assetId`、variant 和过期时间，不是可用于其他房间或其他文件的通用会话凭证。`stream` 是主音频，`fallback` 是无损主音频的 MP3 兼容备份，`cover` 是提取的 JPEG 封面。
 
 ---

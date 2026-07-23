@@ -42,6 +42,7 @@
 - **Search by ID** -- Look up playlists and albums by numeric ID
 - **Like mode** -- Most-liked song plays next (requires auto-remove)
 - **Large playlist browsing and search** -- Load external playlists in chunks and search all tracks in playlists of up to 10,000 songs; the room queue remains capped at 8,192 songs
+- **Room-local audio** -- Members can upload supported audio files; the server processes them at the room's selected quality and keeps them only for the room lifetime
 - **Real-time chat** -- In-room text messaging with system messages
 - **Role grace period** -- Privileged users retain roles for 30s after disconnect
 - **Mobile responsive** -- Adaptive layout with orientation-based switching
@@ -62,6 +63,8 @@ pnpm install
 pnpm dev
 ```
 
+To customize server environment variables, copy the root `.env.example` to `packages/server/.env`; see the [development guide](docs/architecture/dev-guide.md).
+
 Frontend: http://localhost:5173 | Backend: http://localhost:3001
 
 ## Deploy
@@ -69,22 +72,28 @@ Frontend: http://localhost:5173 | Backend: http://localhost:3001
 Single-image Docker deployment:
 
 ```bash
+IDENTITY_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
-  ghcr.io/dsdioV/vinyl-together:latest
+  -e IDENTITY_SECRET="$IDENTITY_SECRET" \
+  ghcr.io/dsdiov/vinyl-together:latest
 ```
 
 > If host port `3001` is already in use, change the left side of `-p <host-port>:<container-port>`, for example `-p 8080:3001`.
 
 In default auto mode, the frontend connects back to the current origin automatically; the server allows all origins and decides whether to set the cookie `Secure` flag based on the incoming request protocol.
 
+Production requires a random `IDENTITY_SECRET` of at least 32 characters. It protects both identity cookies and signed local-audio URLs; the value generated above is stored in the container configuration and survives container restarts.
+
 **Set `CLIENT_URL` only when you need an explicit origin whitelist:**
 
 ```bash
+IDENTITY_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vinyl-together --restart unless-stopped \
   -p 3001:3001 \
+  -e IDENTITY_SECRET="$IDENTITY_SECRET" \
   -e CLIENT_URL=https://music.example.com \
-  ghcr.io/dsdioV/vinyl-together:latest
+  ghcr.io/dsdiov/vinyl-together:latest
 ```
 
 > `CLIENT_URL` is mainly for explicit whitelist mode or separated frontend/backend deployments. In default auto mode, you usually do not need to set it manually.
@@ -92,6 +101,8 @@ docker run -d --name vinyl-together --restart unless-stopped \
 > If you expose HTTPS through Nginx / Caddy / 1Panel / Lucky, make sure the proxy forwards `X-Forwarded-Proto`, or the server cannot auto-detect whether it should issue Secure cookies.
 
 Push to main triggers GitHub Actions to build and push the image. See [Architecture Docs](docs/PROJECT_ARCHITECTURE.md) for details.
+
+Room-local audio needs writable storage (the image bundles FFmpeg/FFprobe) — mount a Docker volume and see the [deployment guide](docs/architecture/deployment.md) for environment variables and reverse-proxy settings.
 
 ## Project Structure
 
@@ -104,16 +115,16 @@ packages/
 
 ## Acknowledgements
 
-| Library | Description |
-|---|---|
-| [Howler.js](https://github.com/goldfire/howler.js) | Web audio playback |
-| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics) | Lyrics component (GPL-3.0) |
-| [Meting](https://github.com/metowolf/Meting) | Multi-platform music API |
-| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | NetEase Cloud Music API |
-| [CASL](https://github.com/stalniy/casl) | Permission management |
-| [Zustand](https://github.com/pmndrs/zustand) | State management |
-| [shadcn/ui](https://github.com/shadcn-ui/ui) | UI component library |
-| [Motion](https://github.com/motiondivision/motion) | Animation library |
+| Library                                                                                       | Description                |
+| --------------------------------------------------------------------------------------------- | -------------------------- |
+| [Howler.js](https://github.com/goldfire/howler.js)                                            | Web audio playback         |
+| [Apple Music-like Lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)                | Lyrics component (GPL-3.0) |
+| [Meting](https://github.com/metowolf/Meting)                                                  | Multi-platform music API   |
+| [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | NetEase Cloud Music API    |
+| [CASL](https://github.com/stalniy/casl)                                                       | Permission management      |
+| [Zustand](https://github.com/pmndrs/zustand)                                                  | State management           |
+| [shadcn/ui](https://github.com/shadcn-ui/ui)                                                  | UI component library       |
+| [Motion](https://github.com/motiondivision/motion)                                            | Animation library          |
 
 ## License
 

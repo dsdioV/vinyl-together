@@ -12,7 +12,7 @@ import {
   queueUnlikeSchema,
   LIMITS,
 } from '@music-together/shared'
-import type { Track } from '@music-together/shared'
+import type { QueueTrackInput, Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -20,11 +20,31 @@ import { checkSocketRateLimit } from '../middleware/socketRateLimiter.js'
 import * as chatService from '../services/chatService.js'
 import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
+import { localAudioService } from '../services/localAudioService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
   const withPermission = createWithPermission(io)
+
+  /**
+   * Resolve a client queue payload to a server-owned Track.  Local tracks are
+   * references only; metadata and signed URLs must come from the room-local
+   * asset registry so a client cannot inject an arbitrary stream URL.
+   */
+  function canonicalizeTrack(input: QueueTrackInput, roomId: string, nickname: string): Track | null {
+    if (input.source === 'local') {
+      return localAudioService.buildTrack(roomId, input.assetId, nickname)
+    }
+    return { ...input, requestedBy: nickname }
+  }
+
+  function reportMissingLocalTrack(target: TypedSocket): void {
+    target.emit(EVENTS.ROOM_ERROR, {
+      code: ERROR_CODE.LOCAL_AUDIO_NOT_FOUND,
+      message: '本地音频不存在或仍在处理中',
+    })
+  }
 
   /**
    * Broadcast defaultQueue update to admin/owner with full data,
@@ -61,14 +81,22 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+      const track = canonicalizeTrack(parsed.data.track, ctx.roomId, ctx.user.nickname)
+      if (!track) {
+        reportMissingLocalTrack(socket)
+        return
+      }
 
       const added = queueService.addTrack(ctx.roomId, track)
       if (!added) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.QUEUE_FULL, message: '播放队列已满' })
         return
       }
-      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [track], atIndex: ctx.room.queue.length - 1 })
+      io.to(ctx.roomId).emit(EVENTS.QUEUE_UPDATED, {
+        type: 'insert',
+        tracks: [track],
+        atIndex: ctx.room.queue.length - 1,
+      })
 
       // System message
       const msg = chatService.createSystemMessage(ctx.roomId, `${ctx.user.nickname} 点了一首「${track.title}」`)
@@ -93,7 +121,11 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
         return
       }
-      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+      const track = canonicalizeTrack(parsed.data.track, ctx.roomId, ctx.user.nickname)
+      if (!track) {
+        reportMissingLocalTrack(socket)
+        return
+      }
 
       const insertIndex = queueService.insertAfterCurrent(ctx.roomId, track)
       if (insertIndex < 0) {
@@ -144,7 +176,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       for (const t of rawTracks) {
         const check = queueAddSchema.safeParse({ track: t })
         if (check.success) {
-          validTracks.push({ ...check.data.track, requestedBy: ctx.user.nickname })
+          const canonical = canonicalizeTrack(check.data.track, ctx.roomId, ctx.user.nickname)
+          if (canonical) validTracks.push(canonical)
+          else skipped++
         } else {
           skipped++
           const issues = check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 3)
@@ -162,7 +196,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
 
       if (skipped > 0) {
-        logger.warn(`QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, { roomId: ctx.roomId })
+        logger.warn(`QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, {
+          roomId: ctx.roomId,
+        })
       }
 
       const tracks = validTracks
@@ -269,7 +305,11 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         })
         return
       }
-      const track: Track = { ...parsed.data.track, requestedBy: ctx.user.nickname }
+      const track = canonicalizeTrack(parsed.data.track, ctx.roomId, ctx.user.nickname)
+      if (!track) {
+        reportMissingLocalTrack(socket)
+        return
+      }
 
       ctx.room.defaultQueue.push(track)
       broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
@@ -317,7 +357,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       for (const t of rawTracks) {
         const check = queueAddSchema.safeParse({ track: t })
         if (check.success) {
-          validTracks.push({ ...check.data.track, requestedBy: ctx.user.nickname })
+          const canonical = canonicalizeTrack(check.data.track, ctx.roomId, ctx.user.nickname)
+          if (canonical) validTracks.push(canonical)
+          else skipped++
         } else {
           skipped++
           const issues = check.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).slice(0, 3)
@@ -335,7 +377,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
 
       if (skipped > 0) {
-        logger.warn(`DEFAULT_QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, { roomId: ctx.roomId })
+        logger.warn(`DEFAULT_QUEUE_ADD_BATCH: ${skipped}/${rawTracks.length} tracks skipped due to validation`, {
+          roomId: ctx.roomId,
+        })
       }
 
       const tracks = validTracks.slice(0, remainingCapacity)
@@ -443,11 +487,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
 }
 
 /** Serialize trackLikes Map → Record and broadcast to the room */
-function _broadcastLikes(
-  io: TypedServer,
-  roomId: string,
-  room: { trackLikes: Map<string, Set<string>> },
-): void {
+function _broadcastLikes(io: TypedServer, roomId: string, room: { trackLikes: Map<string, Set<string>> }): void {
   const trackLikes: Record<string, string[]> = {}
   for (const [trackId, userIds] of room.trackLikes) {
     trackLikes[trackId] = Array.from(userIds)

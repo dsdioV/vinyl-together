@@ -2,7 +2,7 @@ import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useVote } from '@/hooks/useVote'
 import { SERVER_URL } from '@/lib/config'
-import { cn } from '@/lib/utils'
+import { cn, getTrackCoverUrl } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 
@@ -27,7 +27,7 @@ const LYRIC_MASK_STYLE = {
  * 这些 CDN 不允许跨域请求，AMLL 的 WebGL 纹理加载会被 CORS 拦截
  */
 const PROXY_COVER_HOSTS = [
-  'y.gtimg.cn',        // QQ 音乐
+  'y.gtimg.cn', // QQ 音乐
   'imgessl.kugou.com', // 酷狗
 ]
 
@@ -54,13 +54,7 @@ interface AudioPlayerProps {
   chatUnreadCount: number
 }
 
-export function AudioPlayer({
-  onSeek,
-  onOpenChat,
-  onOpenQueue,
-  onOpenHistory,
-  chatUnreadCount,
-}: AudioPlayerProps) {
+export function AudioPlayer({ onSeek, onOpenChat, onOpenQueue, onOpenHistory, chatUnreadCount }: AudioPlayerProps) {
   const currentTrack = usePlayerStore((s) => s.currentTrack)
   const { activeVote, castVote, startVote, forceApprove, forceReject, dismissVote } = useVote()
   const bgFps = useSettingsStore((s) => s.bgFps)
@@ -68,12 +62,11 @@ export function AudioPlayer({
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
 
-
   // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
-  const proxiedCover = useMemo(
-    () => (currentTrack?.cover ? getProxiedCoverUrl(currentTrack.cover) : undefined),
-    [currentTrack?.cover],
-  )
+  const proxiedCover = useMemo(() => {
+    const coverUrl = currentTrack ? getTrackCoverUrl(currentTrack) : undefined
+    return coverUrl ? getProxiedCoverUrl(coverUrl) : undefined
+  }, [currentTrack])
 
   // Mobile: toggle between cover view and lyric view
   const [lyricExpanded, setLyricExpanded] = useState(false)
@@ -129,7 +122,13 @@ export function AudioPlayer({
                 {/* Vote banner: top of player, doesn't block controls */}
                 {activeVote && (
                   <div className="w-full shrink-0 px-2 pt-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} onDismiss={dismissVote} />
+                    <VoteBanner
+                      vote={activeVote}
+                      onCastVote={castVote}
+                      onForceApprove={forceApprove}
+                      onForceReject={forceReject}
+                      onDismiss={dismissVote}
+                    />
                   </div>
                 )}
 
@@ -172,24 +171,30 @@ export function AudioPlayer({
                 </div>
               </div>
             </LayoutGroup>
-          )
-
-          : (
+          ) : (
             // ---------------------------------------------------------------
             // Desktop layout: left panel (cover + info + controls) + right lyrics
             // ---------------------------------------------------------------
             <>
-              <div
-                className="relative flex w-[40%] flex-col items-center gap-[clamp(12px,3vh,32px)] transition-all duration-300"
-              >
+              <div className="relative flex w-[40%] flex-col items-center gap-[clamp(12px,3vh,32px)] transition-all duration-300">
                 {/* Vote banner: top of player, doesn't block controls */}
                 {activeVote && (
                   <div className="w-full shrink-0 px-2 pt-2">
-                    <VoteBanner vote={activeVote} onCastVote={castVote} onForceApprove={forceApprove} onForceReject={forceReject} onDismiss={dismissVote} />
+                    <VoteBanner
+                      vote={activeVote}
+                      onCastVote={castVote}
+                      onForceApprove={forceApprove}
+                      onForceReject={forceReject}
+                      onDismiss={dismissVote}
+                    />
                   </div>
                 )}
                 {/* 1. Cover — flex-1 fills remaining space, centered */}
-                <div ref={coverAreaRef} className="min-h-0 w-full flex-1 flex items-center justify-center" style={{ containerType: 'size' }}>
+                <div
+                  ref={coverAreaRef}
+                  className="min-h-0 w-full flex-1 flex items-center justify-center"
+                  style={{ containerType: 'size' }}
+                >
                   <NowPlaying />
                 </div>
                 {/* 2. Song info + action buttons */}

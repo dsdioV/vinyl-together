@@ -25,6 +25,7 @@ import { cleanupRoom as cleanupAuthRoom } from './authService.js'
 import { cleanupRoom as cleanupPlayerRoom } from './playerService.js'
 import { cleanupRoom as cleanupVoteRoom } from './voteService.js'
 import { cleanupRoomRejoinTickets } from './rejoinTicketService.js'
+import { localAudioService } from './localAudioService.js'
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -43,6 +44,11 @@ let pendingIO: TypedServer | null = null
 
 /** 清理房间所有关联数据 */
 export function deleteRoomData(roomId: string): void {
+  // Local audio files are intentionally ephemeral and owned by the room.
+  // Start filesystem cleanup before dropping the in-memory room reference.
+  void localAudioService.cleanupRoom(roomId).catch((error: unknown) => {
+    logger.error('Local audio room cleanup failed', error, { roomId })
+  })
   roomRepo.delete(roomId)
   chatRepo.deleteRoom(roomId)
   cleanupPlayerRoom(roomId)
@@ -65,10 +71,9 @@ export function scheduleDeletion(roomId: string, io?: TypedServer): void {
       return
     }
     const ttlMs = room.persistentTtlHours * 3_600_000
-    logger.info(
-      `Room ${roomId} is persistent, will be deleted in ${room.persistentTtlHours}h unless someone rejoins`,
-      { roomId },
-    )
+    logger.info(`Room ${roomId} is persistent, will be deleted in ${room.persistentTtlHours}h unless someone rejoins`, {
+      roomId,
+    })
     const timer = setTimeout(() => {
       const r = roomRepo.get(roomId)
       if (r && r.users.length === 0) {

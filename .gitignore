@@ -13,3 +13,4 @@ Thumbs.db
 /.sanshu-memory
 /.reasonix
 /.codegraph
+**/data/local-audio/

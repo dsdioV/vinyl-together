@@ -48,8 +48,17 @@
 | @neteasecloudmusicapienhanced/api | ^4.30.1 | 网易云 QR 登录 / Cookie 验证 / 用户信息                             |
 | qrcode                            | ^1.5.4  | QR 码生成（酷狗扫码登录，API 仅返回 URL 需服务端转 base64 DataURL） |
 | escape-html                       | ^1.0.3  | HTML 转义（防注入）                                                 |
-| p-limit                           | ^7.3.0  | 并发控制（封面批量解析）                                            |
+| p-limit                           | ^7.3.0  | 并发控制（外部 API 与全服本地音频媒体处理队列）                     |
 | lru-cache                         | ^11.2.6 | LRU 缓存（musicProvider 外部 API 结果缓存）                         |
+
+## 服务端运行时依赖
+
+| 工具    | 用途                                                        |
+| ------- | ----------------------------------------------------------- |
+| FFprobe | 检查本地上传的实际容器、编码、时长、码率与内嵌封面          |
+| FFmpeg  | 按房间音质转码 MP3/FLAC、生成 MP3 fallback 并提取 JPEG 封面 |
+
+生产 Docker 镜像已安装二者；直接运行 Node.js 服务时需自行安装，或通过 `LOCAL_AUDIO_FFPROBE_PATH` / `LOCAL_AUDIO_FFMPEG_PATH` 指定路径。
 
 ## Shared 核心依赖
 

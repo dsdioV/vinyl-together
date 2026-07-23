@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
-import { cn, trackKey } from '@/lib/utils'
+import { cn, toQueueTrackInput, trackKey } from '@/lib/utils'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
@@ -24,6 +24,7 @@ import { motion } from 'motion/react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { PlaylistDetail } from './Settings/PlaylistDetail'
+import { LocalAudioPanel } from './LocalAudioPanel'
 
 const EMPTY_QUEUE: Track[] = []
 
@@ -44,9 +45,19 @@ interface SearchDialogProps {
   onOpenChange: (open: boolean) => void
   onAddToQueue: (track: Track) => void
   onInsertAfterCurrent: (track: Track) => void
+  initialSection?: SearchDialogSection
 }
 
-export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCurrent }: SearchDialogProps) {
+export type SearchDialogSection = 'online' | 'local'
+
+export function SearchDialog({
+  open,
+  onOpenChange,
+  onAddToQueue,
+  onInsertAfterCurrent,
+  initialSection,
+}: SearchDialogProps) {
+  const [section, setSection] = useState<SearchDialogSection>('online')
   const [source, setSource] = useState<MusicSource>('netease')
   const { platformStatus, myStatus } = useAuth()
   const { preferredSearchPlatform } = usePlatformAutoSwitch(platformStatus, myStatus)
@@ -132,7 +143,16 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   // Re-measure after dialog opens (DOM may not be ready on first render)
   useEffect(() => {
     if (open) requestAnimationFrame(measurePill)
-  }, [open, measurePill])
+  }, [open, section, measurePill])
+
+  useEffect(() => {
+    if (!open || !initialSection) return
+    const frameId = requestAnimationFrame(() => {
+      setSection(initialSection)
+      if (initialSection === 'local') setSelectedAlbum(null)
+    })
+    return () => cancelAnimationFrame(frameId)
+  }, [initialSection, open])
 
   // Reset album detail when dialog closes
   useEffect(() => {
@@ -182,7 +202,7 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks, playlistName })
+      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks: tracks.map(toQueueTrackInput), playlistName })
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
@@ -269,9 +289,9 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         <ResponsiveDialogHeader>
           <div className="flex items-center gap-3">
             <ResponsiveDialogTitle className="shrink-0">
-              {selectedAlbum ? selectedAlbum.playlist.name : '搜索点歌'}
+              {selectedAlbum ? selectedAlbum.playlist.name : '点歌'}
             </ResponsiveDialogTitle>
-            {!selectedAlbum && (
+            {!selectedAlbum && section === 'online' && (
               <div ref={sourceContainerRef} className="bg-muted/50 relative flex items-center rounded-lg p-0.5">
                 <motion.div
                   className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
@@ -301,7 +321,29 @@ export function SearchDialog({ open, onOpenChange, onAddToQueue, onInsertAfterCu
         </ResponsiveDialogHeader>
 
         <ResponsiveDialogBody className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-          {selectedAlbum ? (
+          {!selectedAlbum && (
+            <Tabs
+              value={section}
+              onValueChange={(value) => {
+                const next = value as SearchDialogSection
+                setSection(next)
+                if (next === 'local') setSelectedAlbum(null)
+              }}
+            >
+              <TabsList className="w-full">
+                <TabsTrigger value="online" className="flex-1 text-xs sm:text-sm">
+                  在线音乐
+                </TabsTrigger>
+                <TabsTrigger value="local" className="flex-1 text-xs sm:text-sm">
+                  本地音频
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+
+          {section === 'local' && !selectedAlbum ? (
+            <LocalAudioPanel />
+          ) : selectedAlbum ? (
             <PlaylistDetail
               key={`${selectedAlbum.source}:${selectedAlbum.type}:${selectedAlbum.playlist.id}`}
               playlist={selectedAlbum.playlist}
