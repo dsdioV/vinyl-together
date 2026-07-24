@@ -108,20 +108,59 @@ async function resolveStreamUrl(
   urlId: string,
   bitrate: AudioQuality,
   cookie?: string,
-): Promise<string | null> {
-  const url = await musicProvider.getStreamUrl(source, urlId, bitrate, cookie)
-  if (url) return url
+): Promise<{ url: string | null; reason?: import('./musicProvider.js').StreamUrlFailureReason; detail?: string }> {
+  const primary = await musicProvider.getStreamUrlResult(source, urlId, bitrate, cookie)
+  if (primary.url) return primary
 
   // Fallback to lower bitrates
   for (const fallback of BITRATE_FALLBACKS[bitrate]) {
-    const fallbackUrl = await musicProvider.getStreamUrl(source, urlId, fallback, cookie)
-    if (fallbackUrl) {
+    const fallbackResult = await musicProvider.getStreamUrlResult(source, urlId, fallback, cookie)
+    if (fallbackResult.url) {
       logger.info(`Bitrate fallback: ${bitrate} -> ${fallback} for ${source}/${urlId}`)
-      return fallbackUrl
+      return fallbackResult
+    }
+    // Keep the most specific non-null reason from later attempts
+    if (fallbackResult.reason) {
+      primary.reason = fallbackResult.reason
+      primary.detail = fallbackResult.detail
     }
   }
 
-  return null
+  return primary
+}
+
+function streamFailureHint(
+  source: MusicSource,
+  reason: import('./musicProvider.js').StreamUrlFailureReason | undefined,
+  options: { isVip?: boolean; hasCookie?: boolean; detail?: string },
+): { hint: string; reasonType: 'VIP_REQUIRED' | 'COPYRIGHT_RESTRICTED' | 'NO_RESOURCE' | 'TIMEOUT' | 'UNKNOWN' } {
+  if (reason === 'timeout') {
+    return { hint: '（获取播放链接超时）', reasonType: 'TIMEOUT' }
+  }
+  if (reason === 'login_required' || (options.isVip && !options.hasCookie)) {
+    if (source === 'netease') {
+      return { hint: '（需要有用户在房间设置中登录网易云）', reasonType: 'VIP_REQUIRED' }
+    }
+    if (source === 'kugou') {
+      return { hint: '（酷狗播放链接获取失败，请尝试在房间设置中登录酷狗）', reasonType: 'VIP_REQUIRED' }
+    }
+    if (source === 'tencent') {
+      return { hint: '（需要有用户在房间设置中登录 QQ 音乐）', reasonType: 'VIP_REQUIRED' }
+    }
+    return { hint: '（需要登录后播放）', reasonType: 'VIP_REQUIRED' }
+  }
+  if (reason === 'vip_or_copyright' || options.isVip) {
+    return {
+      hint: options.hasCookie
+        ? '（版权或 VIP 限制，当前登录账号可能无权播放）'
+        : '（VIP / 版权受限，需要有用户登录对应平台账号）',
+      reasonType: 'COPYRIGHT_RESTRICTED',
+    }
+  }
+  if (options.detail) {
+    return { hint: `（${options.detail}）`, reasonType: 'NO_RESOURCE' }
+  }
+  return { hint: '', reasonType: 'UNKNOWN' }
 }
 
 /** Load the room-local registry lazily to avoid a module initialization cycle. */
@@ -185,18 +224,20 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
     try {
       // Get cookie from the room's pool for this platform (enables VIP access)
       const cookie = authService.getAnyCookie(onlineSource, roomId)
-      const url = await resolveStreamUrl(onlineSource, resolved.urlId, room.audioQuality, cookie ?? undefined)
+      const streamResult = await resolveStreamUrl(onlineSource, resolved.urlId, room.audioQuality, cookie ?? undefined)
+      const url = streamResult.url
 
       if (!url) {
         const isVip = resolved.vip
-        const isKugou = onlineSource === 'kugou'
-        let hint = ''
-        if (isVip && !cookie) {
-          hint = '（VIP 歌曲，需要有用户登录 VIP 账号）'
-        } else if (isKugou && !cookie) {
-          hint = '（酷狗播放链接获取失败，请尝试在房间设置中登录酷狗）'
-        }
-        logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, { roomId })
+        const { hint, reasonType } = streamFailureHint(onlineSource, streamResult.reason, {
+          isVip,
+          hasCookie: Boolean(cookie),
+          detail: streamResult.detail,
+        })
+        logger.warn(`Cannot get stream URL for "${resolved.title}"${hint}, removing from queue`, {
+          roomId,
+          reason: streamResult.reason,
+        })
 
         // -------------------------------------------------------------------
         // Auto fallback (netease <-> tencent)
@@ -219,20 +260,21 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
               fromSource,
               toSource,
               trackTitle,
-              reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
-              reasonDetail: isVip && !cookie ? 'VIP 歌曲未登录' : undefined,
+              reasonType,
+              reasonDetail: streamResult.detail,
             })
 
             try {
               const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
               if (best && best.track.source !== 'local') {
                 const cookie2 = authService.getAnyCookie(best.track.source, roomId)
-                const url2 = await resolveStreamUrl(
+                const streamResult2 = await resolveStreamUrl(
                   best.track.source,
                   best.track.urlId,
                   room.audioQuality,
                   cookie2 ?? undefined,
                 )
+                const url2 = streamResult2.url
                 if (url2) {
                   const replacement: Track = {
                     ...best.track,
@@ -288,7 +330,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                 fromSource,
                 toSource,
                 trackTitle,
-                reasonType: isVip && !cookie ? 'VIP_REQUIRED' : 'UNKNOWN',
+                reasonType,
               })
             }
           }

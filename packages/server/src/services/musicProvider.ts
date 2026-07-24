@@ -15,6 +15,7 @@ import {
   resolveKugouShortCode,
 } from './kugouShortCodeService.js'
 import { logger } from '../utils/logger.js'
+import { ensureNeteaseApiReady } from './neteaseApiBootstrap.js'
 
 /** AMLL LyricLine 格式（与 @applemusic-like-lyrics/core 一致，避免引入 client 依赖） */
 interface AmllLyricLine {
@@ -204,6 +205,63 @@ export class PlaylistSearchLimitError extends Error {
 // ---------------------------------------------------------------------------
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
 
+
+/** Why a stream URL lookup failed (or partially degraded). */
+export type StreamUrlFailureReason =
+  | 'login_required'
+  | 'vip_or_copyright'
+  | 'upstream_failed'
+  | 'timeout'
+
+export interface StreamUrlResult {
+  url: string | null
+  reason?: StreamUrlFailureReason
+  /** Human-readable detail for logs / optional UI. */
+  detail?: string
+  usedAnonymousCookie?: boolean
+  level?: string
+}
+
+/** Map room audio quality to Netease song_url_v1 level candidates (high → low). */
+export function neteaseLevelsForBitrate(bitrate: number): string[] {
+  if (bitrate >= 999) return ['lossless', 'exhigh', 'standard']
+  // 192/320 both map to exhigh first; song_url_v1 has no dedicated 192 tier.
+  if (bitrate >= 192) return ['exhigh', 'standard']
+  return ['standard']
+}
+
+function normalizeStreamUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  return url.startsWith('http://') ? url.replace(/^http:\/\//, 'https://') : url
+}
+
+function cookieFromNcmResponse(res: { body?: any; cookie?: unknown } | null | undefined): string | null {
+  if (!res) return null
+  const bodyCookie = res.body?.cookie
+  if (typeof bodyCookie === 'string' && bodyCookie.trim()) return bodyCookie.trim()
+  if (Array.isArray(bodyCookie) && bodyCookie.length > 0) {
+    return bodyCookie.map(String).join('; ')
+  }
+  const topCookie = res.cookie
+  if (typeof topCookie === 'string' && topCookie.trim()) return topCookie.trim()
+  if (Array.isArray(topCookie) && topCookie.length > 0) {
+    return topCookie.map(String).join('; ')
+  }
+  return null
+}
+
+function classifyNeteaseStreamFailure(entry: Record<string, any> | undefined, hadUserCookie: boolean): StreamUrlFailureReason {
+  if (!entry) return 'upstream_failed'
+  const fee = Number(entry.fee ?? 0)
+  const code = Number(entry.code ?? 0)
+  const freeTrial = Boolean(entry.freeTrialInfo) && entry.freeTrialInfo !== 'null'
+  if (!hadUserCookie && (fee === 1 || fee === 4 || freeTrial || code === -110)) {
+    return fee === 1 || fee === 4 || freeTrial ? 'login_required' : 'vip_or_copyright'
+  }
+  if (fee === 1 || fee === 4 || code === -110) return 'vip_or_copyright'
+  return 'upstream_failed'
+}
+
 export class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, MetingInstance>()
@@ -242,6 +300,10 @@ export class MusicProvider {
     max: 500,
     ttl: 24 * HOUR,
   })
+
+  /** Cached Netease guest cookie from register_anonimous (process-local). */
+  private neteaseAnonymousCookie: string | null = null
+  private neteaseAnonymousCookiePromise: Promise<string | null> | null = null
 
   /**
    * Playlist visibility can depend on the authenticated account. Keep indexes
@@ -686,18 +748,29 @@ export class MusicProvider {
 
   /**
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
-   * When cookie is provided, a fresh Meting instance is created to avoid
-   * polluting the shared cached instance — and the result is NOT cached
-   * because VIP URLs are user-specific.
+   * Netease uses song_url_v1 (Enhanced API); Kugou uses kugouAuth; others still use Meting.
    */
   async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320, cookie?: string): Promise<string | null> {
+    const result = await this.getStreamUrlResult(source, urlId, bitrate, cookie)
+    return result.url
+  }
+
+  /**
+   * Detailed stream URL resolution with failure reason for better client hints.
+   */
+  async getStreamUrlResult(
+    source: MusicSource,
+    urlId: string,
+    bitrate: number = 320,
+    cookie?: string,
+  ): Promise<StreamUrlResult> {
     // Skip cache when cookie is provided (VIP URLs are user-specific)
     if (!cookie) {
       const cacheKey = `${source}:${urlId}:${bitrate}`
       const cached = this.streamUrlCache.get(cacheKey)
       if (cached) {
         logger.info(`Stream URL cache hit: ${source}/${urlId}`)
-        return cached
+        return { url: cached }
       }
     }
 
@@ -707,18 +780,25 @@ export class MusicProvider {
     if (source === 'kugou') {
       try {
         const result = await kugouAuth.getPlayUrl(urlId, cookie)
-        let url = result.url || null
-        if (url?.startsWith('http://')) {
-          url = url.replace(/^http:\/\//, 'https://')
-        }
+        const url = normalizeStreamUrl(result.url || null)
         if (!cookie && url) {
           this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
         }
         return url
+          ? { url }
+          : {
+              url: null,
+              reason: cookie ? 'upstream_failed' : 'login_required',
+              detail: cookie ? '酷狗未返回播放链接' : '酷狗播放链接获取失败，可能需要登录',
+            }
       } catch (err) {
         logger.error(`Kugou getPlayUrl failed for ${urlId}:`, err)
-        return null
+        return { url: null, reason: 'upstream_failed', detail: '酷狗播放链接请求异常' }
       }
+    }
+
+    if (source === 'netease') {
+      return this.getNeteaseStreamUrlResult(urlId, bitrate, cookie)
     }
 
     try {
@@ -733,27 +813,144 @@ export class MusicProvider {
       const raw = await withTimeout(meting.url(urlId, bitrate))
       if (raw === null || raw === undefined) {
         logger.warn(`URL fetch timeout for ${source}: ${urlId}`)
-        return null
+        return { url: null, reason: 'timeout', detail: '获取播放链接超时' }
       }
       let data: MetingJson
       try {
         data = JSON.parse(raw as string) as MetingJson
       } catch {
-        return null
+        return { url: null, reason: 'upstream_failed', detail: '播放链接响应无法解析' }
       }
-      let url = (data.url as string) || null
-      if (url?.startsWith('http://')) {
-        url = url.replace(/^http:\/\//, 'https://')
-      }
+      const url = normalizeStreamUrl((data.url as string) || null)
 
       if (!cookie && url) {
         this.streamUrlCache.set(`${source}:${urlId}:${bitrate}`, url)
       }
 
-      return url
+      if (url) return { url }
+      return {
+        url: null,
+        reason: cookie ? 'vip_or_copyright' : 'login_required',
+        detail: '平台未返回可用播放链接',
+      }
     } catch (err) {
       logger.error(`Get URL failed for ${source}:`, err)
-      return null
+      return { url: null, reason: 'upstream_failed', detail: '获取播放链接失败' }
+    }
+  }
+
+  private async getNeteaseAnonymousCookie(): Promise<string | null> {
+    if (this.neteaseAnonymousCookie) return this.neteaseAnonymousCookie
+    if (this.neteaseAnonymousCookiePromise) return this.neteaseAnonymousCookiePromise
+
+    this.neteaseAnonymousCookiePromise = (async () => {
+      try {
+        const res = await withTimeout((ncmApi as any).register_anonimous({ timestamp: Date.now() }))
+        if (!res) {
+          logger.warn('Netease register_anonimous timed out')
+          return null
+        }
+        const cookie = cookieFromNcmResponse(res)
+        if (cookie) {
+          this.neteaseAnonymousCookie = cookie
+          logger.info('Netease anonymous cookie registered')
+          return cookie
+        }
+        logger.warn('Netease register_anonimous returned no cookie', {
+          code: (res as any)?.body?.code,
+        })
+        return null
+      } catch (err) {
+        logger.error('Netease register_anonimous failed', err)
+        return null
+      } finally {
+        this.neteaseAnonymousCookiePromise = null
+      }
+    })()
+
+    return this.neteaseAnonymousCookiePromise
+  }
+
+  private async getNeteaseStreamUrlResult(
+    urlId: string,
+    bitrate: number,
+    cookie?: string,
+  ): Promise<StreamUrlResult> {
+    await ensureNeteaseApiReady()
+    const levels = neteaseLevelsForBitrate(bitrate)
+    let usedAnonymousCookie = false
+    let activeCookie = cookie?.trim() || ''
+
+    if (!activeCookie) {
+      const anon = await this.getNeteaseAnonymousCookie()
+      if (anon) {
+        activeCookie = anon
+        usedAnonymousCookie = true
+      }
+    }
+
+    let lastEntry: Record<string, any> | undefined
+    let sawTimeout = false
+
+    for (const level of levels) {
+      try {
+        const params: Record<string, unknown> = {
+          id: urlId,
+          level,
+          timestamp: Date.now(),
+        }
+        if (activeCookie) params.cookie = activeCookie
+
+        const res = await withTimeout((ncmApi as any).song_url_v1(params))
+        if (!res) {
+          sawTimeout = true
+          logger.warn(`Netease song_url_v1 timeout: ${urlId} level=${level}`)
+          continue
+        }
+
+        const body = (res as any).body
+        const entry = body?.data?.[0] as Record<string, any> | undefined
+        lastEntry = entry
+        const url = normalizeStreamUrl(entry?.url ? String(entry.url) : null)
+        if (url) {
+          if (!cookie) {
+            this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, url)
+          }
+          logger.info(`Netease song_url_v1 ok: ${urlId} level=${level} anon=${usedAnonymousCookie}`)
+          return { url, usedAnonymousCookie, level }
+        }
+
+        logger.warn(`Netease song_url_v1 empty url: ${urlId} level=${level}`, {
+          code: body?.code,
+          fee: entry?.fee,
+          songCode: entry?.code,
+          freeTrial: Boolean(entry?.freeTrialInfo),
+        })
+      } catch (err) {
+        logger.error(`Netease song_url_v1 failed for ${urlId} level=${level}`, err)
+      }
+    }
+
+    if (sawTimeout && !lastEntry) {
+      return {
+        url: null,
+        reason: 'timeout',
+        detail: '网易云播放链接请求超时',
+        usedAnonymousCookie,
+      }
+    }
+
+    const reason = classifyNeteaseStreamFailure(lastEntry, Boolean(cookie))
+    return {
+      url: null,
+      reason,
+      detail:
+        reason === 'login_required'
+          ? '网易云需要登录后才能播放该歌曲'
+          : reason === 'vip_or_copyright'
+            ? '网易云版权或 VIP 限制，无法获取播放链接'
+            : '网易云未返回可用播放链接',
+      usedAnonymousCookie,
     }
   }
 

@@ -17,6 +17,7 @@ import roomRoutes from './routes/rooms.js'
 import localAudioRoutes from './routes/localAudio.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
 import { localAudioService } from './services/localAudioService.js'
+import { ensureNeteaseApiReady } from './services/neteaseApiBootstrap.js'
 import { logger } from './utils/logger.js'
 
 const app = express()
@@ -113,6 +114,7 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
 })
 
 await localAudioService.initialize()
+await ensureNeteaseApiReady()
 
 httpServer.listen(config.port, () => {
   logger.info(`Server running on http://localhost:${config.port}`)
