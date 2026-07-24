@@ -12,6 +12,7 @@ import { SearchDialog, type SearchDialogSection } from '@/components/Overlays/Se
 import { QueueDrawer } from '@/components/Overlays/QueueDrawer'
 import { HistoryDrawer } from '@/components/Overlays/HistoryDrawer'
 import { SettingsDialog, type SettingsTab } from '@/components/Overlays/SettingsDialog'
+import { LocalAudioDropOverlay } from '@/components/Overlays/LocalAudioDropOverlay'
 import { PasswordDialog } from '@/components/Lobby/PasswordDialog'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { AbilityProvider } from '@/providers/AbilityProvider'
 import { useClockSync } from '@/hooks/useClockSync'
+import { useLocalAudioFileQueue } from '@/hooks/useLocalAudioFileQueue'
 import { storage } from '@/lib/storage'
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
@@ -49,6 +51,7 @@ export default function RoomPage() {
   const { addTrack, insertAfterCurrent, removeTrack, reorderTracks, clearQueue } = useQueue()
 
   const room = useRoomStore((s) => s.room)
+  const currentUser = useRoomStore((s) => s.currentUser)
   const chatOpen = useChatStore((s) => s.isChatOpen)
   const setChatOpen = useChatStore((s) => s.setIsChatOpen)
   const chatUnreadCount = useChatStore((s) => s.unreadCount)
@@ -73,6 +76,7 @@ export default function RoomPage() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab | undefined>(undefined)
+  const enqueueLocalAudioFiles = useLocalAudioFileQueue()
 
   // Fallback password dialog state (edge case: password changed after pre-check)
   const [passwordNeeded, setPasswordNeeded] = useState(false)
@@ -272,6 +276,19 @@ export default function RoomPage() {
     setSearchOpen(true)
   }, [])
 
+  const handleDroppedLocalAudioFiles = useCallback(
+    (files: File[]) => {
+      const result = enqueueLocalAudioFiles(files)
+      if (!result.hasFiles || !result.canUpload) return
+      setQueueOpen(false)
+      setHistoryOpen(false)
+      setSettingsOpen(false)
+      setSearchInitialSection('local')
+      setSearchOpen(true)
+    },
+    [enqueueLocalAudioFiles],
+  )
+
   const handleLeaveRoom = useCallback(() => {
     isLeavingRef.current = true
     leaveRoom()
@@ -319,6 +336,7 @@ export default function RoomPage() {
         transition={{ duration: 0.2 }}
       >
         <div className="flex h-dvh flex-col bg-background">
+          <LocalAudioDropOverlay enabled={Boolean(room?.id && currentUser)} onFiles={handleDroppedLocalAudioFiles} />
           <RoomHeader
             onOpenSearch={handleOpenSearch}
             onOpenSettings={() => setSettingsOpen(true)}

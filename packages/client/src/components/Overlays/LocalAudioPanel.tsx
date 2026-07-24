@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn, resolveLocalAudioMediaUrl } from '@/lib/utils'
 import { formatDuration } from '@/lib/format'
-import { exceedsLocalAudioUploadLimit } from '@/lib/localAudioUploadPolicy'
+import { formatLocalAudioBytes, LOCAL_AUDIO_ACCEPT_ATTRIBUTE } from '@/lib/localAudioFiles'
 import {
   cancelLocalAudioTask,
   isLocalAudioTerminal,
@@ -19,6 +19,7 @@ import {
   localAudioStatusProgress,
 } from '@/lib/localAudioProtocol'
 import { abortActiveLocalAudioUpload } from '@/hooks/room/useLocalAudioSync'
+import { useLocalAudioFileQueue } from '@/hooks/useLocalAudioFileQueue'
 import { getVisibleLocalAudioTasks, useLocalAudioStore, type LocalAudioClientTask } from '@/stores/localAudioStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -28,34 +29,13 @@ import { Check, FileAudio, Loader2, Music2, Pencil, Plus, Search, Trash2, Upload
 import { useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
-const ACCEPTED_EXTENSIONS = ['.mp3', '.m4a', '.mp4', '.flac', '.wav', '.aiff', '.aif', '.ogg', '.oga', '.opus', '.webm']
-const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(',')
-
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KiB', 'MiB', 'GiB']
-  let value = bytes / 1024
-  let unit = units[0]
-  for (let i = 0; i < units.length - 1 && value >= 1024; i += 1) {
-    value /= 1024
-    unit = units[i + 1]
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
-}
-
 function formatAssetMeta(asset: LocalAudioAsset): string {
   const artists = asset.artist.length > 0 ? asset.artist.join(' / ') : '未知艺术家'
   const duration = asset.duration > 0 ? formatDuration(asset.duration) : '--:--'
   const bitrate = asset.bitrate ? ` · ${asset.bitrate} kbps` : ''
   const output =
     asset.primaryFormat === 'flac' && asset.hasFallback ? 'FLAC · MP3 兼容' : asset.primaryFormat.toUpperCase()
-  return `${artists} · ${duration} · ${output}${bitrate} · ${formatBytes(asset.sizeBytes)}`
-}
-
-function isAllowedFile(file: File): boolean {
-  const name = file.name.toLowerCase()
-  return ACCEPTED_EXTENSIONS.some((extension) => name.endsWith(extension))
+  return `${artists} · ${duration} · ${output}${bitrate} · ${formatLocalAudioBytes(asset.sizeBytes)}`
 }
 
 interface LocalAudioAssetRowProps {
@@ -331,11 +311,12 @@ export function LocalAudioPanel() {
   const usage = useLocalAudioStore((state) => state.usage)
   const loading = useLocalAudioStore((state) => state.loading)
   const error = useLocalAudioStore((state) => state.error)
-  const enqueueFiles = useLocalAudioStore((state) => state.enqueueFiles)
+  const addToQueue = useLocalAudioStore((state) => state.addToQueueAfterUpload)
+  const setAddToQueue = useLocalAudioStore((state) => state.setAddToQueueAfterUpload)
   const updateTask = useLocalAudioStore((state) => state.updateTask)
   const setError = useLocalAudioStore((state) => state.setError)
+  const enqueueLocalAudioFiles = useLocalAudioFileQueue()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [addToQueue, setAddToQueue] = useState(true)
   const [search, setSearch] = useState('')
   const [sortMode, setSortMode] = useState<'recent' | 'title' | 'duration' | 'size'>('recent')
   const [deleteTarget, setDeleteTarget] = useState<LocalAudioAsset | null>(null)
@@ -373,28 +354,8 @@ export function LocalAudioPanel() {
   }, [assets, search, sortMode])
 
   const handleFiles = (fileList: FileList | null) => {
-    if (!fileList || !currentUser) return
-    const files = Array.from(fileList)
-    const accepted: File[] = []
-    for (const file of files) {
-      if (maxUploadBytes !== undefined && exceedsLocalAudioUploadLimit(file.size, maxUploadBytes)) {
-        toast.error(`「${file.name}」超过 ${formatBytes(maxUploadBytes)} 上限`)
-        continue
-      }
-      if (!isAllowedFile(file)) {
-        toast.error(`「${file.name}」格式不受支持`)
-        continue
-      }
-      accepted.push(file)
-    }
-    if (accepted.length > 0) {
-      enqueueFiles(accepted, {
-        ownerId: currentUser.id,
-        ownerNickname: currentUser.nickname,
-        addToQueue,
-      })
-      toast.success(`已加入 ${accepted.length} 个上传任务`)
-    }
+    if (!fileList) return
+    enqueueLocalAudioFiles(fileList)
     if (inputRef.current) inputRef.current.value = ''
   }
 
@@ -453,7 +414,7 @@ export function LocalAudioPanel() {
 
   const usageLabel =
     usage?.roomBytes !== undefined && usage.roomLimitBytes
-      ? `${formatBytes(usage.roomBytes)} / ${formatBytes(usage.roomLimitBytes)}`
+      ? `${formatLocalAudioBytes(usage.roomBytes)} / ${formatLocalAudioBytes(usage.roomLimitBytes)}`
       : null
   const usagePercent =
     usage?.roomBytes !== undefined && usage.roomLimitBytes
@@ -477,7 +438,7 @@ export function LocalAudioPanel() {
             ref={inputRef}
             type="file"
             multiple
-            accept={ACCEPT_ATTRIBUTE}
+            accept={LOCAL_AUDIO_ACCEPT_ATTRIBUTE}
             className="sr-only"
             onChange={(event) => handleFiles(event.target.files)}
           />
@@ -595,7 +556,7 @@ export function LocalAudioPanel() {
       </div>
       <p className="shrink-0 text-[10px] text-muted-foreground">
         支持 MP3、M4A/MP4 (AAC/ALAC)、FLAC、PCM/Float WAV、PCM/Float AIFF、Ogg/WebM (Vorbis/Opus)；单文件上限{' '}
-        {maxUploadBytes === undefined ? '以服务器配置为准' : formatBytes(maxUploadBytes)}。
+        {maxUploadBytes === undefined ? '以服务器配置为准' : formatLocalAudioBytes(maxUploadBytes)}。
       </p>
 
       <Dialog

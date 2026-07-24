@@ -80,6 +80,29 @@ describe('localAudioStore upload ownership', () => {
     useLocalAudioStore.getState().setRoom('room-b')
     expect(useLocalAudioStore.getState()).toMatchObject({ roomId: 'room-b', assets: [], tasks: [] })
   })
+
+  it('preserves selected file order and the shared add-to-queue preference', () => {
+    const first = new File(['one'], 'first.mp3')
+    const second = new File(['two'], 'second.flac')
+    useLocalAudioStore.getState().setAddToQueueAfterUpload(false)
+
+    useLocalAudioStore.getState().enqueueFiles([first, second], {
+      ownerId: 'user-1',
+      ownerNickname: 'Uploader',
+      addToQueue: useLocalAudioStore.getState().addToQueueAfterUpload,
+    })
+
+    expect(useLocalAudioStore.getState().tasks).toEqual([
+      expect.objectContaining({ originalFileName: 'first.mp3', file: first, addToQueue: false }),
+      expect.objectContaining({ originalFileName: 'second.flac', file: second, addToQueue: false }),
+    ])
+  })
+
+  it('resets the add-to-queue preference when entering another room', () => {
+    useLocalAudioStore.getState().setAddToQueueAfterUpload(false)
+    useLocalAudioStore.getState().setRoom('room-b')
+    expect(useLocalAudioStore.getState().addToQueueAfterUpload).toBe(true)
+  })
 })
 
 describe('localAudioStore task visibility', () => {

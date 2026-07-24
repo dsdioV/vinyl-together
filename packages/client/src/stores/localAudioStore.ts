@@ -24,10 +24,12 @@ interface LocalAudioStore {
   usage: LocalAudioUsage | null
   loading: boolean
   error: string | null
+  addToQueueAfterUpload: boolean
 
   setRoom: (roomId: string | null) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  setAddToQueueAfterUpload: (addToQueue: boolean) => void
   setSnapshot: (roomId: string, snapshot: LocalAudioState) => void
   upsertAsset: (asset: LocalAudioAsset) => void
   removeAsset: (assetId: string) => void
@@ -45,6 +47,7 @@ const initialState = {
   usage: null as LocalAudioUsage | null,
   loading: false,
   error: null as string | null,
+  addToQueueAfterUpload: true,
 }
 
 function isTerminalTask(task: Pick<LocalAudioTask, 'stage'>): boolean {
@@ -77,6 +80,7 @@ export const useLocalAudioStore = create<LocalAudioStore>((set) => ({
   setRoom: (roomId) => set((state) => (state.roomId === roomId ? {} : { ...initialState, roomId })),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
+  setAddToQueueAfterUpload: (addToQueueAfterUpload) => set({ addToQueueAfterUpload }),
 
   setSnapshot: (roomId, snapshot) =>
     set((state) => {
