@@ -255,6 +255,8 @@ function classifyNeteaseStreamFailure(entry: Record<string, any> | undefined, ha
   const fee = Number(entry.fee ?? 0)
   const code = Number(entry.code ?? 0)
   const freeTrial = Boolean(entry.freeTrialInfo) && entry.freeTrialInfo !== 'null'
+  // 404 from player/url often means region/account/source restriction rather than a missing track id.
+  if (code === 404) return hadUserCookie ? 'vip_or_copyright' : 'login_required'
   if (!hadUserCookie && (fee === 1 || fee === 4 || freeTrial || code === -110)) {
     return fee === 1 || fee === 4 || freeTrial ? 'login_required' : 'vip_or_copyright'
   }
@@ -931,6 +933,21 @@ export class MusicProvider {
       }
     }
 
+    // Production IPs are often blocked by plain song_url_v1 (songCode 404) even for
+    // free tracks. Enhanced's song_url_match can still recover a playable URL.
+    const matched = await this.getNeteaseMatchedStreamUrl(urlId, activeCookie || undefined)
+    if (matched.url) {
+      if (!cookie) {
+        this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, matched.url)
+      }
+      logger.info(`Netease song_url_match ok: ${urlId}`)
+      return {
+        url: matched.url,
+        usedAnonymousCookie,
+        level: matched.level ?? 'match',
+      }
+    }
+
     if (sawTimeout && !lastEntry) {
       return {
         url: null,
@@ -952,6 +969,48 @@ export class MusicProvider {
             : '网易云未返回可用播放链接',
       usedAnonymousCookie,
     }
+  }
+
+  private async getNeteaseMatchedStreamUrl(
+    urlId: string,
+    cookie?: string,
+  ): Promise<{ url: string | null; level?: string }> {
+    try {
+      const params: Record<string, unknown> = {
+        id: urlId,
+        timestamp: Date.now(),
+      }
+      if (cookie) params.cookie = cookie
+
+      // Preferred Enhanced endpoint for unlock/match recovery.
+      if (typeof (ncmApi as any).song_url_match === 'function') {
+        const res = await withTimeout((ncmApi as any).song_url_match(params))
+        const body = (res as any)?.body
+        const fromDataField = typeof body?.data === 'string' ? body.data : null
+        const fromArray = Array.isArray(body?.data) ? body.data[0]?.url : null
+        const url = normalizeStreamUrl(fromDataField || fromArray || body?.url || null)
+        if (url) return { url, level: 'match' }
+      }
+
+      // Fallback: song_url_v1 with unblock=true (uses Enhanced unblockmusic-utils).
+      for (const level of ['exhigh', 'standard'] as const) {
+        const res = await withTimeout(
+          (ncmApi as any).song_url_v1({
+            id: urlId,
+            level,
+            unblock: 'true',
+            timestamp: Date.now(),
+            ...(cookie ? { cookie } : {}),
+          }),
+        )
+        const entry = (res as any)?.body?.data?.[0]
+        const url = normalizeStreamUrl(entry?.url ? String(entry.url) : null)
+        if (url) return { url, level: `match:${level}` }
+      }
+    } catch (err) {
+      logger.error(`Netease song_url_match failed for ${urlId}`, err)
+    }
+    return { url: null }
   }
 
   async getLyric(

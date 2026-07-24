@@ -5,6 +5,7 @@ const ncmApiMock = vi.hoisted(() => ({
   playlist_track_all: vi.fn(),
   song_detail: vi.fn(),
   song_url_v1: vi.fn(),
+  song_url_match: vi.fn(),
   register_anonimous: vi.fn(),
 }))
 
@@ -125,6 +126,7 @@ describe('MusicProvider netease stream resolution', () => {
         data: [{ url: null, fee: 1, code: 200, freeTrialInfo: { start: 0, end: 30 } }],
       },
     })
+    ncmApiMock.song_url_match.mockResolvedValue({ body: { code: 200, data: null } })
 
     const result = await provider.getStreamUrlResult('netease', '347230', 320)
 
@@ -140,10 +142,32 @@ describe('MusicProvider netease stream resolution', () => {
         data: [{ url: null, fee: 1, code: -110 }],
       },
     })
+    ncmApiMock.song_url_match.mockResolvedValue({ body: { code: 200, data: null } })
 
     const result = await provider.getStreamUrlResult('netease', '347230', 320, 'MUSIC_U=vip')
 
     expect(result.url).toBeNull()
     expect(result.reason).toBe('vip_or_copyright')
+  })
+
+  it('falls back to song_url_match when plain song_url_v1 returns empty/404', async () => {
+    ncmApiMock.song_url_v1.mockResolvedValue({
+      body: {
+        code: 200,
+        data: [{ url: null, fee: 0, code: 404 }],
+      },
+    })
+    ncmApiMock.song_url_match.mockResolvedValue({
+      body: {
+        code: 200,
+        data: 'https://m801.music.126.net/matched.flac',
+      },
+    })
+
+    const result = await provider.getStreamUrlResult('netease', '2005125394', 320)
+
+    expect(result.url).toBe('https://m801.music.126.net/matched.flac')
+    expect(result.level).toBe('match')
+    expect(ncmApiMock.song_url_match).toHaveBeenCalled()
   })
 })
