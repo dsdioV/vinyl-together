@@ -63,6 +63,8 @@ export interface Track {
   source: TrackSource
   sourceId: string
   urlId: string
+  /** QQ 音乐媒体文件 ID（用于拼接播放链接文件名，与 urlId 的歌曲 mid 不一定相同） */
+  mediaMid?: string
   /** Room-local asset identifier; present only for local tracks. */
   assetId?: string
   lyricId?: string

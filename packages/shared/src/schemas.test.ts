@@ -158,6 +158,11 @@ describe('local audio queue input schemas', () => {
     expect(defaultQueueAddSchema.parse({ track: externalTrack }).track).toEqual(externalTrack)
   })
 
+  it('keeps mediaMid so QQ stream URLs can be resolved later', () => {
+    const parsed = queueAddSchema.parse({ track: { ...externalTrack, mediaMid: 'REALMEDIA' } })
+    expect(parsed.track).toMatchObject({ mediaMid: 'REALMEDIA' })
+  })
+
   it.each([
     { source: 'local' },
     { source: 'local', assetId: '' },

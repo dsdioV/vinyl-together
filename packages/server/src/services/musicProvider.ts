@@ -137,6 +137,8 @@ interface TencentSearchSong {
 
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
+/** QQ 音乐 CDN fallback：vkey 响应未携带 sip 时使用。 */
+const TENCENT_STREAM_FALLBACK_DOMAIN = 'https://isure.stream.qqmusic.qq.com/'
 /** Independent safety ceiling for ordinary full-playlist fetches. */
 const PLAYLIST_FETCH_HARD_MAX_TRACKS = 100_000
 /** Leave headroom beyond one maximum-size playlist so unrelated tracks remain cached. */
@@ -228,6 +230,48 @@ export function neteaseLevelsForBitrate(bitrate: number): string[] {
   // 192/320 both map to exhigh first; song_url_v1 has no dedicated 192 tier.
   if (bitrate >= 192) return ['exhigh', 'standard']
   return ['standard']
+}
+
+/** QQ 音乐文件类型：前缀 + 扩展名，文件名形如 M800<media_mid>.mp3。 */
+interface TencentFileType {
+  code: string
+  ext: string
+}
+
+/**
+ * Map room audio quality to QQ Music vkey filename candidates (high → low).
+ * The vkey endpoint only grants a tier when the account/IP is allowed; higher
+ * tiers usually need a logged-in cookie (e.g. M800 320kbps).
+ */
+export function tencentFileCandidatesForBitrate(bitrate: number): TencentFileType[] {
+  if (bitrate >= 999) {
+    return [
+      { code: 'F000', ext: '.flac' },
+      { code: 'M800', ext: '.mp3' },
+      { code: 'C600', ext: '.m4a' },
+      { code: 'M500', ext: '.mp3' },
+    ]
+  }
+  if (bitrate >= 320) {
+    return [
+      { code: 'M800', ext: '.mp3' },
+      { code: 'C600', ext: '.m4a' },
+      { code: 'M500', ext: '.mp3' },
+      { code: 'C400', ext: '.m4a' },
+    ]
+  }
+  if (bitrate >= 192) {
+    return [
+      { code: 'C600', ext: '.m4a' },
+      { code: 'M500', ext: '.mp3' },
+      { code: 'C400', ext: '.m4a' },
+    ]
+  }
+  return [
+    { code: 'M500', ext: '.mp3' },
+    { code: 'C400', ext: '.m4a' },
+    { code: 'C200', ext: '.m4a' },
+  ]
 }
 
 function normalizeStreamUrl(url: string | null | undefined): string | null {
@@ -352,6 +396,7 @@ export class MusicProvider {
           cover: existing.cover || meta.cover,
           duration: existing.duration || meta.duration,
           vip: existing.vip || meta.vip,
+          mediaMid: existing.mediaMid || meta.mediaMid,
         }
         this.trackRegistry.set(key, merged)
       } else {
@@ -462,6 +507,7 @@ export class MusicProvider {
         urlId: song.mid,
         lyricId: song.mid,
         picId: song.album?.mid || '',
+        mediaMid: song.file?.media_mid || '',
         // VIP 判断: pay_month=1 月度会员, pay_down=1 付费下载, msgpay>0 VIP 标志
         vip: song.pay?.pay_month === 1 || song.pay?.pay_down === 1 || (song.action?.msgpay ?? 0) > 0,
       }))
@@ -803,6 +849,10 @@ export class MusicProvider {
       return this.getNeteaseStreamUrlResult(urlId, bitrate, cookie)
     }
 
+    if (source === 'tencent') {
+      return this.getTencentStreamUrlResult(urlId, bitrate, cookie)
+    }
+
     try {
       let meting: MetingInstance
       if (cookie) {
@@ -1011,6 +1061,186 @@ export class MusicProvider {
       logger.error(`Netease song_url_match failed for ${urlId}`, err)
     }
     return { url: null }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tencent (QQ 音乐) stream resolution — vkey 新接口
+  // ---------------------------------------------------------------------------
+
+  /**
+   * QQ Music 已限制旧版 `vkey.GetVkeyServer`（@meting/core 所用）返回空结果。
+   * 当前可用的是 musicu.fcg 的 `music.vkey.GetVkey` / `UrlGetVkey`：匿名请求只能解锁
+   * 128kbps 档位，更高音质与 VIP 曲目需要登录 cookie。
+   */
+  private async getTencentStreamUrlResult(
+    urlId: string,
+    bitrate: number,
+    cookie?: string,
+  ): Promise<StreamUrlResult> {
+    const candidates = tencentFileCandidatesForBitrate(bitrate)
+    const uin = cookie?.match(/uin=(\d+)/)?.[1] ?? '0'
+
+    // media_mid 与歌曲 mid 常常不同。优先使用 Track 上携带的值（注册表），
+    // 回退到歌曲 mid 本身，两者都失败才重新拉取歌曲详情。
+    const registryMediaMid = this.trackRegistry.get(`tencent:${urlId}`)?.mediaMid || urlId
+
+    const first = await this.callTencentVkey(urlId, registryMediaMid, candidates, uin, cookie)
+    if (first.url) {
+      if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, first.url)
+      return first
+    }
+    if (first.reason === 'timeout') return first
+
+    // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
+    const detailMediaMid = await this.fetchTencentMediaMid(urlId)
+    if (detailMediaMid && detailMediaMid !== registryMediaMid) {
+      const retry = await this.callTencentVkey(urlId, detailMediaMid, candidates, uin, cookie)
+      if (retry.url) {
+        if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, retry.url)
+        return retry
+      }
+      if (retry.reason === 'timeout') return retry
+      if (retry.upstreamCode) first.upstreamCode = retry.upstreamCode
+    }
+
+    const denied = first.upstreamCode === 104003 || first.upstreamCode === 104013
+    return {
+      url: null,
+      reason: denied ? (cookie ? 'vip_or_copyright' : 'login_required') : 'upstream_failed',
+      detail: denied
+        ? cookie
+          ? 'QQ 音乐版权或 VIP 限制，无法获取播放链接'
+          : 'QQ 音乐需要登录后才能播放该歌曲'
+        : 'QQ 音乐未返回可用播放链接',
+    }
+  }
+
+  /** 针对给定 media_mid 调用一次当前 QQ 音乐 vkey 接口。 */
+  private async callTencentVkey(
+    songMid: string,
+    mediaMid: string,
+    candidates: TencentFileType[],
+    uin: string,
+    cookie?: string,
+  ): Promise<StreamUrlResult & { upstreamCode?: number }> {
+    const filenames = candidates.map((c) => `${c.code}${mediaMid}${c.ext}`)
+    const payload = {
+      comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+      req: {
+        module: 'music.vkey.GetVkey',
+        method: 'UrlGetVkey',
+        param: {
+          uin,
+          filename: filenames,
+          guid: String(Math.floor(1e9 + Math.random() * 9e9)),
+          songmid: filenames.map(() => songMid),
+          songtype: filenames.map(() => 0),
+          ctx: 0,
+        },
+      },
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Referer: 'https://y.qq.com',
+      'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+    }
+    if (cookie) headers.Cookie = cookie
+
+    try {
+      const response = await withTimeout(
+        fetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+
+      if (!response) {
+        logger.warn(`Tencent vkey timeout: ${songMid} media=${mediaMid}`)
+        return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
+      }
+
+      const data = (response as any)?.req?.data
+      const urlinfo: Array<Record<string, any>> = Array.isArray(data?.midurlinfo) ? data.midurlinfo : []
+      let upstreamCode = 0
+      for (const entry of urlinfo) {
+        const result = Number(entry?.result ?? 0)
+        if (result !== 0) {
+          if (upstreamCode === 0) upstreamCode = result
+          continue
+        }
+        const purl = typeof entry?.purl === 'string' ? entry.purl : ''
+        if (purl) {
+          const sip =
+            Array.isArray(data?.sip) && data.sip.length > 0
+              ? String(data.sip[0])
+              : TENCENT_STREAM_FALLBACK_DOMAIN
+          const url = normalizeStreamUrl(`${sip}${purl}`)
+          if (url) {
+            logger.info(`Tencent vkey ok: ${songMid} media=${mediaMid} uin=${uin || 'anon'}`)
+            return { url }
+          }
+        }
+      }
+
+      logger.warn(`Tencent vkey empty: ${songMid} media=${mediaMid}`, {
+        code: (response as any)?.req?.code,
+        upstreamCode,
+      })
+      return {
+        url: null,
+        reason: 'upstream_failed',
+        detail: 'QQ 音乐未返回可用播放链接',
+        upstreamCode,
+      }
+    } catch (err) {
+      logger.error(`Tencent vkey failed for ${songMid}:`, err)
+      return { url: null, reason: 'upstream_failed', detail: 'QQ 音乐播放链接请求异常' }
+    }
+  }
+
+  /**
+   * 通过当前可用的 track-info 接口获取 media_mid。
+   * 旧版 UniformRuleClass 已被风控（500003），UniformRuleCtrl 是现行客户端使用的模块。
+   */
+  private async fetchTencentMediaMid(mid: string): Promise<string | null> {
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+        'music.trackInfo.UniformRuleCtrl': {
+          module: 'music.trackInfo.UniformRuleCtrl',
+          method: 'CgiGetTrackInfo',
+          param: {
+            ctx: 0,
+            client: 1,
+            mids: [mid],
+            types: [0],
+            modify_stamp: [0],
+          },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+
+      const track = (response as any)?.['music.trackInfo.UniformRuleCtrl']?.data?.tracks?.[0]
+      const mediaMid = track?.file?.media_mid
+      return typeof mediaMid === 'string' && mediaMid ? mediaMid : null
+    } catch (err) {
+      logger.error(`Tencent media_mid fetch failed for ${mid}`, err)
+      return null
+    }
   }
 
   async getLyric(
@@ -1274,12 +1504,15 @@ export class MusicProvider {
           cv: '80600',
           tmeAppID: 'qqmusic',
         },
-        'music.trackInfo.UniformRuleClass': {
-          module: 'music.trackInfo.UniformRuleClass',
+        'music.trackInfo.UniformRuleCtrl': {
+          module: 'music.trackInfo.UniformRuleCtrl',
           method: 'CgiGetTrackInfo',
           param: {
             mids: [mid],
             types: [0],
+            ctx: 0,
+            client: 1,
+            modify_stamp: [0],
           },
         },
       }
@@ -1301,14 +1534,16 @@ export class MusicProvider {
         return null
       }
 
-      const result = response['music.trackInfo.UniformRuleClass']
+      const result = response['music.trackInfo.UniformRuleCtrl']
       if (result?.code !== 0 || !result?.data?.tracks?.[0]) {
         logger.warn(`Tencent track info failed for ${mid}: code ${result?.code}`)
         return null
       }
 
       const trackData = result.data.tracks[0]
-      return this.rawToTrack({ musicData: trackData }, 'tencent')
+      const track = this.rawToTrack({ musicData: trackData }, 'tencent')
+      this.registerTracks([track])
+      return track
     } catch (err) {
       logger.error(`Tencent track info failed: ${mid}`, err)
       return null
@@ -1990,7 +2225,7 @@ export class MusicProvider {
           id: nanoid(),
           title: t.name || 'Unknown',
           artist: (t.singer || []).map((a: Record<string, unknown>) => a.name),
-          album: (t.album?.title || '').trim(),
+          album: (t.album?.title || t.album?.name || '').trim(),
           duration: t.interval || 0, // already in seconds
           cover: '', // resolved via pic()
           source,
@@ -1998,6 +2233,7 @@ export class MusicProvider {
           urlId: String(t.mid),
           lyricId: String(t.mid),
           picId: String(t.album?.mid || ''),
+          mediaMid: String(t.file?.media_mid || ''),
           // pay.pay_play=1 表示需要 VIP, pay.pay_month=1 表示月度VIP, pay.price_track>0 表示付费单曲
           vip: t.pay?.pay_play === 1 || t.pay?.pay_month === 1 || (t.pay?.price_track ?? 0) > 0,
         }

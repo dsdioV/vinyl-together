@@ -104,6 +104,7 @@ const clientTrackSchema = z
     source: z.enum(['netease', 'tencent', 'kugou']),
     sourceId: z.string().max(200),
     urlId: z.string().max(200),
+    mediaMid: z.string().max(200).optional(),
     lyricId: z.string().max(200).optional(),
     picId: z.string().max(200).optional(),
     vip: z.boolean().optional(),
