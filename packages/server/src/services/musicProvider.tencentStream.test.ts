@@ -141,7 +141,12 @@ describe('MusicProvider tencent stream resolution', () => {
       ),
     )
 
-    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320, 'uin=123456; qm_keyst=abc; qqmusic_key=abc')
+    const result = await provider.getStreamUrlResult(
+      'tencent',
+      'MID1',
+      320,
+      'uin=123456; qm_keyst=abc; qqmusic_key=abc',
+    )
 
     expect(result.url).toBe('https://ws.stream.qqmusic.qq.com/M800MID1.mp3?guid=9&vkey=XYZ')
     const [, init] = fetchMock.mock.calls[0] as [string, { body: string; headers: Record<string, string> }]
@@ -171,11 +176,7 @@ describe('MusicProvider tencent stream resolution', () => {
       .mockResolvedValueOnce(okResponse({ code: 500001 }))
       .mockResolvedValueOnce(
         okResponse(
-          vkeyResponse(
-            [{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=3&vkey=LEGACY' }],
-            [],
-            'req_0',
-          ),
+          vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=3&vkey=LEGACY' }], [], 'req_0'),
         ),
       )
 
@@ -224,7 +225,9 @@ describe('MusicProvider tencent stream resolution', () => {
         }),
       )
       .mockResolvedValueOnce(
-        okResponse(vkeyResponse([{ filename: 'M800REALMEDIA.mp3', result: 0, purl: 'M800REALMEDIA.mp3?guid=2&vkey=RETRY' }])),
+        okResponse(
+          vkeyResponse([{ filename: 'M800REALMEDIA.mp3', result: 0, purl: 'M800REALMEDIA.mp3?guid=2&vkey=RETRY' }]),
+        ),
       )
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
@@ -259,7 +262,11 @@ describe('MusicProvider tencent stream resolution', () => {
         }),
       )
       .mockResolvedValueOnce(
-        okResponse(vkeyResponse([{ filename: 'M500LEGACYMEDIA.mp3', result: 0, purl: 'M500LEGACYMEDIA.mp3?guid=4&vkey=LEGACYMEDIA' }])),
+        okResponse(
+          vkeyResponse([
+            { filename: 'M500LEGACYMEDIA.mp3', result: 0, purl: 'M500LEGACYMEDIA.mp3?guid=4&vkey=LEGACYMEDIA' },
+          ]),
+        ),
       )
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
@@ -382,5 +389,155 @@ describe('MusicProvider tencent search fallback', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     const [thirdUrl] = fetchMock.mock.calls[2] as [string]
     expect(thirdUrl).toContain('client_search_cp')
+  })
+})
+
+describe('MusicProvider tencent album/playlist search fallback', () => {
+  let provider: MusicProvider
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    provider = new MusicProvider()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses the desktop API for albums when it returns results', async () => {
+    fetchMock.mockResolvedValue(
+      okResponse({
+        code: 0,
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          code: 0,
+          data: {
+            body: {
+              album: {
+                list: [{ albumMID: 'ALB1', albumName: '专辑A', albumPic: 'pic', song_count: 10, singerName: '歌手A' }],
+              },
+            },
+          },
+        },
+      }),
+    )
+
+    const albums = await provider.searchAlbum('tencent', '周杰伦', 1, 1)
+
+    expect(albums[0]).toMatchObject({ id: 'ALB1', name: '专辑A', trackCount: 10, creator: '歌手A' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the general search item_album when the desktop album API is blocked', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        okResponse({
+          code: 0,
+          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': { code: 2001 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        okResponse({
+          code: 0,
+          'music.adaptor.SearchAdaptor': {
+            code: 0,
+            data: {
+              body: {
+                item_album: {
+                  items: [
+                    { albummid: 'ALB2', name: '专辑B', pic: 'pic2', song_num: 12, singer_list: [{ name: '歌手B' }] },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      )
+
+    const albums = await provider.searchAlbum('tencent', '周杰伦', 1, 1)
+
+    expect(albums[0]).toMatchObject({ id: 'ALB2', name: '专辑B', trackCount: 12, creator: '歌手B' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [, init] = fetchMock.mock.calls[1] as [string, { body: string }]
+    expect(JSON.parse(init.body)['music.adaptor.SearchAdaptor'].method).toBe('do_search_v2')
+  })
+
+  it('uses the desktop API for playlists when it returns results', async () => {
+    fetchMock.mockResolvedValue(
+      okResponse({
+        code: 0,
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          code: 0,
+          data: {
+            body: {
+              songlist: {
+                list: [
+                  {
+                    dissid: 'D1',
+                    dissname: '歌单A',
+                    imgurl: 'img',
+                    song_count: 8,
+                    creator: { name: 'C' },
+                    introduction: 'intro',
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    )
+
+    const playlists = await provider.searchPlaylist('tencent', '华语', 1, 1)
+
+    expect(playlists[0]).toMatchObject({ id: 'D1', name: '歌单A', trackCount: 8, creator: 'C' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the general search item_songlist for playlists', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        okResponse({
+          code: 0,
+          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': { code: 2001 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        okResponse({
+          code: 0,
+          'music.adaptor.SearchAdaptor': {
+            code: 0,
+            data: {
+              body: {
+                item_songlist: {
+                  items: [
+                    {
+                      dissid: 'DISS1',
+                      dissname: '<em>华语</em>歌单',
+                      logo: 'logo',
+                      songnum: 35,
+                      nickname: '官方',
+                      description: '35首 官方',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      )
+
+    const playlists = await provider.searchPlaylist('tencent', '华语', 1, 1)
+
+    expect(playlists[0]).toMatchObject({
+      id: 'DISS1',
+      name: '华语歌单',
+      cover: 'logo',
+      trackCount: 35,
+      creator: '官方',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

@@ -9,11 +9,7 @@ import pLimit from 'p-limit'
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import * as kugouAuth from './kugouAuthService.js'
 import * as tencentAuth from './tencentAuthService.js'
-import {
-  isKugouShortCode,
-  KugouShortCodeError,
-  resolveKugouShortCode,
-} from './kugouShortCodeService.js'
+import { isKugouShortCode, KugouShortCodeError, resolveKugouShortCode } from './kugouShortCodeService.js'
 import { logger } from '../utils/logger.js'
 import { ensureNeteaseApiReady } from './neteaseApiBootstrap.js'
 
@@ -208,13 +204,8 @@ export class PlaylistSearchLimitError extends Error {
 // ---------------------------------------------------------------------------
 type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
 
-
 /** Why a stream URL lookup failed (or partially degraded). */
-export type StreamUrlFailureReason =
-  | 'login_required'
-  | 'vip_or_copyright'
-  | 'upstream_failed'
-  | 'timeout'
+export type StreamUrlFailureReason = 'login_required' | 'vip_or_copyright' | 'upstream_failed' | 'timeout'
 
 export interface StreamUrlResult {
   url: string | null
@@ -295,7 +286,10 @@ function cookieFromNcmResponse(res: { body?: any; cookie?: unknown } | null | un
   return null
 }
 
-function classifyNeteaseStreamFailure(entry: Record<string, any> | undefined, hadUserCookie: boolean): StreamUrlFailureReason {
+function classifyNeteaseStreamFailure(
+  entry: Record<string, any> | undefined,
+  hadUserCookie: boolean,
+): StreamUrlFailureReason {
   if (!entry) return 'upstream_failed'
   const fee = Number(entry.fee ?? 0)
   const code = Number(entry.code ?? 0)
@@ -511,11 +505,7 @@ export class MusicProvider {
         return []
       }
 
-      return this.completeTencentSearch(
-        keyword,
-        this.tencentSearchSongsToTracks(result.data.body.song.list),
-        'desktop',
-      )
+      return this.completeTencentSearch(keyword, this.tencentSearchSongsToTracks(result.data.body.song.list), 'desktop')
     } catch (error) {
       logger.error('Tencent search failed:', error)
       return []
@@ -605,58 +595,37 @@ export class MusicProvider {
    * Search for tracks. Uses format(false) to get raw API data including duration,
    * then batch-resolves cover URLs.
    */
-  
+
   /**
    * Search for albums. Returns a list of Playlist objects.
    */
-  async searchAlbum(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+  async searchAlbum(
+    source: MusicSource,
+    keyword: string,
+    limit = 20,
+    page = 1,
+  ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
 
     try {
       if (source === 'tencent') {
-        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
-        const payload = {
-          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
-          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
-            module: 'music.search.SearchCgiService',
-            method: 'DoSearchForQQMusicDesktop',
-            param: { num_per_page: limit, page_num: page, search_type: 2, query: keyword, grp: 1 },
-          },
-        }
+        const desktop = await this.searchTencentAlbumDesktop(keyword, limit, page)
+        if (desktop.length > 0) return desktop
 
-        const response = await withTimeout(
-          fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Referer: 'https://y.qq.com',
-              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
-            },
-            body: JSON.stringify(payload),
-          }).then((res) => res.json())
-        )
+        // 海外 IP 桌面专辑搜索被风控/返回空时，综合搜索（SearchAdaptor.do_search_v2）实测可用
+        const general = await this.searchTencentAlbumGeneral(keyword, limit, page)
+        if (general.length > 0) return general
 
-        if (!response) return []
-
-        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
-        if (result?.code !== 0 || !result?.data?.body?.album?.list) return []
-
-        return result.data.body.album.list.map((album: any) => ({
-          id: String(album.albumMID || album.albumID),
-          name: album.albumName || 'Unknown Album',
-          cover: album.albumPic || '',
-          trackCount: album.song_count || 0,
-          source: 'tencent',
-          creator: album.singerName || '',
-        }))
+        logger.warn(`Tencent album search exhausted all sources for "${keyword}"`)
+        return []
       }
 
       if (source === 'kugou') {
         const url = `http://mobilecdn.kugou.com/api/v3/search/album?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
-        const response = await withTimeout(fetch(url).then(res => res.json()))
-        
+        const response = await withTimeout(fetch(url).then((res) => res.json()))
+
         if (!response || response.errcode !== 0 || !response.data?.info) return []
-        
+
         return response.data.info.map((album: any) => ({
           id: String(album.albumid),
           name: album.albumname || 'Unknown Album',
@@ -703,55 +672,33 @@ export class MusicProvider {
   /**
    * Search for playlists. Returns a list of Playlist objects.
    */
-  async searchPlaylist(source: MusicSource, keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+  async searchPlaylist(
+    source: MusicSource,
+    keyword: string,
+    limit = 20,
+    page = 1,
+  ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
 
     try {
       if (source === 'tencent') {
-        const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
-        const payload = {
-          comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
-          'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
-            module: 'music.search.SearchCgiService',
-            method: 'DoSearchForQQMusicDesktop',
-            param: { num_per_page: limit, page_num: page, search_type: 3, query: keyword, grp: 1 },
-          },
-        }
+        const desktop = await this.searchTencentPlaylistDesktop(keyword, limit, page)
+        if (desktop.length > 0) return desktop
 
-        const response = await withTimeout(
-          fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Referer: 'https://y.qq.com',
-              'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
-            },
-            body: JSON.stringify(payload),
-          }).then((res) => res.json())
-        )
+        // 海外 IP 桌面歌单搜索为空，综合搜索的 item_songlist 实测可用
+        const general = await this.searchTencentPlaylistGeneral(keyword, limit, page)
+        if (general.length > 0) return general
 
-        if (!response) return []
-
-        const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
-        if (result?.code !== 0 || !result?.data?.body?.songlist?.list) return []
-
-        return result.data.body.songlist.list.map((playlist: any) => ({
-          id: String(playlist.dissid),
-          name: playlist.dissname || 'Unknown Playlist',
-          cover: playlist.imgurl || '',
-          trackCount: playlist.song_count || 0,
-          source: 'tencent',
-          creator: playlist.creator?.name || '',
-          description: playlist.introduction || '',
-        }))
+        logger.warn(`Tencent playlist search exhausted all sources for "${keyword}"`)
+        return []
       }
 
       if (source === 'kugou') {
         const url = `http://mobilecdn.kugou.com/api/v3/search/special?api_ver=1&area_code=1&correct=1&pagesize=${limit}&plat=2&tag=1&sver=5&showtype=10&page=${page}&keyword=${encodeURIComponent(keyword)}&version=8990`
-        const response = await withTimeout(fetch(url).then(res => res.json()))
-        
+        const response = await withTimeout(fetch(url).then((res) => res.json()))
+
         if (!response || response.errcode !== 0 || !response.data?.info) return []
-        
+
         return response.data.info.map((playlist: any) => ({
           id: String(playlist.specialid),
           name: playlist.specialname || 'Unknown Playlist',
@@ -793,6 +740,203 @@ export class MusicProvider {
       return []
     } catch (err) {
       logger.error(`Search playlist failed for ${source}:`, err)
+      return []
+    }
+  }
+
+  /** 新版 Desktop 专辑搜索（明文 musicu.fcg，search_type=2）。 */
+  private async searchTencentAlbumDesktop(
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<import('@music-together/shared').Playlist[]> {
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          module: 'music.search.SearchCgiService',
+          method: 'DoSearchForQQMusicDesktop',
+          param: { num_per_page: limit, page_num: page, search_type: 2, query: keyword, grp: 1 },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json()),
+      )
+
+      if (!response) return []
+
+      const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
+      if (result?.code !== 0 || !result?.data?.body?.album?.list) {
+        logger.warn(`Tencent album search failed (desktop): code ${result?.code}`)
+        return []
+      }
+
+      return result.data.body.album.list.map((album: any) => ({
+        id: String(album.albumMID || album.albumID),
+        name: album.albumName || 'Unknown Album',
+        cover: album.albumPic || '',
+        trackCount: album.song_count || 0,
+        source: 'tencent',
+        creator: album.singerName || '',
+      }))
+    } catch (err) {
+      logger.error('Tencent album search failed (desktop):', err)
+      return []
+    }
+  }
+
+  /**
+   * 综合搜索（music.adaptor.SearchAdaptor / do_search_v2）里的专辑区块。
+   * 海外 IP 下桌面专辑搜索为空，但综合搜索的 item_album 实测可正常返回。
+   */
+  private async searchTencentAlbumGeneral(
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<import('@music-together/shared').Playlist[]> {
+    const body = await this.searchTencentGeneralSearch(keyword, limit, page)
+    const items = body?.item_album?.items
+    if (!Array.isArray(items) || items.length === 0) {
+      logger.warn(`Tencent album search failed (general): "${keyword}"`)
+      return []
+    }
+
+    return items.map((item: any) => ({
+      id: String(item.albummid || item.id),
+      name: item.name || 'Unknown Album',
+      cover: item.pic || '',
+      trackCount: item.song_num || 0,
+      source: 'tencent',
+      creator: item.singer_list?.[0]?.name || String(item.singer || '').replace(/<[^>]+>/g, '') || '',
+    }))
+  }
+
+  /** 综合搜索请求（music.adaptor.SearchAdaptor / do_search_v2），返回响应 body。 */
+  private async searchTencentGeneralSearch(
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<Record<string, any> | null> {
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+        'music.adaptor.SearchAdaptor': {
+          module: 'music.adaptor.SearchAdaptor',
+          method: 'do_search_v2',
+          param: {
+            searchid: crypto.randomUUID(),
+            search_type: 100,
+            page_num: limit,
+            query: keyword,
+            page_id: page,
+            highlight: true,
+            grp: true,
+          },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json()),
+      )
+
+      return (response as any)?.['music.adaptor.SearchAdaptor']?.data?.body ?? null
+    } catch (err) {
+      logger.error('Tencent general search failed:', err)
+      return null
+    }
+  }
+
+  /** 综合搜索里的歌单区块（海外 IP 下桌面歌单搜索为空，此区块实测可用）。 */
+  private async searchTencentPlaylistGeneral(
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<import('@music-together/shared').Playlist[]> {
+    const body = await this.searchTencentGeneralSearch(keyword, limit, page)
+    const items = body?.item_songlist?.items
+    if (!Array.isArray(items) || items.length === 0) {
+      logger.warn(`Tencent playlist search failed (general): "${keyword}"`)
+      return []
+    }
+
+    return items.map((item: any) => ({
+      id: String(item.dissid || item.docid),
+      name: String(item.dissname || '').replace(/<[^>]+>/g, '') || 'Unknown Playlist',
+      cover: item.logo || '',
+      trackCount: item.songnum || 0,
+      source: 'tencent',
+      creator: item.nickname || '',
+      description: String(item.description || '').replace(/<[^>]+>/g, '') || '',
+    }))
+  }
+
+  /** 新版 Desktop 歌单搜索（明文 musicu.fcg，search_type=3）。 */
+  private async searchTencentPlaylistDesktop(
+    keyword: string,
+    limit: number,
+    page: number,
+  ): Promise<import('@music-together/shared').Playlist[]> {
+    try {
+      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
+      const payload = {
+        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          module: 'music.search.SearchCgiService',
+          method: 'DoSearchForQQMusicDesktop',
+          param: { num_per_page: limit, page_num: page, search_type: 3, query: keyword, grp: 1 },
+        },
+      }
+
+      const response = await withTimeout(
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+          },
+          body: JSON.stringify(payload),
+        }).then((res) => res.json()),
+      )
+
+      if (!response) return []
+
+      const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
+      if (result?.code !== 0 || !result?.data?.body?.songlist?.list) {
+        logger.warn(`Tencent playlist search failed (desktop): code ${result?.code}`)
+        return []
+      }
+
+      return result.data.body.songlist.list.map((playlist: any) => ({
+        id: String(playlist.dissid),
+        name: playlist.dissname || 'Unknown Playlist',
+        cover: playlist.imgurl || '',
+        trackCount: playlist.song_count || 0,
+        source: 'tencent',
+        creator: playlist.creator?.name || '',
+        description: playlist.introduction || '',
+      }))
+    } catch (err) {
+      logger.error('Tencent playlist search failed (desktop):', err)
       return []
     }
   }
@@ -1001,11 +1145,7 @@ export class MusicProvider {
     return this.neteaseAnonymousCookiePromise
   }
 
-  private async getNeteaseStreamUrlResult(
-    urlId: string,
-    bitrate: number,
-    cookie?: string,
-  ): Promise<StreamUrlResult> {
+  private async getNeteaseStreamUrlResult(urlId: string, bitrate: number, cookie?: string): Promise<StreamUrlResult> {
     await ensureNeteaseApiReady()
     const levels = neteaseLevelsForBitrate(bitrate)
     let usedAnonymousCookie = false
@@ -1150,11 +1290,7 @@ export class MusicProvider {
    * 当前可用的是 musicu.fcg 的 `music.vkey.GetVkey` / `UrlGetVkey`：匿名请求只能解锁
    * 128kbps 档位，更高音质与 VIP 曲目需要登录 cookie。
    */
-  private async getTencentStreamUrlResult(
-    urlId: string,
-    bitrate: number,
-    cookie?: string,
-  ): Promise<StreamUrlResult> {
+  private async getTencentStreamUrlResult(urlId: string, bitrate: number, cookie?: string): Promise<StreamUrlResult> {
     const candidates = tencentFileCandidatesForBitrate(bitrate)
     const uin = cookie?.match(/uin=(\d+)/)?.[1] ?? '0'
 
@@ -1592,10 +1728,7 @@ export class MusicProvider {
    */
   private async fetchNeteaseTrackById(songId: string): Promise<Track | null> {
     try {
-      const res = await withTimeout(
-        ncmApi.song_detail({ ids: songId, timestamp: Date.now() }),
-        15_000,
-      )
+      const res = await withTimeout(ncmApi.song_detail({ ids: songId, timestamp: Date.now() }), 15_000)
 
       if (res === null) {
         logger.warn(`Netease song_detail timeout: ${songId}`)
@@ -1801,7 +1934,7 @@ export class MusicProvider {
    * Fetch full Netease playlist via ncmApi.playlist_track_all.
    * No 1000-track limit; returns full song data including duration/album/artist.
    */
-  
+
   /** Fetch Netease album using ncmApi.album */
   private async fetchNeteaseAlbum(
     albumId: string,
@@ -1824,7 +1957,7 @@ export class MusicProvider {
       }
 
       const allTracks = songs.map((song: any) => this.rawToTrack(song, 'netease'))
-      
+
       for (const t of allTracks) this.enrichFromRegistry(t)
       this.registerTracks(allTracks)
 
@@ -1852,9 +1985,7 @@ export class MusicProvider {
     // Independent of the client-provided total: prevents an abnormal upstream
     // that always returns a full page from causing an unbounded loop.
     const fetchLimit =
-      maxTracks === undefined
-        ? PLAYLIST_FETCH_HARD_MAX_TRACKS
-        : Math.min(PLAYLIST_FETCH_HARD_MAX_TRACKS, maxTracks + 1)
+      maxTracks === undefined ? PLAYLIST_FETCH_HARD_MAX_TRACKS : Math.min(PLAYLIST_FETCH_HARD_MAX_TRACKS, maxTracks + 1)
     const baseParams = { id: playlistId, timestamp: Date.now(), ...(cookie ? { cookie } : {}) }
 
     try {
@@ -1863,10 +1994,7 @@ export class MusicProvider {
 
       while (offset < fetchLimit) {
         const requestLimit = Math.min(CHUNK_SIZE, fetchLimit - offset)
-        const res = await withTimeout(
-          ncmApi.playlist_track_all({ ...baseParams, limit: requestLimit, offset }),
-          60_000,
-        )
+        const res = await withTimeout(ncmApi.playlist_track_all({ ...baseParams, limit: requestLimit, offset }), 60_000)
 
         if (res === null) {
           logger.warn(`Netease playlist_track_all timeout: ${playlistId} (offset=${offset})`)
@@ -1975,7 +2103,9 @@ export class MusicProvider {
           }
         }
 
-        logger.info(`Kugou playlist page ${page}: got ${songs.length}, total tracks so far ${allTracks.length}/${totalFromApi}`)
+        logger.info(
+          `Kugou playlist page ${page}: got ${songs.length}, total tracks so far ${allTracks.length}/${totalFromApi}`,
+        )
 
         if (maxTracks === undefined && fetchedSongCount >= PLAYLIST_FETCH_HARD_MAX_TRACKS) {
           logger.warn(
@@ -2203,7 +2333,7 @@ export class MusicProvider {
     offset: number,
     playlistTotal?: number,
     cookie?: string | null,
-    type: 'playlist' | 'album' = 'playlist'
+    type: 'playlist' | 'album' = 'playlist',
   ): Promise<{ tracks: Track[]; total: number; hasMore: boolean }> {
     if (playlistTotal !== undefined && playlistTotal > LIMITS.PLAYLIST_SEARCH_MAX_TRACKS) {
       throw new PlaylistSearchLimitError(playlistTotal)
