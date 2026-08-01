@@ -124,6 +124,9 @@ export interface ServerToClientEvents {
   [EVENTS.LOCAL_AUDIO_TASK_REMOVED]: (data: { taskId: string }) => void
   [EVENTS.LOCAL_AUDIO_ASSET_UPDATED]: (asset: LocalAudioAsset) => void
   [EVENTS.LOCAL_AUDIO_ASSET_REMOVED]: (data: { assetId: string }) => void
+
+  // QQ 音乐浏览器中继
+  [EVENTS.MUSIC_RELAY_REQUEST]: (data: { requestId: string; url: string }) => void
 }
 
 /** 客户端 → 服务端 事件接口 */
@@ -188,6 +191,10 @@ export interface ClientToServerEvents {
     album?: string
   }) => void
   [EVENTS.LOCAL_AUDIO_ASSET_DELETE]: (data: { assetId: string; removeFromQueue?: boolean }) => void
+
+  // QQ 音乐浏览器中继
+  [EVENTS.RELAY_MODE_CHANGED]: (data: { enabled: boolean }) => void
+  [EVENTS.MUSIC_RELAY_RESPONSE]: (data: { requestId: string; ok: boolean; data?: unknown; error?: string }) => void
 
   [EVENTS.CHAT_MESSAGE]: (data: { content: string }) => void
 

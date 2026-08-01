@@ -34,6 +34,7 @@ const envSchema = z.object({
   REJOIN_TTL_MS: z.coerce.number().int().positive().default(TIMING.ROOM_GRACE_PERIOD_MS),
   IDENTITY_COOKIE_SECURE: z.enum(['true', 'false']).optional(),
   AUTO_FALLBACK_ENABLED: z.enum(['true', 'false']).default('true'),
+  TENCENT_FORCE_RELAY: z.enum(['true', 'false', '1', '0']).default('false'),
   LOCAL_AUDIO_DATA_DIR: z.string().trim().min(1).default('./data/local-audio'),
   LOCAL_AUDIO_MAX_UPLOAD_MIB: positiveIntegerFromEnv(500, MAX_SAFE_MIB),
   LOCAL_AUDIO_ROOM_QUOTA_MIB: positiveIntegerFromEnv(1024, MAX_SAFE_MIB),
@@ -103,6 +104,10 @@ export const config = {
   },
   autoFallback: {
     enabled: env.AUTO_FALLBACK_ENABLED === 'true',
+  },
+  qqRelay: {
+    // 本地调试用：跳过服务器直连，强制先走浏览器中继
+    force: env.TENCENT_FORCE_RELAY === 'true' || env.TENCENT_FORCE_RELAY === '1',
   },
   localAudio: {
     dataDir: resolveLocalAudioDataDir(env.LOCAL_AUDIO_DATA_DIR),

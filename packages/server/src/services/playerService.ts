@@ -145,11 +145,20 @@ function streamFailureHint(
       return { hint: '（酷狗播放链接获取失败，请尝试在房间设置中登录酷狗）', reasonType: 'VIP_REQUIRED' }
     }
     if (source === 'tencent') {
-      return { hint: '（需要有用户在房间设置中登录 QQ 音乐）', reasonType: 'VIP_REQUIRED' }
+      return {
+        hint: '（未登录 QQ 音乐；若服务器无法直连，可在设置中开启「QQ 音乐浏览器中继」）',
+        reasonType: 'VIP_REQUIRED',
+      }
     }
     return { hint: '（需要登录后播放）', reasonType: 'VIP_REQUIRED' }
   }
   if (reason === 'vip_or_copyright' || options.isVip) {
+    if (source === 'tencent') {
+      return {
+        hint: '（可能是 QQ 音乐屏蔽了非大陆 IP，可尝试在设置中打开「QQ 音乐浏览器中继」功能）',
+        reasonType: 'COPYRIGHT_RESTRICTED',
+      }
+    }
     return {
       hint: options.hasCookie
         ? '（版权或 VIP 限制，当前登录账号可能无权播放）'

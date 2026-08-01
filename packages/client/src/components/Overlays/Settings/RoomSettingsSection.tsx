@@ -5,6 +5,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { DefaultPlaylistSection } from './DefaultPlaylistSection'
 import { storage } from '@/lib/storage'
 import { usePlayerStore } from '@/stores/playerStore'
@@ -58,6 +66,10 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordEnabled, setPasswordEnabled] = useState(room?.hasPassword ?? false)
 
+  // QQ 音乐浏览器中继（默认关闭，每次开启都需确认）
+  const [relayEnabled, setRelayEnabled] = useState(() => storage.getQqRelayEnabled())
+  const [relayConfirmOpen, setRelayConfirmOpen] = useState(false)
+
   // 昵称编辑
   const [nickname, setNickname] = useState(storage.getNickname())
   const handleNicknameBlur = () => {
@@ -73,8 +85,8 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const [nameInput, setNameInput] = useState('')
 
   // 投票通过率 — 百分比显示（1-100），内部存储为小数 (0.01-1.0)
-  const [voteThresholdPercent, setVoteThresholdPercent] = useState(
-    () => Math.round((room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD) * 100),
+  const [voteThresholdPercent, setVoteThresholdPercent] = useState(() =>
+    Math.round((room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD) * 100),
   )
   // Sync from room when it changes (e.g. another admin updated it)
   useEffect(() => {
@@ -84,9 +96,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   }, [room?.voteThreshold])
 
   // 主队列上限
-  const [maxQueueSize, setMaxQueueSize] = useState(
-    () => room?.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE_DEFAULT,
-  )
+  const [maxQueueSize, setMaxQueueSize] = useState(() => room?.maxQueueSize ?? LIMITS.QUEUE_MAX_SIZE_DEFAULT)
   useEffect(() => {
     if (room?.maxQueueSize !== undefined) {
       setMaxQueueSize(room.maxQueueSize)
@@ -147,6 +157,24 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const handleCancelEditName = () => {
     setEditingName(false)
     setNameInput('')
+  }
+
+  const handleRelayToggle = (checked: boolean) => {
+    if (!checked) {
+      storage.setQqRelayEnabled(false)
+      socket.emit(EVENTS.RELAY_MODE_CHANGED, { enabled: false })
+      setRelayEnabled(false)
+      return
+    }
+    setRelayConfirmOpen(true)
+  }
+
+  const confirmRelayEnable = () => {
+    storage.setQqRelayEnabled(true)
+    socket.emit(EVENTS.RELAY_MODE_CHANGED, { enabled: true })
+    setRelayEnabled(true)
+    setRelayConfirmOpen(false)
+    toast.success('QQ 音乐浏览器中继已开启')
   }
 
   return (
@@ -282,6 +310,42 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
         </SettingRow>
       </div>
 
+      <div>
+        <h3 className="text-base font-semibold">QQ 音乐</h3>
+        <Separator className="mt-2 mb-4" />
+
+        <SettingRow
+          label="浏览器中继"
+          description="在服务器无法直接获取 QQ 音乐播放链接时, 用我的浏览器代为请求播放链接 (仅当你在线时生效)"
+        >
+          <Switch checked={relayEnabled} onCheckedChange={handleRelayToggle} />
+        </SettingRow>
+      </div>
+
+      <Dialog open={relayConfirmOpen} onOpenChange={setRelayConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>开启 QQ 音乐浏览器中继</DialogTitle>
+            <DialogDescription>
+              开启后，当服务器直连 QQ 音乐失败时，你的浏览器可能会代为发送播放链接请求：
+            </DialogDescription>
+            <div className="text-muted-foreground text-sm">
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                <li>QQ 音乐将看到你的网络 IP，并可能把播放记录关联到你的账号（若浏览器已登录 QQ 音乐）；</li>
+                <li>请求只包含歌曲 ID 和音质参数，不会上传其他数据；</li>
+                <li>该功能将在你关闭网页、退出房间或关闭此开关后立即关闭。</li>
+              </ul>
+              <p className="mt-2">此功能默认关闭，可随时在设置中关闭。</p>
+            </div>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRelayConfirmOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={confirmRelayEnable}>开启</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {isOwner && (
         <div>
           <h3 className="text-base font-semibold">房主设置</h3>
@@ -311,17 +375,15 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
             <Switch
               checked={room?.autoRemovePlayed ?? false}
-              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })}
+              onCheckedChange={(checked) =>
+                onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })
+              }
             />
           </SettingRow>
 
           <SettingRow
             label="点赞模式"
-            description={
-              room?.autoRemovePlayed
-                ? '下一首将优先播放点赞数更高的歌曲'
-                : '需先开启「播完自动移出」'
-            }
+            description={room?.autoRemovePlayed ? '下一首将优先播放点赞数更高的歌曲' : '需先开启「播完自动移出」'}
           >
             <Switch
               checked={room?.songLikes ?? false}
@@ -369,10 +431,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
             </div>
           </SettingRow>
 
-          <SettingRow
-            label="队列上限"
-            description={`当前队列 ${room?.queue.length ?? 0} 首，新歌超过上限将无法添加`}
-          >
+          <SettingRow label="队列上限" description={`当前队列 ${room?.queue.length ?? 0} 首，新歌超过上限将无法添加`}>
             <div className="flex items-center gap-1.5">
               <Input
                 type="number"
@@ -390,13 +449,19 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
                   setMaxQueueSize(v)
                 }}
                 onBlur={() => {
-                  const clamped = Math.min(LIMITS.QUEUE_MAX_SIZE_MAX, Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT))
+                  const clamped = Math.min(
+                    LIMITS.QUEUE_MAX_SIZE_MAX,
+                    Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT),
+                  )
                   setMaxQueueSize(clamped)
                   onUpdateSettings({ maxQueueSize: clamped })
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    const clamped = Math.min(LIMITS.QUEUE_MAX_SIZE_MAX, Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT))
+                    const clamped = Math.min(
+                      LIMITS.QUEUE_MAX_SIZE_MAX,
+                      Math.max(LIMITS.QUEUE_MAX_SIZE_MIN, maxQueueSize || LIMITS.QUEUE_MAX_SIZE_DEFAULT),
+                    )
                     setMaxQueueSize(clamped)
                     onUpdateSettings({ maxQueueSize: clamped })
                   }
@@ -444,17 +509,15 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           <SettingRow label="播完自动移出" description="开启后每首歌播完自动从队列移除，避免少数人点歌时无限循环">
             <Switch
               checked={room?.autoRemovePlayed ?? false}
-              onCheckedChange={(checked) => onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })}
+              onCheckedChange={(checked) =>
+                onUpdateSettings({ autoRemovePlayed: checked, ...(!checked ? { songLikes: false } : {}) })
+              }
             />
           </SettingRow>
 
           <SettingRow
             label="点赞模式"
-            description={
-              room?.autoRemovePlayed
-                ? '下一首将优先播放点赞数更高的歌曲'
-                : '需先开启「播完自动移出」'
-            }
+            description={room?.autoRemovePlayed ? '下一首将优先播放点赞数更高的歌曲' : '需先开启「播完自动移出」'}
           >
             <Switch
               checked={room?.songLikes ?? false}

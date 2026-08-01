@@ -296,6 +296,61 @@ describe('MusicProvider tencent stream resolution', () => {
     // vkey 三通道全失败后还会尝试 media_mid 恢复（同样三通道），共 6 次
     expect(fetchMock).toHaveBeenCalledTimes(6)
   })
+
+  it('uses the browser relay when all direct channels fail', async () => {
+    fetchMock.mockResolvedValue(okResponse(allDenied()))
+    const relay = vi.fn(async (url: string) => {
+      expect(url).toContain('callback=__vinylQqRelay_')
+      expect(url).toContain('vkey.GetVkeyServer')
+      return vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=5&vkey=RELAY' }])
+    })
+    provider.setQqRelayRequester(relay)
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M500MID1.mp3?guid=5&vkey=RELAY')
+    expect(relay).toHaveBeenCalledTimes(1)
+    // plain + signed + legacy 各一次
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the original classification when the relay also fails', async () => {
+    fetchMock.mockResolvedValue(okResponse(allDenied()))
+    const relay = vi.fn(async () => allDenied())
+    provider.setQqRelayRequester(relay)
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toBeNull()
+    expect(result.reason).toBe('login_required')
+    expect(relay).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not use the relay when a direct channel succeeds', async () => {
+    fetchMock.mockResolvedValue(
+      okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=7&vkey=DIRECT' }])),
+    )
+    const relay = vi.fn()
+    provider.setQqRelayRequester(relay)
+
+    await provider.getStreamUrlResult('tencent', 'MID1', 128)
+
+    expect(relay).not.toHaveBeenCalled()
+  })
+
+  it('forces the browser relay first when the dev flag is set', async () => {
+    const relay = vi.fn(async () =>
+      vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=8&vkey=FORCED' }]),
+    )
+    provider.setQqRelayRequester(relay)
+    provider.setForceQqRelay(true)
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M500MID1.mp3?guid=8&vkey=FORCED')
+    expect(relay).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('MusicProvider tencent search fallback', () => {

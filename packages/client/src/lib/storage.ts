@@ -208,6 +208,10 @@ export const storage = {
     if (roomId && data.roomId !== roomId) return
     safeRemove('rejoin-token')
   },
+
+  // QQ 音乐浏览器中继（默认关闭）
+  getQqRelayEnabled: () => safeGet('qqRelayEnabled') === 'true',
+  setQqRelayEnabled: (v: boolean) => safeSet('qqRelayEnabled', String(v)),
 }
 
 /** Shape stored in localStorage for auth cookies */

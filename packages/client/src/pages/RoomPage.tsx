@@ -27,12 +27,19 @@ import { useChatStore } from '@/stores/chatStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { AbilityProvider } from '@/providers/AbilityProvider'
 import { useClockSync } from '@/hooks/useClockSync'
+import { useMusicRelay } from '@/hooks/useMusicRelay'
 import { useLocalAudioFileQueue } from '@/hooks/useLocalAudioFileQueue'
 import { storage } from '@/lib/storage'
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
 function ClockSyncRunner() {
   useClockSync()
+  return null
+}
+
+/** Invisible component that answers QQ music relay requests while in a room. */
+function MusicRelayRunner() {
+  useMusicRelay()
   return null
 }
 
@@ -329,6 +336,7 @@ export default function RoomPage() {
   return (
     <AbilityProvider>
       <ClockSyncRunner />
+      <MusicRelayRunner />
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

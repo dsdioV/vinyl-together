@@ -103,6 +103,11 @@ export const EVENTS = {
   LOCAL_AUDIO_ASSET_REMOVED: 'local_audio:asset_removed',
   LOCAL_AUDIO_ASSET_UPDATE: 'local_audio:asset_update',
   LOCAL_AUDIO_ASSET_DELETE: 'local_audio:asset_delete',
+
+  // QQ 音乐浏览器中继
+  RELAY_MODE_CHANGED: 'relay:mode_changed',
+  MUSIC_RELAY_REQUEST: 'music:relay_request',
+  MUSIC_RELAY_RESPONSE: 'music:relay_response',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

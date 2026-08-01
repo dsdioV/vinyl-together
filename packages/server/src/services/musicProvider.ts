@@ -303,6 +303,8 @@ function classifyNeteaseStreamFailure(
   return 'upstream_failed'
 }
 
+/** 浏览器中继请求器：由服务端注入，代为执行白名单 JSONP 请求。 */
+export type QqRelayRequester = (url: string) => Promise<unknown | null>
 export class MusicProvider {
   // Shared instances with format(true) — used for url/lyric/cover operations (no cookie)
   private instances = new Map<MusicSource, MetingInstance>()
@@ -345,6 +347,11 @@ export class MusicProvider {
   /** Cached Netease guest cookie from register_anonimous (process-local). */
   private neteaseAnonymousCookie: string | null = null
   private neteaseAnonymousCookiePromise: Promise<string | null> | null = null
+
+  /** 可选的 QQ 浏览器中继请求器（服务端启动时注入，服务器直连失败时使用）。 */
+  private qqRelayRequester: QqRelayRequester | null = null
+  /** 本地调试用：跳过服务器直连，强制先走浏览器中继。 */
+  private forceQqRelay = false
 
   /**
    * Playlist visibility can depend on the authenticated account. Keep indexes
@@ -1020,6 +1027,16 @@ export class MusicProvider {
    * Get stream URL for a track. Optionally inject a cookie for VIP access.
    * Netease uses song_url_v1 (Enhanced API); Kugou uses kugouAuth; others still use Meting.
    */
+  /** 注入 QQ 浏览器中继请求器（服务端启动时调用）。 */
+  setQqRelayRequester(requester: QqRelayRequester | null): void {
+    this.qqRelayRequester = requester
+  }
+
+  /** 设置是否强制先走浏览器中继（本地调试用）。 */
+  setForceQqRelay(force: boolean): void {
+    this.forceQqRelay = force
+  }
+
   async getStreamUrl(source: MusicSource, urlId: string, bitrate = 320, cookie?: string): Promise<string | null> {
     const result = await this.getStreamUrlResult(source, urlId, bitrate, cookie)
     return result.url
@@ -1298,6 +1315,17 @@ export class MusicProvider {
     // 回退到歌曲 mid 本身，两者都失败才重新拉取歌曲详情。
     const registryMediaMid = this.trackRegistry.get(`tencent:${urlId}`)?.mediaMid || urlId
 
+    // 本地调试（TENCENT_FORCE_RELAY=1）：跳过服务器直连，强制先走浏览器中继
+    let relayAttempted = false
+    if (this.forceQqRelay) {
+      relayAttempted = true
+      const forced = await this.tryTencentRelay(urlId, registryMediaMid, candidates)
+      if (forced) {
+        if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, forced)
+        logger.info(`Tencent vkey ok (relay forced): ${urlId}`)
+        return { url: forced }
+      }
+    }
     const first = await this.callTencentVkey(urlId, registryMediaMid, candidates, uin, cookie)
     if (first.url) {
       if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, first.url)
@@ -1305,23 +1333,29 @@ export class MusicProvider {
     }
     if (first.reason === 'timeout') return first
 
-    // 权限拒绝（104003/104013）与 media_mid 无关，直接分类返回，避免多余请求。
-    if (first.upstreamCode === 104003 || first.upstreamCode === 104013) {
-      return this.classifyTencentStreamFailure(first.upstreamCode, cookie)
-    }
-
-    // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
-    const detailMediaMid = await this.fetchTencentMediaMid(urlId)
-    if (detailMediaMid && detailMediaMid !== registryMediaMid) {
-      const retry = await this.callTencentVkey(urlId, detailMediaMid, candidates, uin, cookie)
-      if (retry.url) {
-        if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, retry.url)
-        return retry
+    // 权限拒绝（104003/104013）与 media_mid 无关，跳过详情恢复。
+    const denied = first.upstreamCode === 104003 || first.upstreamCode === 104013
+    if (!denied) {
+      // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
+      const detailMediaMid = await this.fetchTencentMediaMid(urlId)
+      if (detailMediaMid && detailMediaMid !== registryMediaMid) {
+        const retry = await this.callTencentVkey(urlId, detailMediaMid, candidates, uin, cookie)
+        if (retry.url) {
+          if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, retry.url)
+          return retry
+        }
+        if (retry.reason === 'timeout') return retry
+        if (retry.upstreamCode) first.upstreamCode = retry.upstreamCode
       }
-      if (retry.reason === 'timeout') return retry
-      if (retry.upstreamCode) first.upstreamCode = retry.upstreamCode
     }
 
+    // 浏览器中继兜底：服务器直连全部失败后，让已开启中继的成员浏览器代为请求。
+    const relayed = relayAttempted ? null : await this.tryTencentRelay(urlId, registryMediaMid, candidates)
+    if (relayed) {
+      if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, relayed)
+      logger.info(`Tencent vkey ok (relay): ${urlId}`)
+      return { url: relayed }
+    }
     return this.classifyTencentStreamFailure(first.upstreamCode, cookie)
   }
 
@@ -1335,6 +1369,45 @@ export class MusicProvider {
           ? 'QQ 音乐版权或 VIP 限制，无法获取播放链接'
           : 'QQ 音乐需要登录后才能播放该歌曲'
         : 'QQ 音乐未返回可用播放链接',
+    }
+  }
+
+  /**
+   * 浏览器中继：构造旧版 vkey 的 JSONP 请求，交给已开启中继的客户端代为执行。
+   * 仅返回可用的播放链接；失败返回 null（由上层保持原分类提示）。
+   */
+  private async tryTencentRelay(
+    songMid: string,
+    mediaMid: string,
+    candidates: TencentFileType[],
+  ): Promise<string | null> {
+    if (!this.qqRelayRequester) return null
+    try {
+      const filenames = candidates.map((c) => `${c.code}${mediaMid}${c.ext}`)
+      const legacyPayload = {
+        req_0: {
+          module: 'vkey.GetVkeyServer',
+          method: 'CgiGetVkey',
+          param: {
+            guid: String(Math.floor(1e9 + Math.random() * 9e9)),
+            songmid: filenames.map(() => songMid),
+            filename: filenames,
+            songtype: filenames.map(() => 0),
+            uin: '0',
+            loginflag: 1,
+            platform: '20',
+          },
+        },
+      }
+      const callback = `__vinylQqRelay_${nanoid(10)}`
+      const url = `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&callback=${callback}&data=${encodeURIComponent(JSON.stringify(legacyPayload))}`
+      const data = await this.qqRelayRequester(url)
+      if (data === null || data === undefined) return null
+      const resolved = await this.resolveTencentVkeyAttempt(Promise.resolve(data as Record<string, any>))
+      return resolved.url
+    } catch (err) {
+      logger.error(`Tencent relay failed for ${songMid}:`, err)
+      return null
     }
   }
 

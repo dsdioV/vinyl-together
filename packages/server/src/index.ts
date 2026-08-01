@@ -18,6 +18,8 @@ import localAudioRoutes from './routes/localAudio.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
 import { localAudioService } from './services/localAudioService.js'
 import { ensureNeteaseApiReady } from './services/neteaseApiBootstrap.js'
+import { musicRelayService } from './services/musicRelayService.js'
+import { musicProvider } from './services/musicProvider.js'
 import { logger } from './utils/logger.js'
 
 const app = express()
@@ -103,6 +105,9 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
 
 attachSocketIdentity(io)
 localAudioService.setIo(io)
+musicRelayService.setIo(io)
+musicProvider.setQqRelayRequester((url) => musicRelayService.requestJson(url))
+musicProvider.setForceQqRelay(config.qqRelay.force)
 initializeSocket(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
