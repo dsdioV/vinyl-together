@@ -101,7 +101,7 @@ function hash33(str: string, initialHash = 0): number {
  * 腾讯 API 网关通用请求签名 (zzc开头)
  * 移植自 qqmusic-api-python 的 sign.py
  */
-function createTencentSign(requestData: unknown): string {
+export function createTencentSign(requestData: unknown): string {
   const jsonStr = JSON.stringify(requestData)
   const hashHex = crypto.createHash('sha1').update(jsonStr).digest('hex').toUpperCase()
 

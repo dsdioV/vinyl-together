@@ -116,6 +116,7 @@ interface TencentSearchSong {
     id: number
     mid: string
     name: string
+    title?: string
     pmid?: string
   }
   file?: {
@@ -442,10 +443,30 @@ export class MusicProvider {
    * Search Tencent (QQ 音乐) using the new Desktop API.
    * The legacy Meting API returns empty results, so we use the direct API.
    */
+  /**
+   * Search Tencent (QQ 音乐). 主路径为新版 Desktop API（明文 musicu.fcg）；
+   * 海外 IP 被 500001 风控时依次降级到签名版 musics.fcg 和旧版 Web 搜索接口
+   *（client_search_cp，海外 IP 实测可用），与网易云 song_url_v1 → song_url_match 同级 fallback。
+   */
   private async searchTencent(keyword: string, limit = 20, page = 1): Promise<Track[]> {
     // Early Exit: empty keyword
     if (!keyword.trim()) return []
 
+    const desktop = await this.searchTencentDesktop(keyword, limit, page)
+    if (desktop.length > 0) return desktop
+
+    const signed = await this.searchTencentSigned(keyword, limit, page)
+    if (signed.length > 0) return signed
+
+    const legacy = await this.searchTencentLegacy(keyword, limit, page)
+    if (legacy.length > 0) return legacy
+
+    logger.warn(`Tencent search exhausted all sources for "${keyword}"`)
+    return []
+  }
+
+  /** 新版 Desktop 搜索（明文 musicu.fcg）。 */
+  private async searchTencentDesktop(keyword: string, limit: number, page: number): Promise<Track[]> {
     try {
       const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
       const payload = {
@@ -479,48 +500,105 @@ export class MusicProvider {
         }).then((res) => res.json() as Promise<TencentSearchResponse>),
       )
 
-      // Fail Fast: timeout or null response
       if (!response) {
         logger.warn(`Tencent search timeout for "${keyword}"`)
         return []
       }
 
       const result = response['music.search.SearchCgiService.DoSearchForQQMusicDesktop']
-      // Fail Fast: invalid response code or missing data
       if (result?.code !== 0 || !result?.data?.body?.song?.list) {
         logger.warn(`Tencent search failed: code ${result?.code}`)
         return []
       }
 
-      const songList = result.data.body.song.list
-
-      // Transform to Track format (Atomic Predictability: pure transformation)
-      const tracks: Track[] = songList.map((song) => ({
-        id: nanoid(),
-        source: 'tencent' as const,
-        sourceId: song.mid,
-        title: song.name || song.title || 'Unknown',
-        artist: song.singer?.map((s) => s.name).filter(Boolean) || ['Unknown'],
-        album: song.album?.name || '',
-        duration: song.interval || 0, // already in seconds
-        cover: song.album?.pmid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.album.pmid}.jpg` : '',
-        urlId: song.mid,
-        lyricId: song.mid,
-        picId: song.album?.mid || '',
-        mediaMid: song.file?.media_mid || '',
-        // VIP 判断: pay_month=1 月度会员, pay_down=1 付费下载, msgpay>0 VIP 标志
-        vip: song.pay?.pay_month === 1 || song.pay?.pay_down === 1 || (song.action?.msgpay ?? 0) > 0,
-      }))
-
-      // Register into track registry and search index
-      this.registerTracks(tracks)
-
-      logger.info(`Search "${keyword}" on tencent: ${tracks.length} results`)
-      return tracks
+      return this.completeTencentSearch(
+        keyword,
+        this.tencentSearchSongsToTracks(result.data.body.song.list),
+        'desktop',
+      )
     } catch (error) {
       logger.error('Tencent search failed:', error)
       return []
     }
+  }
+
+  /** 签名版搜索（musics.fcg，海外 IP 明文接口被风控时仍可发起请求）。 */
+  private async searchTencentSigned(keyword: string, limit: number, page: number): Promise<Track[]> {
+    try {
+      const response = await this.signedTencentRequest({
+        module: 'music.search.SearchCgiService',
+        method: 'DoSearchForQQMusicDesktop',
+        param: {
+          num_per_page: limit,
+          page_num: page,
+          search_type: 0,
+          query: keyword,
+          grp: 1,
+        },
+      })
+      const songList = response?.req?.data?.body?.song?.list
+      if (!Array.isArray(songList) || songList.length === 0) {
+        logger.warn(`Tencent signed search returned empty for "${keyword}"`)
+        return []
+      }
+      return this.completeTencentSearch(keyword, this.tencentSearchSongsToTracks(songList), 'signed')
+    } catch (err) {
+      logger.error('Tencent signed search failed:', err)
+      return []
+    }
+  }
+
+  /** 旧版 Web 搜索（client_search_cp，海外 IP 实测可用）。 */
+  private async searchTencentLegacy(keyword: string, limit: number, page: number): Promise<Track[]> {
+    try {
+      const url = `https://c.y.qq.com/soso/fcgi-bin/client_search_cp?format=json&p=${page}&n=${limit}&w=${encodeURIComponent(keyword)}&aggr=1&lossless=1&cr=1&new_json=1`
+      const response = await withTimeout(
+        fetch(url, {
+          headers: {
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          },
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+      const songList = (response as any)?.data?.song?.list
+      if (!Array.isArray(songList) || songList.length === 0) {
+        logger.warn(`Tencent legacy search returned empty for "${keyword}"`)
+        return []
+      }
+      return this.completeTencentSearch(keyword, this.tencentSearchSongsToTracks(songList), 'legacy')
+    } catch (err) {
+      logger.error('Tencent legacy search failed:', err)
+      return []
+    }
+  }
+
+  private completeTencentSearch(keyword: string, tracks: Track[], via: string): Track[] {
+    this.registerTracks(tracks)
+    logger.info(`Search "${keyword}" on tencent (${via}): ${tracks.length} results`)
+    return tracks
+  }
+
+  private tencentSearchSongsToTracks(songs: TencentSearchSong[]): Track[] {
+    return songs.map((song) => ({
+      id: nanoid(),
+      source: 'tencent' as const,
+      sourceId: song.mid,
+      title: song.name || song.title || 'Unknown',
+      artist: song.singer?.map((s) => s.name).filter(Boolean) || ['Unknown'],
+      album: song.album?.name || song.album?.title || '',
+      duration: song.interval || 0, // already in seconds
+      cover: song.album?.pmid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.album.pmid}.jpg` : '',
+      urlId: song.mid,
+      lyricId: song.mid,
+      picId: song.album?.mid || '',
+      mediaMid: song.file?.media_mid || '',
+      // VIP 判断: pay_month=1 月度会员, pay_down=1 付费下载, pay_play=1 需要 VIP, msgpay>0 VIP 标志
+      vip:
+        song.pay?.pay_month === 1 ||
+        song.pay?.pay_down === 1 ||
+        song.pay?.pay_play === 1 ||
+        (song.action?.msgpay ?? 0) > 0,
+    }))
   }
 
   /**
@@ -1091,6 +1169,11 @@ export class MusicProvider {
     }
     if (first.reason === 'timeout') return first
 
+    // 权限拒绝（104003/104013）与 media_mid 无关，直接分类返回，避免多余请求。
+    if (first.upstreamCode === 104003 || first.upstreamCode === 104013) {
+      return this.classifyTencentStreamFailure(first.upstreamCode, cookie)
+    }
+
     // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
     const detailMediaMid = await this.fetchTencentMediaMid(urlId)
     if (detailMediaMid && detailMediaMid !== registryMediaMid) {
@@ -1103,7 +1186,11 @@ export class MusicProvider {
       if (retry.upstreamCode) first.upstreamCode = retry.upstreamCode
     }
 
-    const denied = first.upstreamCode === 104003 || first.upstreamCode === 104013
+    return this.classifyTencentStreamFailure(first.upstreamCode, cookie)
+  }
+
+  private classifyTencentStreamFailure(upstreamCode: number | undefined, cookie?: string): StreamUrlResult {
+    const denied = upstreamCode === 104003 || upstreamCode === 104013
     return {
       url: null,
       reason: denied ? (cookie ? 'vip_or_copyright' : 'login_required') : 'upstream_failed',
@@ -1116,6 +1203,13 @@ export class MusicProvider {
   }
 
   /** 针对给定 media_mid 调用一次当前 QQ 音乐 vkey 接口。 */
+  /**
+   * 针对给定 media_mid 依次尝试三个 vkey 通道（与网易云 song_url_v1 → song_url_match
+   * 同级的 fallback 策略）：
+   * 1. 明文 musicu.fcg `music.vkey.GetVkey`（新版，国内正常）；海外 IP 返回 500001；
+   * 2. 签名版 musics.fcg 同一模块（海外 IP 可到达，匿名返回 104003，登录后可解锁）；
+   * 3. 旧版 `vkey.GetVkeyServer`（musicu.fcg GET，海外 IP 实测可用）。
+   */
   private async callTencentVkey(
     songMid: string,
     mediaMid: string,
@@ -1124,123 +1218,152 @@ export class MusicProvider {
     cookie?: string,
   ): Promise<StreamUrlResult & { upstreamCode?: number }> {
     const filenames = candidates.map((c) => `${c.code}${mediaMid}${c.ext}`)
-    const payload = {
+    const songmids = filenames.map(() => songMid)
+    const songtypes = filenames.map(() => 0)
+    const guid = String(Math.floor(1e9 + Math.random() * 9e9))
+    const baseHeaders: Record<string, string> = {
+      Referer: 'https://y.qq.com',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+    }
+    if (cookie) baseHeaders.Cookie = cookie
+
+    // 1) 明文 musicu.fcg
+    const plainPayload = {
       comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
       req: {
         module: 'music.vkey.GetVkey',
         method: 'UrlGetVkey',
-        param: {
-          uin,
-          filename: filenames,
-          guid: String(Math.floor(1e9 + Math.random() * 9e9)),
-          songmid: filenames.map(() => songMid),
-          songtype: filenames.map(() => 0),
-          ctx: 0,
-        },
+        param: { uin, filename: filenames, guid, songmid: songmids, songtype: songtypes, ctx: 0 },
       },
     }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Referer: 'https://y.qq.com',
-      'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
+    let resolved = await this.resolveTencentVkeyAttempt(
+      this.safeTencentFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
+        method: 'POST',
+        headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(plainPayload),
+      }),
+    )
+    if (resolved.url) {
+      logger.info(`Tencent vkey ok (plain): ${songMid} media=${mediaMid} uin=${uin || 'anon'}`)
+      return { url: resolved.url }
     }
-    if (cookie) headers.Cookie = cookie
+    if (resolved.timeout) return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
+    const firstCode = resolved.upstreamCode
 
+    // 2) 签名版 musics.fcg
+    const signedData = {
+      comm: { cv: 4747474, ct: 24, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', notice: 0 },
+      req: {
+        module: 'music.vkey.GetVkey',
+        method: 'UrlGetVkey',
+        param: { uin, filename: filenames, guid, songmid: songmids, songtype: songtypes, ctx: 0 },
+      },
+    }
+    const sign = tencentAuth.createTencentSign(signedData)
+    resolved = await this.resolveTencentVkeyAttempt(
+      this.safeTencentFetch(`https://u.y.qq.com/cgi-bin/musics.fcg?sign=${sign}`, {
+        method: 'POST',
+        headers: { ...baseHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify(signedData),
+      }),
+    )
+    if (resolved.url) {
+      logger.info(`Tencent vkey ok (signed): ${songMid} media=${mediaMid} uin=${uin || 'anon'}`)
+      return { url: resolved.url }
+    }
+    if (resolved.timeout) return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
+    const secondCode = resolved.upstreamCode || firstCode
+
+    // 3) 旧版 vkey.GetVkeyServer（GET，海外 IP 实测可用）
+    const legacyPayload = {
+      req_0: {
+        module: 'vkey.GetVkeyServer',
+        method: 'CgiGetVkey',
+        param: { guid, songmid: songmids, filename: filenames, songtype: songtypes, uin, loginflag: 1, platform: '20' },
+      },
+    }
+    const legacyUrl = `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&platform=yqq.json&needNewCode=0&data=${encodeURIComponent(JSON.stringify(legacyPayload))}`
+    resolved = await this.resolveTencentVkeyAttempt(
+      this.safeTencentFetch(legacyUrl, { method: 'GET', headers: baseHeaders }),
+    )
+    if (resolved.url) {
+      logger.info(`Tencent vkey ok (legacy): ${songMid} media=${mediaMid} uin=${uin || 'anon'}`)
+      return { url: resolved.url }
+    }
+    if (resolved.timeout) return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
+    const upstreamCode = resolved.upstreamCode || secondCode
+
+    logger.warn(`Tencent vkey empty across all channels: ${songMid} media=${mediaMid}`, { upstreamCode })
+    return { url: null, reason: 'upstream_failed', detail: 'QQ 音乐未返回可用播放链接', upstreamCode }
+  }
+
+  /** 统一解析三种 vkey 响应形态（req.data / req_0.data），并吞掉网络异常。 */
+  private async resolveTencentVkeyAttempt(
+    fetchPromise: Promise<Record<string, any> | null>,
+  ): Promise<{ url: string | null; upstreamCode: number; timeout: boolean }> {
+    let response: Record<string, any> | null = null
     try {
-      const response = await withTimeout(
-        fetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        }).then((res) => res.json() as Promise<Record<string, any>>),
-      )
-
-      if (!response) {
-        logger.warn(`Tencent vkey timeout: ${songMid} media=${mediaMid}`)
-        return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
-      }
-
-      const data = (response as any)?.req?.data
-      const urlinfo: Array<Record<string, any>> = Array.isArray(data?.midurlinfo) ? data.midurlinfo : []
-      let upstreamCode = 0
-      for (const entry of urlinfo) {
-        const result = Number(entry?.result ?? 0)
-        if (result !== 0) {
-          if (upstreamCode === 0) upstreamCode = result
-          continue
-        }
-        const purl = typeof entry?.purl === 'string' ? entry.purl : ''
-        if (purl) {
-          const sip =
-            Array.isArray(data?.sip) && data.sip.length > 0
-              ? String(data.sip[0])
-              : TENCENT_STREAM_FALLBACK_DOMAIN
-          const url = normalizeStreamUrl(`${sip}${purl}`)
-          if (url) {
-            logger.info(`Tencent vkey ok: ${songMid} media=${mediaMid} uin=${uin || 'anon'}`)
-            return { url }
-          }
-        }
-      }
-
-      logger.warn(`Tencent vkey empty: ${songMid} media=${mediaMid}`, {
-        code: (response as any)?.req?.code,
-        upstreamCode,
-      })
-      return {
-        url: null,
-        reason: 'upstream_failed',
-        detail: 'QQ 音乐未返回可用播放链接',
-        upstreamCode,
-      }
+      response = await fetchPromise
     } catch (err) {
-      logger.error(`Tencent vkey failed for ${songMid}:`, err)
-      return { url: null, reason: 'upstream_failed', detail: 'QQ 音乐播放链接请求异常' }
+      logger.error('Tencent vkey request failed:', err)
+      return { url: null, upstreamCode: 0, timeout: false }
     }
+    if (!response) return { url: null, upstreamCode: 0, timeout: true }
+
+    const data = (response as any)?.req?.data ?? (response as any)?.req_0?.data
+    const urlinfo: Array<Record<string, any>> = Array.isArray(data?.midurlinfo) ? data.midurlinfo : []
+    let upstreamCode = 0
+    for (const entry of urlinfo) {
+      const result = Number(entry?.result ?? 0)
+      if (result !== 0) {
+        if (upstreamCode === 0) upstreamCode = result
+        continue
+      }
+      const purl = typeof entry?.purl === 'string' ? entry.purl : ''
+      if (purl) {
+        const sip =
+          Array.isArray(data?.sip) && data.sip.length > 0 ? String(data.sip[0]) : TENCENT_STREAM_FALLBACK_DOMAIN
+        const url = normalizeStreamUrl(`${sip}${purl}`)
+        if (url) return { url, upstreamCode: 0, timeout: false }
+      }
+    }
+    return { url: null, upstreamCode, timeout: false }
+  }
+
+  /** withTimeout 包装的 JSON fetch：超时返回 null。 */
+  private safeTencentFetch(url: string, init: RequestInit): Promise<Record<string, any> | null> {
+    return withTimeout(fetch(url, init).then((res) => res.json() as Promise<Record<string, any>>))
   }
 
   /**
    * 通过当前可用的 track-info 接口获取 media_mid。
    * 旧版 UniformRuleClass 已被风控（500003），UniformRuleCtrl 是现行客户端使用的模块。
    */
-  private async fetchTencentMediaMid(mid: string): Promise<string | null> {
-    try {
-      const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
-      const payload = {
-        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
-        'music.trackInfo.UniformRuleCtrl': {
-          module: 'music.trackInfo.UniformRuleCtrl',
-          method: 'CgiGetTrackInfo',
-          param: {
-            ctx: 0,
-            client: 1,
-            mids: [mid],
-            types: [0],
-            modify_stamp: [0],
-          },
-        },
-      }
-
-      const response = await withTimeout(
-        fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Referer: 'https://y.qq.com',
-            'User-Agent': 'QQ%E9%9F%B3%E4%B9%90/73222',
-          },
-          body: JSON.stringify(payload),
-        }).then((res) => res.json() as Promise<Record<string, any>>),
-      )
-
-      const track = (response as any)?.['music.trackInfo.UniformRuleCtrl']?.data?.tracks?.[0]
-      const mediaMid = track?.file?.media_mid
-      return typeof mediaMid === 'string' && mediaMid ? mediaMid : null
-    } catch (err) {
-      logger.error(`Tencent media_mid fetch failed for ${mid}`, err)
-      return null
+  /** 签名版 musicu 请求（musics.fcg，zzc 签名）。 */
+  private async signedTencentRequest(req: Record<string, unknown>): Promise<Record<string, any> | null> {
+    const data = {
+      comm: { cv: 4747474, ct: 24, format: 'json', inCharset: 'utf-8', outCharset: 'utf-8', notice: 0 },
+      req,
     }
+    const sign = tencentAuth.createTencentSign(data)
+    const url = `https://u.y.qq.com/cgi-bin/musics.fcg?sign=${sign}`
+    return withTimeout(
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          Referer: 'https://y.qq.com/',
+        },
+        body: JSON.stringify(data),
+      }).then((res) => res.json() as Promise<Record<string, any>>),
+    )
+  }
+
+  /** 通过单曲详情接口恢复 media_mid（明文 → 签名 → 旧版逐级降级）。 */
+  private async fetchTencentMediaMid(mid: string): Promise<string | null> {
+    const track = await this.fetchTencentTrackById(mid)
+    return track?.mediaMid || null
   }
 
   async getLyric(
@@ -1495,28 +1618,31 @@ export class MusicProvider {
   /**
    * Fetch a single Tencent track by song mid via QQ Music Desktop API.
    */
+  /**
+   * Fetch a single Tencent track by song mid.
+   * 主路径为新版 UniformRuleCtrl（明文 musicu.fcg）；海外 IP 被 500001 风控时
+   * 依次降级到签名版 musics.fcg 与旧版 fcg_play_single_song（香港 IP 实测可用）。
+   */
   private async fetchTencentTrackById(mid: string): Promise<Track | null> {
+    const trackData = await this.fetchTencentTrackData(mid)
+    if (!trackData) return null
+    const track = this.rawToTrack({ musicData: trackData }, 'tencent')
+    this.registerTracks([track])
+    return track
+  }
+
+  private async fetchTencentTrackData(mid: string): Promise<Record<string, any> | null> {
+    // 1) 明文 UniformRuleCtrl
     try {
       const url = 'https://u.y.qq.com/cgi-bin/musicu.fcg'
       const payload = {
-        comm: {
-          ct: '6',
-          cv: '80600',
-          tmeAppID: 'qqmusic',
-        },
+        comm: { ct: '6', cv: '80600', tmeAppID: 'qqmusic' },
         'music.trackInfo.UniformRuleCtrl': {
           module: 'music.trackInfo.UniformRuleCtrl',
           method: 'CgiGetTrackInfo',
-          param: {
-            mids: [mid],
-            types: [0],
-            ctx: 0,
-            client: 1,
-            modify_stamp: [0],
-          },
+          param: { mids: [mid], types: [0], ctx: 0, client: 1, modify_stamp: [0] },
         },
       }
-
       const response = await withTimeout(
         fetch(url, {
           method: 'POST',
@@ -1528,26 +1654,52 @@ export class MusicProvider {
           body: JSON.stringify(payload),
         }).then((res) => res.json() as Promise<Record<string, any>>),
       )
-
       if (!response) {
         logger.warn(`Tencent track info timeout: ${mid}`)
         return null
       }
-
       const result = response['music.trackInfo.UniformRuleCtrl']
-      if (result?.code !== 0 || !result?.data?.tracks?.[0]) {
-        logger.warn(`Tencent track info failed for ${mid}: code ${result?.code}`)
-        return null
+      if (result?.code === 0 && result?.data?.tracks?.[0]) {
+        return result.data.tracks[0] as Record<string, any>
       }
-
-      const trackData = result.data.tracks[0]
-      const track = this.rawToTrack({ musicData: trackData }, 'tencent')
-      this.registerTracks([track])
-      return track
+      logger.warn(`Tencent track info failed (plain): ${mid} code ${result?.code}`)
     } catch (err) {
-      logger.error(`Tencent track info failed: ${mid}`, err)
-      return null
+      logger.error(`Tencent track info failed (plain): ${mid}`, err)
     }
+
+    // 2) 签名版 musics.fcg
+    try {
+      const response = await this.signedTencentRequest({
+        module: 'music.trackInfo.UniformRuleCtrl',
+        method: 'CgiGetTrackInfo',
+        param: { mids: [mid], types: [0], ctx: 0, client: 1, modify_stamp: [0] },
+      })
+      const track = response?.req?.data?.tracks?.[0]
+      if (track) return track as Record<string, any>
+      logger.warn(`Tencent track info failed (signed): ${mid}`)
+    } catch (err) {
+      logger.error(`Tencent track info failed (signed): ${mid}`, err)
+    }
+
+    // 3) 旧版 fcg_play_single_song（海外 IP 实测可用）
+    try {
+      const url = `https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?songmid=${encodeURIComponent(mid)}&platform=yqq&format=json`
+      const response = await withTimeout(
+        fetch(url, {
+          headers: {
+            Referer: 'https://y.qq.com',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+          },
+        }).then((res) => res.json() as Promise<Record<string, any>>),
+      )
+      const list = (response as any)?.data
+      if (Array.isArray(list) && list[0]) return list[0] as Record<string, any>
+      logger.warn(`Tencent track info failed (legacy): ${mid}`)
+    } catch (err) {
+      logger.error(`Tencent track info failed (legacy): ${mid}`, err)
+    }
+
+    return null
   }
 
   /**
