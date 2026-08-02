@@ -639,28 +639,19 @@ async function _executePlayNext(
 
   if (!nextTrack) {
     // Fallback: if default queue is configured, randomly pick one and play
-    const room = roomRepo.get(roomId)
-    if (room && room.defaultQueue.length > 0) {
-      const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
-      const picked = room.defaultQueue[randomIndex]
-      const added = queueService.addTrack(roomId, picked)
-      if (added) {
-        io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
-        const newTrack = room.queue.length > 0 ? room.queue[room.queue.length - 1] : null
-        if (newTrack) {
-          const success = await _playTrackInRoom(io, roomId, newTrack)
-          if (!success) {
-            // _playTrackInRoom failed (e.g. stream URL could not be resolved).
-            // Retry with a different random pick instead of stopping playback,
-            // so a single dead track doesn't stall the room.
-            logger.warn(`Default queue track "${picked.title}" failed to play, trying another`, { roomId })
-            playNextTrackInRoom(io, roomId, playMode, { skipDebounce: true })
-            return
-          }
-          lastNextTimestamp.set(roomId, Date.now())
-          return
-        }
+    const picked = pickFromDefaultQueue(io, roomId)
+    if (picked) {
+      const success = await _playTrackInRoom(io, roomId, picked)
+      if (!success) {
+        // _playTrackInRoom failed (e.g. stream URL could not be resolved).
+        // Retry with a different random pick instead of stopping playback,
+        // so a single dead track doesn't stall the room.
+        logger.warn(`Default queue track "${picked.title}" failed to play, trying another`, { roomId })
+        playNextTrackInRoom(io, roomId, playMode, { skipDebounce: true })
+        return
       }
+      lastNextTimestamp.set(roomId, Date.now())
+      return
     }
     stopPlayback(io, roomId)
     return
@@ -713,6 +704,27 @@ export function playPrevTrackInRoom(
 // Playback sync for newly-joined clients
 // ---------------------------------------------------------------------------
 
+/** 主队列为空且默认播放列表非空时，随机取一首加入主队列并广播，返回加入的歌曲。 */
+function pickFromDefaultQueue(io: TypedServer, roomId: string): Track | null {
+  const room = roomRepo.get(roomId)
+  if (!room || room.defaultQueue.length === 0) return null
+  const picked = room.defaultQueue[Math.floor(Math.random() * room.defaultQueue.length)]
+  const added = queueService.addTrack(roomId, picked)
+  if (!added) return null
+  io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
+  return room.queue[room.queue.length - 1] ?? null
+}
+
+/**
+ * 主队列为空时从默认播放列表随机取一首加入并播放。
+ * 供 QUEUE_CLEAR 等场景在清空队列后接续播放；没有可用歌曲时返回 false。
+ */
+export async function playFromDefaultQueue(io: TypedServer, roomId: string): Promise<boolean> {
+  const picked = pickFromDefaultQueue(io, roomId)
+  if (!picked) return false
+  return playTrackInRoom(io, roomId, picked)
+}
+
 /**
  * Send current playback state to a socket that just joined a room.
  * Handles auto-resume when alone, and auto-play from queue.
@@ -762,15 +774,10 @@ export async function syncPlaybackToSocket(
     // No current track but queue has items → start playing from queue
     const firstTrack = room.queue[0]
     await playTrackInRoom(io, roomId, firstTrack)
-  } else if (isAloneInRoom && room.defaultQueue.length > 0) {
+  } else if (isAloneInRoom) {
     // No current track, queue empty, but default queue has items → random pick
-    const randomIndex = Math.floor(Math.random() * room.defaultQueue.length)
-    const picked = room.defaultQueue[randomIndex]
-    const added = queueService.addTrack(roomId, picked)
-    if (added) {
-      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
-      await playTrackInRoom(io, roomId, picked)
-    }
+    const picked = pickFromDefaultQueue(io, roomId)
+    if (picked) await playTrackInRoom(io, roomId, picked)
   }
 }
 

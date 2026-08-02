@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   checkSocketRateLimit: vi.fn<() => Promise<boolean>>(),
   createSystemMessage: vi.fn(),
   autoPlayIfEmpty: vi.fn(),
+  stopPlaybackSafe: vi.fn(),
+  playFromDefaultQueue: vi.fn(),
 }))
 
 vi.mock('../middleware/socketRateLimiter.js', () => ({
@@ -20,6 +22,8 @@ vi.mock('../services/chatService.js', () => ({
 
 vi.mock('../services/playerService.js', () => ({
   autoPlayIfEmpty: mocks.autoPlayIfEmpty,
+  stopPlaybackSafe: mocks.stopPlaybackSafe,
+  playFromDefaultQueue: mocks.playFromDefaultQueue,
 }))
 
 import { registerQueueController } from './queueController.js'
@@ -145,6 +149,8 @@ beforeEach(() => {
     type: 'system',
   }))
   mocks.autoPlayIfEmpty.mockResolvedValue(undefined)
+  mocks.stopPlaybackSafe.mockResolvedValue(undefined)
+  mocks.playFromDefaultQueue.mockResolvedValue(true)
 })
 
 afterEach(() => {
@@ -304,5 +310,29 @@ describe('default queue rate limiting', () => {
     expect(fixture.room.defaultQueue).toEqual([existing])
     expect(fixture.ioEmit).not.toHaveBeenCalled()
     expect(mocks.createSystemMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('queue clear default queue fallback', () => {
+  it('picks from the default queue after clearing when a default queue exists', async () => {
+    const fixture = mount('owner', { defaultQueue: [makeTrack('default-1')] })
+    fixture.room.queue = [makeTrack('queued-1')]
+
+    await fixture.dispatch(EVENTS.QUEUE_CLEAR)
+
+    expect(fixture.room.queue).toEqual([])
+    expect(mocks.stopPlaybackSafe).toHaveBeenCalledTimes(1)
+    expect(mocks.playFromDefaultQueue).toHaveBeenCalledWith(expect.anything(), fixture.room.id)
+    expect(fixture.ioEmit).toHaveBeenCalledWith(EVENTS.QUEUE_UPDATED, { type: 'clear' })
+  })
+
+  it('still calls the filler (no-op) when no default queue is configured', async () => {
+    const fixture = mount('owner')
+    fixture.room.queue = [makeTrack('queued-1')]
+
+    await fixture.dispatch(EVENTS.QUEUE_CLEAR)
+
+    expect(mocks.stopPlaybackSafe).toHaveBeenCalledTimes(1)
+    expect(mocks.playFromDefaultQueue).toHaveBeenCalledWith(expect.anything(), fixture.room.id)
   })
 })

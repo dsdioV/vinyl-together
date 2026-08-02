@@ -281,6 +281,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       // concurrent autoPlayIfEmpty from a simultaneous QUEUE_ADD.
       await playerService.stopPlaybackSafe(io, ctx.roomId)
 
+      // 主队列清空后，若配置了默认播放列表则随机取一首接续播放
+      await playerService.playFromDefaultQueue(io, ctx.roomId)
+
       logger.info(`Queue cleared`, { roomId: ctx.roomId })
     }),
   )
