@@ -85,6 +85,7 @@ export const SETTING_DEFAULTS = {
   bgFps: 30,
   bgFlowSpeed: 2,
   bgRenderScale: 0.5,
+  pureBlackBackground: false,
 } satisfies Record<string, unknown>
 
 export const storage = {
@@ -172,6 +173,10 @@ export const storage = {
     return [0.25, 0.5, 0.75, 1].includes(scale) ? scale : SETTING_DEFAULTS.bgRenderScale
   },
   setBgRenderScale: (v: number) => safeSet('bgRenderScale', String(v)),
+
+  // 纯黑背景（不使用专辑封面流体背景）
+  getPureBlackBackground: () => safeGet('pureBlackBackground') === 'true',
+  setPureBlackBackground: (v: boolean) => safeSet('pureBlackBackground', String(v)),
 
   // Auth cookie persistence
   getAuthCookies: (): StoredCookie[] => safeGetJSON<StoredCookie[]>('auth-cookies') ?? [],

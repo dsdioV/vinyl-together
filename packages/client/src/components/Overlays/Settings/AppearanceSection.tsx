@@ -1,6 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { SettingRow } from './SettingRow'
 
@@ -62,6 +63,14 @@ export function AppearanceSection() {
               <SelectItem value="1">100%</SelectItem>
             </SelectContent>
           </Select>
+        </SettingRow>
+
+        <SettingRow
+          label="纯黑背景"
+          description="不使用专辑封面与流动背景，改为纯黑底色"
+          onReset={s.pureBlackBackground !== s.pureBlackBackgroundDefault ? s.resetPureBlackBackground : undefined}
+        >
+          <Switch checked={s.pureBlackBackground} onCheckedChange={s.setPureBlackBackground} />
         </SettingRow>
       </div>
     </div>

@@ -60,6 +60,7 @@ export function AudioPlayer({ onSeek, onOpenChat, onOpenQueue, onOpenHistory, ch
   const bgFps = useSettingsStore((s) => s.bgFps)
   const bgFlowSpeed = useSettingsStore((s) => s.bgFlowSpeed)
   const bgRenderScale = useSettingsStore((s) => s.bgRenderScale)
+  const pureBlackBackground = useSettingsStore((s) => s.pureBlackBackground)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
 
   // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
@@ -92,9 +93,9 @@ export function AudioPlayer({ onSeek, onOpenChat, onOpenQueue, onOpenHistory, ch
   } as const
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden">
+    <div className={cn('relative flex h-full flex-col overflow-hidden', pureBlackBackground && 'bg-black')}>
       {/* AMLL fluid dynamic background powered by pixi.js */}
-      {proxiedCover && (
+      {proxiedCover && !pureBlackBackground && (
         <div className="pointer-events-none absolute inset-0 z-0 opacity-80 saturate-[1.3]">
           <BackgroundRender
             album={proxiedCover}
