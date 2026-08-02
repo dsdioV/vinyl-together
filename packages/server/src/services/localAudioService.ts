@@ -126,6 +126,11 @@ function clampProgress(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
 }
 
+/** 上传阶段的最大进度（0.95），为后续排队/分析/转码保留单调递增空间。 */
+const RECEIVING_MAX_PROGRESS = 0.95
+/** 转码开始进度。 */
+const TRANSCODING_START_PROGRESS = 0.96
+
 function isActiveStage(stage: LocalAudioTask['stage']): stage is ActiveStage {
   return stage !== 'ready' && stage !== 'failed' && stage !== 'cancelled'
 }
@@ -821,7 +826,10 @@ export class LocalAudioService {
         const now = Date.now()
         if (now - lastEmitAt >= 200 || received === task.fileSize) {
           lastEmitAt = now
-          this.updateTask(task, { receivedBytes: received, progress: clampProgress(received / task.fileSize) })
+          this.updateTask(task, {
+            receivedBytes: received,
+            progress: clampProgress((received / task.fileSize) * RECEIVING_MAX_PROGRESS),
+          })
         }
       }
 
@@ -838,7 +846,7 @@ export class LocalAudioService {
       detachWriterListeners()
       writer = undefined
       task.requestDestroy = undefined
-      this.updateTask(task, { stage: 'queued', progress: 0, receivedBytes: received })
+      this.updateTask(task, { stage: 'queued', progress: RECEIVING_MAX_PROGRESS, receivedBytes: received })
       void this.processTask(task).catch((error: unknown) => {
         // The processing body handles expected media/quota failures itself.
         // Keep an unexpected boundary failure from becoming an unhandled
@@ -933,7 +941,7 @@ export class LocalAudioService {
       let committed = false
       task.failedOutputDir = assetDir
       try {
-        this.updateTask(task, { stage: 'probing', progress: 0 })
+        this.updateTask(task, { stage: 'probing', progress: RECEIVING_MAX_PROGRESS })
         const metadata = await this.media.probeFile(task.inputPath, {
           originalName: task.originalFileName,
           sizeBytes: task.fileSize,
@@ -952,7 +960,7 @@ export class LocalAudioService {
         fallbackPath = profile.fallback ? path.join(assetDir, `fallback.${profile.fallback.extension}`) : undefined
         coverPath = path.join(assetDir, 'cover.jpg')
 
-        this.updateTask(task, { stage: 'transcoding', progress: 0.05 })
+        this.updateTask(task, { stage: 'transcoding', progress: TRANSCODING_START_PROGRESS })
         await this.media.transcode({
           inputPath: task.inputPath,
           outputPath: primaryPath,
@@ -962,7 +970,7 @@ export class LocalAudioService {
           maxOutputBytes: audioOutputBudget,
         })
         const primaryStat = await stat(primaryPath)
-        this.updateTask(task, { progress: profile.fallback ? 0.45 : 0.8 })
+        this.updateTask(task, { progress: profile.fallback ? 0.97 : 0.98 })
         let fallbackSize = 0
         if (profile.fallback && fallbackPath) {
           const fallbackBudget = audioOutputBudget - primaryStat.size
@@ -978,7 +986,7 @@ export class LocalAudioService {
             maxOutputBytes: fallbackBudget,
           })
           fallbackSize = (await stat(fallbackPath)).size
-          this.updateTask(task, { progress: 0.8 })
+          this.updateTask(task, { progress: 0.98 })
         }
 
         let coverSize = 0

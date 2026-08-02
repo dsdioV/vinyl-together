@@ -110,7 +110,7 @@ export function uploadLocalAudioContent(
   roomId: string,
   taskId: string,
   file: File,
-  onProgress: (receivedBytes: number, totalBytes: number) => void,
+  onProgress?: (receivedBytes: number, totalBytes: number) => void,
 ): UploadHandle {
   const xhr = new XMLHttpRequest()
   let settled = false
@@ -119,7 +119,7 @@ export function uploadLocalAudioContent(
     xhr.open('PUT', localAudioTaskContentApi(roomId, taskId))
     xhr.withCredentials = true
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(event.loaded, event.total)
+      if (event.lengthComputable && onProgress) onProgress(event.loaded, event.total)
     }
     xhr.onload = async () => {
       if (settled) return

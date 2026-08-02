@@ -210,14 +210,9 @@ export function useLocalAudioUploadRunner(): void {
         })
         activeTaskIdRef.current = serverTaskId
 
-        const handle = uploadLocalAudioContent(roomId, serverTaskId, file, (receivedBytes, totalBytes) => {
-          useLocalAudioStore.getState().updateTask(serverTaskId, {
-            stage: 'receiving',
-            receivedBytes,
-            totalBytes,
-            progress: totalBytes > 0 ? receivedBytes / totalBytes : undefined,
-          })
-        })
+        // 进度只以服务端 socket 事件（LOCAL_AUDIO_TASK_UPDATED）为准：XHR 的 loaded 是
+        // 网络栈乐观值，与服务端真实 receivedBytes 交替写入会导致进度条反复横跳。
+        const handle = uploadLocalAudioContent(roomId, serverTaskId, file)
         pipeline.handle = handle
         if (pipeline.cancelled || pipeline.detached || useRoomStore.getState().room?.id !== roomId) handle.abort()
 

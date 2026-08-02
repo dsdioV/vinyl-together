@@ -659,6 +659,8 @@ describe('LocalAudioService receive/cancel behavior', () => {
     await vi.waitFor(() =>
       expect(service.snapshot(roomId).tasks.find((item) => item.taskId === taskId)?.stage).toBe('probing'),
     )
+    // 进度不应回退：分析阶段保持上传后的高位（原实现会重置为 0）
+    expect(service.snapshot(roomId).tasks.find((item) => item.taskId === taskId)?.progress).toBeGreaterThan(0.9)
 
     const firstCancel = service.cancelTask(roomId, taskId, actor('owner', 'owner'))
     const secondCancel = service.cancelTask(roomId, taskId, actor('owner', 'owner'))
@@ -695,6 +697,8 @@ describe('LocalAudioService receive/cancel behavior', () => {
     await vi.waitFor(() =>
       expect(service.snapshot(roomId).tasks.find((item) => item.taskId === taskId)?.stage).toBe('transcoding'),
     )
+    // 转码开始进度应保持单调（高于上传阶段的 0.95 起点）
+    expect(service.snapshot(roomId).tasks.find((item) => item.taskId === taskId)?.progress).toBeGreaterThan(0.95)
 
     await service.cleanupRoom(roomId)
     release()
@@ -1037,6 +1041,8 @@ describe('LocalAudioService processing and queue identity', () => {
       await vi.waitFor(() =>
         expect(service.snapshot(roomId).tasks.find((item) => item.taskId === queuedTaskId)?.stage).toBe('queued'),
       )
+      // 上传完成后进度不应重置为 0
+      expect(service.snapshot(roomId).tasks.find((item) => item.taskId === queuedTaskId)?.progress).toBeGreaterThan(0.9)
 
       const next = await service.createTask(roomId, uploader, {
         fileName: 'next.mp3',
