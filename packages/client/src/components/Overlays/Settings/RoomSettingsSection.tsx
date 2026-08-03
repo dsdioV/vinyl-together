@@ -19,7 +19,7 @@ import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import type { AudioQuality } from '@music-together/shared'
-import { EVENTS, LIMITS, VOTE } from '@music-together/shared'
+import { EVENTS, LIMITS, VOTE, requiredVoteCount } from '@music-together/shared'
 import { Check, Copy, Lock, LockOpen, Pencil, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -88,6 +88,9 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
   const [voteThresholdPercent, setVoteThresholdPercent] = useState(() =>
     Math.round((room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD) * 100),
   )
+  // 当前人数下实际需要的票数与通过百分比（>= 语义，ceil 取整）
+  const neededVotes = requiredVoteCount(room?.users.length ?? 1, room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD)
+  const neededVotesPercent = Math.round((neededVotes / (room?.users.length ?? 1)) * 100)
   // Sync from room when it changes (e.g. another admin updated it)
   useEffect(() => {
     if (room?.voteThreshold !== undefined) {
@@ -394,7 +397,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
           <SettingRow
             label="投票通过率"
-            description={`当前：需要 ${Math.max(1, Math.round((room?.users.length ?? 1) * (room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD)))} / ${room?.users.length ?? 0} 人通过`}
+            description={`当前：需要 ${neededVotes} / ${room?.users.length ?? 0} 人（≥${neededVotesPercent}%）通过`}
           >
             <div className="flex items-center gap-1.5">
               <Input
@@ -528,7 +531,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
           <SettingRow
             label="投票通过率"
-            description={`当前：需要 ${Math.max(1, Math.round((room?.users.length ?? 1) * (room?.voteThreshold ?? VOTE.DEFAULT_THRESHOLD)))} / ${room?.users.length ?? 0} 人通过`}
+            description={`当前：需要 ${neededVotes} / ${room?.users.length ?? 0} 人（≥${neededVotesPercent}%）通过`}
           >
             <div className="flex items-center gap-1.5">
               <Input

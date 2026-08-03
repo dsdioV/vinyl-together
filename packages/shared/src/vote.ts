@@ -17,6 +17,16 @@ const PLAY_MODE_LABELS: Record<PlayMode, string> = {
   shuffle: '随机播放',
 }
 
+/**
+ * 计算让投票通过所需的最少人数：满足 approveCount / total >= threshold 的最小整数。
+ * 使用 ceil 而非 round（round 会让结果低于配置阈值，如 5 人 25% 只需 1 票 = 20%）。
+ * 引入极小容差避免浮点误差把恰好整除的比例（如 5×20%=1.0）错算成 2。
+ */
+export function requiredVoteCount(totalUsers: number, threshold: number): number {
+  const raw = totalUsers * threshold
+  return Math.max(1, Math.ceil(raw - 1e-9))
+}
+
 /** Get a human-readable label for a vote action, including payload context */
 export function getVoteActionLabel(action: VoteAction, payload?: Record<string, unknown>): string {
   if (action === 'set-mode' && payload?.mode) {

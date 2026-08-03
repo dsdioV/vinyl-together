@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid'
 import type { VoteAction, VoteState, User } from '@music-together/shared'
-import { TIMING } from '@music-together/shared'
+import { TIMING, requiredVoteCount } from '@music-together/shared'
 import { logger } from '../utils/logger.js'
 
 interface Vote {
@@ -43,7 +43,7 @@ export function createVote(
 ): Vote | null {
   if (activeVotes.has(roomId)) return null
 
-  const requiredVotes = Math.max(1, Math.round(totalUsers * threshold))
+  const requiredVotes = requiredVoteCount(totalUsers, threshold)
 
   const vote: Vote = {
     id: nanoid(8),
@@ -101,7 +101,12 @@ export function castVote(roomId: string, userId: string, approve: boolean): Cast
  *
  * Returns true if the vote state was modified (caller should broadcast updated state).
  */
-export function updateVoteThreshold(roomId: string, currentUserCount: number, threshold: number, departedUserId?: string): boolean {
+export function updateVoteThreshold(
+  roomId: string,
+  currentUserCount: number,
+  threshold: number,
+  departedUserId?: string,
+): boolean {
   const vote = activeVotes.get(roomId)
   if (!vote) return false
 
@@ -110,7 +115,7 @@ export function updateVoteThreshold(roomId: string, currentUserCount: number, th
     delete vote.votes[departedUserId]
   }
 
-  const newRequired = Math.max(1, Math.round(currentUserCount * threshold))
+  const newRequired = requiredVoteCount(currentUserCount, threshold)
   vote.requiredVotes = newRequired
   vote.totalUsers = currentUserCount
   logger.info(`Vote threshold updated: ${newRequired} required (${currentUserCount} users)`, { roomId })
