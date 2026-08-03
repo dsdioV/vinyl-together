@@ -5,6 +5,7 @@ export const PLATFORM_LABELS: Record<MusicSource, string> = {
   netease: '网易云音乐',
   tencent: 'QQ 音乐',
   kugou: '酷狗音乐',
+  bilibili: '哔哩哔哩',
 }
 
 /** Short platform labels (used in compact UI like tabs) */
@@ -12,6 +13,7 @@ export const PLATFORM_SHORT_LABELS: Record<MusicSource, string> = {
   netease: '网易云',
   tencent: 'QQ 音乐',
   kugou: '酷狗',
+  bilibili: 'Bilibili',
 }
 
 /** Tab highlight colors per platform */
@@ -19,6 +21,7 @@ export const PLATFORM_COLORS: Record<MusicSource, string> = {
   netease: 'data-[state=active]:text-red-500',
   tencent: 'data-[state=active]:text-green-500',
   kugou: 'data-[state=active]:text-blue-500',
+  bilibili: 'data-[state=active]:text-[#F45A8D]',
 }
 
 /** Active platform selector styles */
@@ -26,6 +29,7 @@ export const PLATFORM_ACTIVE: Record<MusicSource, string> = {
   netease: 'bg-red-500/15',
   tencent: 'bg-green-500/15',
   kugou: 'bg-blue-500/15',
+  bilibili: 'bg-[#F45A8D]/15',
 }
 
 /** Active platform text color */
@@ -33,6 +37,7 @@ export const PLATFORM_TEXT: Record<MusicSource, string> = {
   netease: 'text-red-500',
   tencent: 'text-green-500',
   kugou: 'text-blue-500',
+  bilibili: 'text-[#F45A8D]',
 }
 
 /** VIP level display labels (Netease vipType values) */

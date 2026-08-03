@@ -4,6 +4,7 @@ const OFFICIAL_HOSTS: Record<MusicSource, ReadonlySet<string>> = {
   netease: new Set(['music.163.com']),
   tencent: new Set(['y.qq.com']),
   kugou: new Set(['www.kugou.com']),
+  bilibili: new Set(['www.bilibili.com']),
 }
 
 function parseNeteaseUrl(url: URL): string | null {
@@ -36,6 +37,12 @@ function parseKugouUrl(url: URL): string | null {
   return url.pathname.match(/^\/yy\/special\/(?:single\/)?(\d+)(?:\.html)?\/?$/)?.[1] ?? null
 }
 
+function parseBilibiliUrl(url: URL): string | null {
+  const videoMatch = url.pathname.match(/^\/video\/(BV[0-9A-Za-z]+|av\d+)/i)
+  if (videoMatch) return videoMatch[1]
+  return null
+}
+
 /** Extract a platform resource ID from a supported official URL or a plain ID. */
 export function parsePlaylistInput(input: string, source: MusicSource): string | null {
   const trimmed = input.trim()
@@ -62,5 +69,7 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
       return parseTencentUrl(url)
     case 'kugou':
       return parseKugouUrl(url)
+    case 'bilibili':
+      return parseBilibiliUrl(url)
   }
 }

@@ -22,6 +22,7 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
   { id: 'tencent', label: 'QQ' },
   { id: 'kugou', label: '酷狗' },
+  { id: 'bilibili', label: 'Bilibili' },
 ]
 
 type PlaylistDetailContext = {
@@ -268,12 +269,16 @@ export function DefaultPlaylistSection() {
               <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
                 单曲
               </TabsTrigger>
-              <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
-                专辑
-              </TabsTrigger>
-              <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
-                歌单
-              </TabsTrigger>
+              {source !== 'bilibili' && (
+                <>
+                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                    专辑
+                  </TabsTrigger>
+                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                    歌单
+                  </TabsTrigger>
+                </>
+              )}
             </TabsList>
           </Tabs>
 
@@ -300,6 +305,7 @@ export function DefaultPlaylistSection() {
                     onClick={() => {
                       setSource(s.id)
                       resetState()
+                      if (s.id === 'bilibili') setSearchType('song')
                     }}
                   >
                     {s.label}
@@ -309,7 +315,9 @@ export function DefaultPlaylistSection() {
               <Input
                 placeholder={
                   searchType === 'song'
-                    ? '搜索歌曲...'
+                    ? source === 'bilibili'
+                      ? '搜索视频标题、UP 主...'
+                      : '搜索歌曲...'
                     : searchType === 'album'
                       ? '搜索专辑 / 编号...'
                       : '搜索歌单 / 编号...'

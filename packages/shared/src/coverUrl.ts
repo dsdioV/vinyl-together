@@ -4,6 +4,7 @@ const TRACK_COVER_HOSTS: Readonly<Record<MusicSource, ReadonlySet<string>>> = {
   netease: new Set(['p1.music.126.net', 'p2.music.126.net', 'p3.music.126.net', 'p4.music.126.net']),
   tencent: new Set(['y.gtimg.cn']),
   kugou: new Set(['imge.kugou.com', 'imgessl.kugou.com']),
+  bilibili: new Set(['i0.hdslb.com', 'i1.hdslb.com', 'i2.hdslb.com']),
 }
 
 const ALL_TRACK_COVER_HOSTS = new Set(Object.values(TRACK_COVER_HOSTS).flatMap((hosts) => Array.from(hosts)))

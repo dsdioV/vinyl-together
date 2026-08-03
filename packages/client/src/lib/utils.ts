@@ -31,6 +31,7 @@ export function toQueueTrackInput(track: Track): QueueTrackInput {
     source: track.source,
     sourceId: track.sourceId,
     urlId: track.urlId,
+    bilibiliCid: track.bilibiliCid,
     lyricId: track.lyricId,
     picId: track.picId,
     vip: track.vip,
@@ -46,6 +47,8 @@ export const getSourceUrl = (t: Pick<Track, 'source' | 'sourceId'>): string | nu
       return `https://y.qq.com/n/ryqq/songDetail/${t.sourceId}`
     case 'kugou':
       return `https://www.kugou.com/song/#hash=${t.sourceId}`
+    case 'bilibili':
+      return `https://www.bilibili.com/video/${t.sourceId}`
     case 'local':
       return null
     default:

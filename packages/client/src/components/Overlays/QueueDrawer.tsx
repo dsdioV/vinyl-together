@@ -38,6 +38,7 @@ const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = 
   netease: { label: '网易', className: 'text-white bg-red-500 ring-red-600/50' },
   tencent: { label: 'QQ', className: 'text-white bg-green-500 ring-green-600/50' },
   kugou: { label: '酷狗', className: 'text-white bg-blue-500 ring-blue-600/50' },
+  bilibili: { label: 'Bilibili', className: 'text-white bg-[#F45A8D] ring-[#F45A8D]/50' },
 }
 
 interface QueueDrawerProps {

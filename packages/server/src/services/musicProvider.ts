@@ -132,6 +132,101 @@ interface TencentSearchSong {
   }
 }
 
+/** bilibili 搜索响应（x/web-interface/search/type，search_type=video） */
+interface BilibiliSearchItem {
+  bvid?: string
+  aid?: number
+  cid?: number
+  title?: string
+  author?: string
+  pic?: string
+  duration?: string | number
+}
+
+interface BilibiliSearchResponse {
+  code: number
+  data?: {
+    result?: BilibiliSearchItem[]
+    numResults?: number
+  }
+}
+
+/** bilibili view 接口响应（x/web-interface/view） */
+interface BilibiliViewData {
+  bvid?: string
+  aid?: number
+  cid?: number
+  title?: string
+  pic?: string
+  duration?: number
+  owner?: { name?: string }
+}
+
+interface BilibiliViewResponse {
+  code: number
+  data?: BilibiliViewData
+}
+
+/** bilibili playurl 响应（x/player/playurl，fnval=16 返回 DASH） */
+interface BilibiliDashAudio {
+  baseUrl?: string
+  backupUrl?: string[]
+  bandwidth?: number
+}
+
+interface BilibiliPlayUrlResponse {
+  code: number
+  data?: {
+    dash?: { audio?: BilibiliDashAudio[] }
+    durl?: Array<{ url?: string }>
+  }
+}
+
+const BILIBILI_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36 Edg/89.0.774.63'
+
+/** 去掉 bilibili 搜索高亮的 <em> 标签并解码常见 HTML 实体。 */
+function cleanBilibiliHtml(input: string): string {
+  return input
+    .replace(/<em[^>]*>/g, '')
+    .replace(/<\/em>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim()
+}
+
+/** 统一 bilibili 封面为 https URL（接口常返回 //i0.hdslb.com/...）。 */
+function normalizeBilibiliCover(raw: string | undefined): string {
+  if (!raw) return ''
+  if (raw.startsWith('//')) return `https:${raw}`
+  if (raw.startsWith('http://')) return raw.replace(/^http:\/\//, 'https://')
+  return raw
+}
+
+/** bilibili 时长支持 "MM:SS" 字符串与秒数。 */
+function bilibiliDurationToSeconds(duration: string | number | undefined): number {
+  if (typeof duration === 'number') return Number.isFinite(duration) ? Math.max(0, Math.floor(duration)) : 0
+  if (typeof duration === 'string') {
+    const parts = duration.split(':').map((part) => Number(part))
+    if (parts.length === 0 || parts.some((part) => !Number.isFinite(part))) return 0
+    return parts.reduce((total, part) => total * 60 + part, 0)
+  }
+  return 0
+}
+
+/** bvid / av 号 → view / playurl 查询参数。 */
+function bilibiliIdParams(input: string): URLSearchParams {
+  const trimmed = input.trim()
+  if (/^(?:av)?\d+$/i.test(trimmed)) {
+    return new URLSearchParams({ aid: trimmed.replace(/^av/i, '') })
+  }
+  return new URLSearchParams({ bvid: trimmed })
+}
+
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
 /** QQ 音乐 CDN fallback：vkey 响应未携带 sip 时使用。 */
@@ -170,6 +265,7 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
   netease: 'result.songs',
   tencent: 'data.song.list',
   kugou: 'data.info',
+  bilibili: '',
 }
 
 // Path to song list in raw playlist API response per platform
@@ -177,6 +273,7 @@ const PLAYLIST_PATHS: Record<MusicSource, string> = {
   netease: 'playlist.tracks', // Not used (Netease uses ncmApi)
   tencent: 'data.cdlist.0.songlist', // JS arrays support string numeric index
   kugou: 'data.info',
+  bilibili: '',
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +306,8 @@ export type StreamUrlFailureReason = 'login_required' | 'vip_or_copyright' | 'up
 
 export interface StreamUrlResult {
   url: string | null
+  /** bilibili DASH 备用 CDN 地址（主 CDN 不可用时客户端兜底）。 */
+  backupUrl?: string
   reason?: StreamUrlFailureReason
   /** Human-readable detail for logs / optional UI. */
   detail?: string
@@ -347,6 +446,10 @@ export class MusicProvider {
   /** Cached Netease guest cookie from register_anonimous (process-local). */
   private neteaseAnonymousCookie: string | null = null
   private neteaseAnonymousCookiePromise: Promise<string | null> | null = null
+
+  /** bilibili 搜索所需的 buvid 指纹 cookie（进程内缓存，不持久化）。 */
+  private bilibiliFingerCookie: string | null = null
+  private bilibiliFingerCookiePromise: Promise<string | null> | null = null
 
   /** 可选的 QQ 浏览器中继请求器（服务端启动时注入，服务器直连失败时使用）。 */
   private qqRelayRequester: QqRelayRequester | null = null
@@ -613,6 +716,7 @@ export class MusicProvider {
     page = 1,
   ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
+    if (source === 'bilibili') return []
 
     try {
       if (source === 'tencent') {
@@ -686,6 +790,7 @@ export class MusicProvider {
     page = 1,
   ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
+    if (source === 'bilibili') return []
 
     try {
       if (source === 'tencent') {
@@ -977,6 +1082,16 @@ export class MusicProvider {
       }
 
       // Fresh instance without format — gets raw API response with all fields
+      // bilibili 使用自有搜索接口（spi 指纹 cookie + search/type）
+      if (source === 'bilibili') {
+        const tracks = await this.searchBilibili(keyword, limit, page)
+        this.registerTracks(tracks)
+        this.searchIndex.set(cacheKey, {
+          source,
+          ids: tracks.map((t) => t.sourceId),
+        })
+        return tracks
+      }
       const meting = new Meting(source)
       const raw = await withTimeout(meting.search(keyword, { limit, page }))
       if (raw === null) {
@@ -1016,6 +1131,238 @@ export class MusicProvider {
     } catch (err) {
       logger.error(`Search failed for ${source}:`, err)
       return []
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // bilibili 音源（无需登录；搜索需要 buvid 指纹 cookie）
+  // ---------------------------------------------------------------------------
+
+  /** 获取 bilibili 搜索所需的一次性 buvid 指纹 cookie（buvid3/buvid4）。 */
+  private async getBilibiliFingerCookie(): Promise<string | null> {
+    if (this.bilibiliFingerCookie) return this.bilibiliFingerCookie
+    if (this.bilibiliFingerCookiePromise) return this.bilibiliFingerCookiePromise
+
+    this.bilibiliFingerCookiePromise = (async () => {
+      try {
+        const response = await withTimeout(
+          fetch('https://api.bilibili.com/x/frontend/finger/spi', {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/114.0.0.0',
+            },
+          }).then((res) => res.json() as Promise<{ data?: { b_3?: string; b_4?: string } }>),
+        )
+        const b3 = response?.data?.b_3
+        const b4 = response?.data?.b_4
+        if (b3 && b4) {
+          this.bilibiliFingerCookie = `buvid3=${b3};buvid4=${b4}`
+          return this.bilibiliFingerCookie
+        }
+        logger.warn('bilibili spi returned no fingerprint')
+        return null
+      } catch (err) {
+        logger.error('bilibili spi failed', err)
+        return null
+      } finally {
+        this.bilibiliFingerCookiePromise = null
+      }
+    })()
+
+    return this.bilibiliFingerCookiePromise
+  }
+
+  /** bilibili 视频搜索（x/web-interface/search/type，search_type=video）。 */
+  private async searchBilibili(keyword: string, limit = 20, page = 1): Promise<Track[]> {
+    try {
+      const cookie = await this.getBilibiliFingerCookie()
+      if (!cookie) {
+        logger.warn(`bilibili search skipped for "${keyword}": no fingerprint cookie`)
+        return []
+      }
+
+      const params = new URLSearchParams({
+        context: '',
+        page: String(Math.max(1, page)),
+        order: '',
+        page_size: String(Math.min(50, Math.max(1, limit))),
+        keyword,
+        duration: '',
+        tids_1: '',
+        tids_2: '',
+        __refresh__: 'true',
+        _extra: '',
+        highlight: '1',
+        single_column: '0',
+        platform: 'pc',
+        from_source: '',
+        search_type: 'video',
+        dynamic_offset: '0',
+      })
+
+      const response = await withTimeout(
+        fetch(`https://api.bilibili.com/x/web-interface/search/type?${params.toString()}`, {
+          headers: {
+            'User-Agent': BILIBILI_UA,
+            Accept: 'application/json, text/plain, */*',
+            Origin: 'https://search.bilibili.com',
+            Referer: 'https://search.bilibili.com/',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            Cookie: cookie,
+          },
+        }).then((res) => res.json() as Promise<BilibiliSearchResponse>),
+      )
+
+      if (!response) {
+        logger.warn(`bilibili search timeout for "${keyword}"`)
+        return []
+      }
+      const result = response.data?.result
+      if (response.code !== 0 || !Array.isArray(result)) {
+        logger.warn(`bilibili search failed: code=${response.code} for "${keyword}"`)
+        return []
+      }
+
+      const tracks: Track[] = []
+      for (const item of result) {
+        const sourceId = item.bvid?.trim() || (item.aid ? `av${item.aid}` : '')
+        if (!sourceId) continue
+        tracks.push({
+          id: nanoid(),
+          title: cleanBilibiliHtml(item.title || 'Unknown'),
+          artist: item.author?.trim() ? [item.author.trim()] : ['Unknown'],
+          album: '',
+          duration: bilibiliDurationToSeconds(item.duration),
+          cover: normalizeBilibiliCover(item.pic),
+          source: 'bilibili',
+          sourceId,
+          urlId: sourceId,
+          bilibiliCid: typeof item.cid === 'number' && item.cid > 0 ? item.cid : undefined,
+          lyricId: sourceId,
+          picId: sourceId,
+        })
+      }
+
+      logger.info(`bilibili search "${keyword}" on page ${page}: ${tracks.length} results`)
+      return tracks
+    } catch (err) {
+      logger.error(`bilibili search failed for "${keyword}":`, err)
+      return []
+    }
+  }
+
+  /** bilibili view 接口：解析 bvid/av 号对应的视频信息（含 cid）。 */
+  private async fetchBilibiliView(input: string): Promise<BilibiliViewData | null> {
+    try {
+      const response = await withTimeout(
+        fetch(`https://api.bilibili.com/x/web-interface/view?${bilibiliIdParams(input).toString()}`, {
+          headers: {
+            'User-Agent': BILIBILI_UA,
+            Referer: 'https://www.bilibili.com/',
+          },
+        }).then((res) => res.json() as Promise<BilibiliViewResponse>),
+      )
+      if (!response || response.code !== 0 || !response.data) {
+        logger.warn(`bilibili view failed: ${input} code=${response?.code}`)
+        return null
+      }
+      return response.data
+    } catch (err) {
+      logger.error(`bilibili view failed: ${input}`, err)
+      return null
+    }
+  }
+
+  /** 按 bvid/av 号获取单曲（用于 ID/BV 直查）。 */
+  private async fetchBilibiliTrackById(input: string): Promise<Track | null> {
+    const view = await this.fetchBilibiliView(input)
+    if (!view) return null
+
+    const sourceId = view.bvid?.trim() || (view.aid ? `av${view.aid}` : '')
+    if (!sourceId) return null
+
+    return {
+      id: nanoid(),
+      title: cleanBilibiliHtml(view.title || 'Unknown'),
+      artist: view.owner?.name?.trim() ? [view.owner.name.trim()] : ['Unknown'],
+      album: '',
+      duration: bilibiliDurationToSeconds(view.duration),
+      cover: normalizeBilibiliCover(view.pic),
+      source: 'bilibili',
+      sourceId,
+      urlId: sourceId,
+      bilibiliCid: typeof view.cid === 'number' && view.cid > 0 ? view.cid : undefined,
+      lyricId: sourceId,
+      picId: sourceId,
+    }
+  }
+
+  /** bilibili playurl：按音质选 DASH 音频档位，主 URL 与备用 URL 一并返回。 */
+  private async getBilibiliStreamUrlResult(urlId: string, bitrate: number): Promise<StreamUrlResult> {
+    try {
+      const cached = this.trackRegistry.get(`bilibili:${urlId}`)
+      let cid = cached?.bilibiliCid
+      if (!cid) {
+        const view = await this.fetchBilibiliView(urlId)
+        cid = view?.cid
+      }
+      if (!cid) {
+        return { url: null, reason: 'upstream_failed', detail: '无法获取 bilibili 视频 cid' }
+      }
+
+      const params = bilibiliIdParams(urlId)
+      params.set('cid', String(cid))
+      params.set('fnval', '16')
+
+      const response = await withTimeout(
+        fetch(`https://api.bilibili.com/x/player/playurl?${params.toString()}`, {
+          headers: {
+            'User-Agent': BILIBILI_UA,
+            Referer: 'https://www.bilibili.com/',
+          },
+        }).then((res) => res.json() as Promise<BilibiliPlayUrlResponse>),
+      )
+
+      if (!response || response.code !== 0 || !response.data) {
+        logger.warn(`bilibili playurl failed: ${urlId} code=${response?.code}`)
+        return { url: null, reason: 'upstream_failed', detail: 'bilibili 未返回播放链接' }
+      }
+
+      const dashAudios = (response.data.dash?.audio ?? []).filter(
+        (audio) => typeof audio.baseUrl === 'string' && audio.baseUrl.length > 0,
+      )
+      if (dashAudios.length > 0) {
+        const sorted = [...dashAudios].sort((a, b) => (a.bandwidth ?? 0) - (b.bandwidth ?? 0))
+        const lastIndex = sorted.length - 1
+        const index =
+          bitrate >= 999
+            ? lastIndex
+            : bitrate >= 320
+              ? Math.min(lastIndex, 2)
+              : bitrate >= 192
+                ? Math.min(lastIndex, 1)
+                : 0
+        const chosen = sorted[Math.min(index, lastIndex)]!
+        const url = normalizeStreamUrl(chosen.baseUrl)
+        const backupUrl = (chosen.backupUrl ?? [])
+          .map((candidate) => normalizeStreamUrl(candidate))
+          .find((candidate): candidate is string => typeof candidate === 'string')
+        if (url) {
+          this.streamUrlCache.set(`bilibili:${urlId}:${bitrate}`, url)
+          return { url, backupUrl }
+        }
+      }
+
+      const durlUrl = normalizeStreamUrl(response.data.durl?.[0]?.url)
+      if (durlUrl) {
+        this.streamUrlCache.set(`bilibili:${urlId}:${bitrate}`, durlUrl)
+        return { url: durlUrl }
+      }
+
+      return { url: null, reason: 'upstream_failed', detail: 'bilibili 未返回可用的音频流' }
+    } catch (err) {
+      logger.error(`bilibili playurl failed for ${urlId}`, err)
+      return { url: null, reason: 'upstream_failed', detail: 'bilibili 播放链接请求异常' }
     }
   }
 
@@ -1092,6 +1439,9 @@ export class MusicProvider {
       return this.getTencentStreamUrlResult(urlId, bitrate, cookie)
     }
 
+    if (source === 'bilibili') {
+      return this.getBilibiliStreamUrlResult(urlId, bitrate)
+    }
     try {
       let meting: MetingInstance
       if (cookie) {
@@ -1587,6 +1937,7 @@ export class MusicProvider {
     }
 
     const empty = { lyric: '', tlyric: '', romalrc: '', yrc: '' as string }
+    if (source === 'bilibili') return empty
 
     try {
       let result: { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
@@ -1674,6 +2025,7 @@ export class MusicProvider {
     if (cached !== undefined) {
       return cached
     }
+    if (source === 'bilibili') return ''
 
     try {
       if (source === 'kugou') {
@@ -1775,6 +2127,9 @@ export class MusicProvider {
             break
           }
           track = await this.fetchKugouTrackById(sourceId)
+          break
+        case 'bilibili':
+          track = await this.fetchBilibiliTrackById(sourceId)
           break
         default:
           return null
@@ -1971,6 +2326,8 @@ export class MusicProvider {
     }
 
     // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
+    // bilibili 不支持歌单/专辑分页浏览
+    if (source === 'bilibili') return { ids: [], total: 0 }
     if (source === 'netease') {
       if (type === 'album') {
         return this.fetchNeteaseAlbum(playlistId, cacheKey, maxTracks)
@@ -2624,6 +2981,10 @@ export class MusicProvider {
         }
       }
 
+      case 'bilibili': {
+        // bilibili 单曲由 fetchBilibiliTrackById / searchBilibili 专用映射，不走 rawToTrack
+        throw new Error('bilibili tracks must be mapped by dedicated helpers')
+      }
       default: {
         // Exhaustive check — if a new MusicSource is added, TypeScript will error here
         const _exhaustive: never = source
@@ -2642,6 +3003,7 @@ export class MusicProvider {
   private async batchResolveCover(tracks: Track[], source: MusicSource): Promise<void> {
     const toResolve = tracks.filter((t) => !t.cover && t.picId)
     if (toResolve.length === 0) return
+    if (source === 'bilibili') return
 
     // For platforms that need API calls, limit concurrency
     const needsApiCall = source === 'kugou'

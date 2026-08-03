@@ -31,7 +31,7 @@ export function registerPlaylistController(io: TypedServer, socket: TypedSocket)
         return
       }
 
-      const playlists = await AUTH_PROVIDERS[platform].getUserPlaylists(cookie)
+      const playlists = await AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili'>].getUserPlaylists(cookie)
       socket.emit(EVENTS.PLAYLIST_MY_LIST, { platform, playlists })
     } catch (err) {
       logger.error('PLAYLIST_GET_MY error', err, { socketId: socket.id })

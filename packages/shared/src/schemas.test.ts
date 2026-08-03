@@ -163,6 +163,18 @@ describe('local audio queue input schemas', () => {
     expect(parsed.track).toMatchObject({ mediaMid: 'REALMEDIA' })
   })
 
+  it('accepts bilibili tracks and keeps the cid for stream resolution', () => {
+    const parsed = queueAddSchema.parse({
+      track: {
+        ...externalTrack,
+        source: 'bilibili' as const,
+        bilibiliCid: 123456,
+        cover: 'https://i0.hdslb.com/bfs/archive/abc.jpg',
+      },
+    })
+    expect(parsed.track).toMatchObject({ source: 'bilibili', bilibiliCid: 123456 })
+  })
+
   it.each([
     { source: 'local' },
     { source: 'local', assetId: '' },

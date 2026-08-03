@@ -25,7 +25,7 @@ export const ERROR_CODE = {
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE]
 
-export type MusicSource = 'netease' | 'tencent' | 'kugou'
+export type MusicSource = 'netease' | 'tencent' | 'kugou' | 'bilibili'
 
 /** Track origin. MusicSource intentionally remains limited to online platforms. */
 export type TrackSource = MusicSource | 'local'
@@ -38,8 +38,8 @@ export interface RoomAutoFallbackEvent {
   /** Correlates trying/success/failed toasts */
   attemptId: string
   status: AutoFallbackStatus
-  fromSource: Exclude<MusicSource, 'kugou'>
-  toSource: Exclude<MusicSource, 'kugou'>
+  fromSource: Exclude<MusicSource, 'kugou' | 'bilibili'>
+  toSource: Exclude<MusicSource, 'kugou' | 'bilibili'>
   trackTitle: string
   reasonType?: AutoFallbackReasonType
   /** Safe, short detail suitable for UI (no URLs/cookies/stack traces). */
@@ -65,6 +65,8 @@ export interface Track {
   urlId: string
   /** QQ 音乐媒体文件 ID（用于拼接播放链接文件名，与 urlId 的歌曲 mid 不一定相同） */
   mediaMid?: string
+  /** bilibili 视频分 P 的 cid（服务端解析播放链接时需要） */
+  bilibiliCid?: number
   /** Room-local asset identifier; present only for local tracks. */
   assetId?: string
   lyricId?: string

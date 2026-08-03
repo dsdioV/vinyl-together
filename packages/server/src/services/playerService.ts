@@ -108,7 +108,12 @@ async function resolveStreamUrl(
   urlId: string,
   bitrate: AudioQuality,
   cookie?: string,
-): Promise<{ url: string | null; reason?: import('./musicProvider.js').StreamUrlFailureReason; detail?: string }> {
+): Promise<{
+  url: string | null
+  reason?: import('./musicProvider.js').StreamUrlFailureReason
+  detail?: string
+  backupUrl?: string
+}> {
   const primary = await musicProvider.getStreamUrlResult(source, urlId, bitrate, cookie)
   if (primary.url) return primary
 
@@ -290,6 +295,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                     id: resolved.id, // keep stable id so queue/current references remain consistent
                     requestedBy: resolved.requestedBy,
                     streamUrl: url2,
+                    fallbackStreamUrl: streamResult2.backupUrl,
                   }
 
                   // Replace in queue (if present) before playing
@@ -326,6 +332,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                   resolved.title = replacement.title
                   resolved.cover = replacement.cover
                   resolved.streamUrl = replacement.streamUrl
+                  resolved.fallbackStreamUrl = replacement.fallbackStreamUrl
                 }
               }
             } catch (fallbackErr) {
@@ -358,6 +365,9 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
         }
       }
       resolved.streamUrl = url ?? resolved.streamUrl
+      if (streamResult.backupUrl) {
+        resolved.fallbackStreamUrl = streamResult.backupUrl
+      }
     } catch (err) {
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
       // Auto-remove on unexpected failure too

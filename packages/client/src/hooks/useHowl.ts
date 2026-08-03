@@ -138,7 +138,9 @@ export function useHowl(onTrackEnd: () => void) {
       if (!initialUrl) return
 
       const selectedUrl =
-        fallbackAttemptedRef.current && track.source === 'local' && track.fallbackStreamUrl
+        fallbackAttemptedRef.current &&
+        (track.source === 'local' || track.source === 'bilibili') &&
+        track.fallbackStreamUrl
           ? track.fallbackStreamUrl
           : initialUrl
       const streamUrl = track.source === 'local' ? (resolveLocalAudioMediaUrl(selectedUrl) ?? selectedUrl) : selectedUrl
@@ -258,11 +260,15 @@ export function useHowl(onTrackEnd: () => void) {
             howl.load()
             return
           }
-          if (track.source === 'local' && track.fallbackStreamUrl && !fallbackAttemptedRef.current) {
+          if (
+            (track.source === 'local' || track.source === 'bilibili') &&
+            track.fallbackStreamUrl &&
+            !fallbackAttemptedRef.current
+          ) {
             fallbackAttemptedRef.current = true
             retryRef.current = false
             console.warn('Local audio primary output failed; trying compatibility fallback:', msg)
-            toast.info(`「${track.title}」正在切换兼容音频`)
+            toast.info(`「${track.title}」正在切换备用音源`)
             try {
               howl.unload()
             } catch {

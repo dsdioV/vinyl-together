@@ -23,7 +23,9 @@ export interface UserInfoData {
  * - ok=false + reason='no_token': 缺少 token/userid（如手动输入了无效 Cookie）
  * - ok=false + reason='error': 临时错误（网络/超时等）
  */
-export type GetUserInfoResult = { ok: true; data: UserInfoData } | { ok: false; reason: 'expired' | 'error' | 'no_token' }
+export type GetUserInfoResult =
+  | { ok: true; data: UserInfoData }
+  | { ok: false; reason: 'expired' | 'error' | 'no_token' }
 
 /**
  * 每个音乐平台认证服务必须实现的接口
@@ -56,7 +58,7 @@ export interface AuthProvider {
  * authController 通过此映射表获取对应平台的认证服务实例，
  * 从而用一份代码处理所有平台的 QR 登录/Cookie 验证/歌单获取。
  */
-export const AUTH_PROVIDERS: Record<MusicSource, AuthProvider> = {
+export const AUTH_PROVIDERS: Record<Exclude<MusicSource, 'bilibili'>, AuthProvider> = {
   netease: neteaseAuth,
   kugou: kugouAuth,
   tencent: tencentAuth,

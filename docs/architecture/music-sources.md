@@ -1,6 +1,6 @@
 # 音源与播放链接（music-sources.md）
 
-> 记录三个音源平台（网易云 / QQ 音乐 / 酷狗）的接入方式、降级链、海外部署行为和浏览器中继协议。修改任何平台相关代码前先读本文。
+> 记录四个音源平台（网易云 / QQ 音乐 / 酷狗 / 哔哩哔哩）的接入方式、降级链、海外部署行为和浏览器中继协议。修改任何平台相关代码前先读本文。
 
 ## 1. 总体结构
 
@@ -108,3 +108,19 @@
 - 集成测试：`musicProvider.tencentStream.test.ts`（直连成功不用中继、直连全失败才用、中继失败保持分类、强制开关、media_mid 恢复、搜索/专辑/歌单降级链）。
 - 端到端（Playwright，本地强制模式）：建房间 → 开中继（确认弹窗）→ QQ 搜索免费歌 → 浏览器发出 `u.y.qq.com/...callback=__vinylQqRelay_...` → 服务端 `Tencent vkey ok (relay forced)` → 播放开始。
 - 海外场景验证过的外部事实：香港 IP 直连全通道失败、境内浏览器 JSONP 可取 vkey、CDN 对海外可拉取。
+
+### 哔哩哔哩（bilibili）
+
+| 能力 | 实现 |
+| --- | --- |
+| 搜索 / 单曲详情 | 官方 Web 接口（`x/web-interface/search/type`、`x/web-interface/view`），无需登录 |
+| 播放链接 | `x/player/playurl?fnval=16` 的 DASH 音频流，按房间音质选档；同时下发 `backupUrl` 供客户端兜底 |
+| 歌词 / 封面 | 歌词留空；封面来自 hdslb.com 并统一为 https |
+
+要点：
+
+- 搜索必须先请求 `x/frontend/finger/spi` 拿 `buvid3/buvid4`，并携带 `origin/referer: search.bilibili.com`，否则接口返回风控错误。该指纹 cookie 进程内缓存，不涉及任何账号。实现参考 [MusicFree 插件 bilibili.js](https://github.com/qwerwhr/musicfree-plugins/blob/main/bilibili.js)。
+- 搜索标题带 `<em>` 高亮标签，服务端统一清洗；时长可能为 `MM:SS` 字符串。
+- `Track` 用 `bvid` 作为 `sourceId/urlId`，`bilibiliCid` 保留分 P cid；输入 av 号时经 view 接口解析后统一为 bvid。
+- 播放主 CDN 在部分网络（如香港）可能 403，此时客户端自动切到 `fallbackStreamUrl`（backupUrl）。
+- bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。

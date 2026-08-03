@@ -2,7 +2,7 @@ import type { MusicSource, Track } from '@music-together/shared'
 import { musicProvider } from './musicProvider.js'
 
 // Keep scope minimal: only support netease <-> tencent auto fallback.
-const SUPPORTED_SOURCES: ReadonlySet<Exclude<MusicSource, 'kugou'>> = new Set(['netease', 'tencent'])
+const SUPPORTED_SOURCES: ReadonlySet<Exclude<MusicSource, 'kugou' | 'bilibili'>> = new Set(['netease', 'tencent'])
 
 export interface FallbackCandidate {
   track: Track
@@ -97,7 +97,7 @@ function scoreCandidate(original: Track, candidate: Track): number {
   return Math.max(0, Math.min(1, score))
 }
 
-export function getFallbackTargetSource(from: MusicSource): Exclude<MusicSource, 'kugou'> | null {
+export function getFallbackTargetSource(from: MusicSource): Exclude<MusicSource, 'kugou' | 'bilibili'> | null {
   if (from === 'netease') return 'tencent'
   if (from === 'tencent') return 'netease'
   return null
@@ -105,9 +105,9 @@ export function getFallbackTargetSource(from: MusicSource): Exclude<MusicSource,
 
 export async function findBestAlternativeTrack(
   original: Track,
-  toSource: Exclude<MusicSource, 'kugou'>,
+  toSource: Exclude<MusicSource, 'kugou' | 'bilibili'>,
 ): Promise<FallbackCandidate | null> {
-  if (!SUPPORTED_SOURCES.has(original.source as Exclude<MusicSource, 'kugou'>)) return null
+  if (!SUPPORTED_SOURCES.has(original.source as Exclude<MusicSource, 'kugou' | 'bilibili'>)) return null
   if (!SUPPORTED_SOURCES.has(toSource)) return null
   if (original.source === toSource) return null
 

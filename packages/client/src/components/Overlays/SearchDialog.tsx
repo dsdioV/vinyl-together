@@ -38,6 +38,7 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
   { id: 'tencent', label: 'QQ' },
   { id: 'kugou', label: '酷狗' },
+  { id: 'bilibili', label: 'Bilibili' },
 ]
 
 interface SearchDialogProps {
@@ -310,6 +311,7 @@ export function SearchDialog({
                       setSource(s.id)
                       resetState()
                       setAddedIds(new Set())
+                      if (s.id === 'bilibili') setSearchType('song')
                     }}
                   >
                     {s.label}
@@ -385,12 +387,16 @@ export function SearchDialog({
                   <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
                     单曲
                   </TabsTrigger>
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
-                    专辑
-                  </TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
-                    歌单
-                  </TabsTrigger>
+                  {source !== 'bilibili' && (
+                    <>
+                      <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                        专辑
+                      </TabsTrigger>
+                      <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                        歌单
+                      </TabsTrigger>
+                    </>
+                  )}
                 </TabsList>
               </Tabs>
 
@@ -398,7 +404,13 @@ export function SearchDialog({
               <div className="flex gap-2">
                 <Input
                   placeholder={
-                    searchType === 'song' ? '搜索歌曲、歌手...' : searchType === 'album' ? '搜索专辑...' : '搜索歌单...'
+                    searchType === 'song'
+                      ? source === 'bilibili'
+                        ? '搜索视频标题、UP 主...'
+                        : '搜索歌曲、歌手...'
+                      : searchType === 'album'
+                        ? '搜索专辑...'
+                        : '搜索歌单...'
                   }
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}

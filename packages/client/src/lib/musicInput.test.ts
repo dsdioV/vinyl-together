@@ -46,6 +46,21 @@ describe('parsePlaylistInput', () => {
     expect(parsePlaylistInput('https://www.kugou.com/yy/special/single/12345.html', 'kugou')).toBe('12345')
   })
 
+  it('parses bilibili video URLs', () => {
+    expect(parsePlaylistInput('https://www.bilibili.com/video/BV1xx411c7mD', 'bilibili')).toBe('BV1xx411c7mD')
+    expect(parsePlaylistInput('https://www.bilibili.com/video/av170001', 'bilibili')).toBe('av170001')
+  })
+
+  it('keeps plain bilibili BV/av IDs compatible', () => {
+    expect(parsePlaylistInput('BV1xx411c7mD', 'bilibili')).toBe('BV1xx411c7mD')
+    expect(parsePlaylistInput('av170001', 'bilibili')).toBe('av170001')
+  })
+
+  it('rejects unofficial bilibili hostnames', () => {
+    expect(parsePlaylistInput('https://example.com/video/BV1xx411c7mD', 'bilibili')).toBeNull()
+    expect(parsePlaylistInput('https://www.bilibili.com.evil.example/video/BV1xx411c7mD', 'bilibili')).toBeNull()
+  })
+
   it.each([
     ['https://example.com/song/#j2hixca', 'kugou'],
     ['https://www.kugou.com.evil.example/song/#j2hixca', 'kugou'],
