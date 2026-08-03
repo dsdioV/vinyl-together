@@ -368,6 +368,15 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
       if (streamResult.backupUrl) {
         resolved.fallbackStreamUrl = streamResult.backupUrl
       }
+      // bilibili 音频直连 CDN 会被 Referer 校验拒绝（浏览器媒体请求只带页面 Referer），
+      // 统一改走服务端代理；备用 CDN 由代理内部切换，不再下发给客户端。
+      if (onlineSource === 'bilibili' && resolved.streamUrl) {
+        const proxyParams = new URLSearchParams({ id: resolved.urlId })
+        if (resolved.bilibiliCid) proxyParams.set('cid', String(resolved.bilibiliCid))
+        proxyParams.set('bitrate', String(room.audioQuality))
+        resolved.streamUrl = `/api/music/bilibili/stream?${proxyParams.toString()}`
+        resolved.fallbackStreamUrl = undefined
+      }
     } catch (err) {
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
       // Auto-remove on unexpected failure too

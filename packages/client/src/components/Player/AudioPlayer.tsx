@@ -29,6 +29,9 @@ const LYRIC_MASK_STYLE = {
 const PROXY_COVER_HOSTS = [
   'y.gtimg.cn', // QQ 音乐
   'imgessl.kugou.com', // 酷狗
+  'i0.hdslb.com', // bilibili
+  'i1.hdslb.com', // bilibili
+  'i2.hdslb.com', // bilibili
 ]
 
 /**

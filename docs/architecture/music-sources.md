@@ -13,25 +13,25 @@
 
 ### 网易云（netease）
 
-| 能力 | 实现 |
-| --- | --- |
-| 搜索 / 歌单 / 单曲详情 | `@neteasecloudmusicapienhanced/api`（进程内嵌入） |
-| 播放链接 | `song_url_v1`（按房间音质降级 lossless/exhigh/standard）→ 失败回退 `song_url_match` |
-| 匿名 cookie | `register_anonimous`，进程内缓存 |
-| 歌词 | `lyric_new`（LRC/翻译/罗马音/YRC 逐词） |
+| 能力                   | 实现                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| 搜索 / 歌单 / 单曲详情 | `@neteasecloudmusicapienhanced/api`（进程内嵌入）                                   |
+| 播放链接               | `song_url_v1`（按房间音质降级 lossless/exhigh/standard）→ 失败回退 `song_url_match` |
+| 匿名 cookie            | `register_anonimous`，进程内缓存                                                    |
+| 歌词                   | `lyric_new`（LRC/翻译/罗马音/YRC 逐词）                                             |
 
 要点：生产 IP（尤其海外）可能被 `song_url_v1` 直接拒（songCode 404），`song_url_match` 是实际兜底，不要删除。启动时 `neteaseApiBootstrap` 生成 xeapi 公钥与匿名 token。
 
 ### QQ 音乐（tencent）— 重点
 
-| 能力 | 降级链（高 → 低） |
-| --- | --- |
-| 单曲搜索 | 明文 `musicu.fcg` Desktop 搜索 → 签名版 `musics.fcg`（zzc）→ 旧版 `client_search_cp`（海外可用） |
-| 专辑搜索 | Desktop 搜索（search_type=2）→ 综合搜索 `music.adaptor.SearchAdaptor` / `do_search_v2` 的 `item_album`（海外可用） |
-| 歌单搜索 | Desktop 搜索（search_type=3）→ 综合搜索 `item_songlist`（海外可用） |
-| 单曲详情 | 明文 `music.trackInfo.UniformRuleCtrl` → 签名版同模块 → 旧版 `fcg_play_single_song`（海外可用） |
+| 能力     | 降级链（高 → 低）                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 单曲搜索 | 明文 `musicu.fcg` Desktop 搜索 → 签名版 `musics.fcg`（zzc）→ 旧版 `client_search_cp`（海外可用）                          |
+| 专辑搜索 | Desktop 搜索（search_type=2）→ 综合搜索 `music.adaptor.SearchAdaptor` / `do_search_v2` 的 `item_album`（海外可用）        |
+| 歌单搜索 | Desktop 搜索（search_type=3）→ 综合搜索 `item_songlist`（海外可用）                                                       |
+| 单曲详情 | 明文 `music.trackInfo.UniformRuleCtrl` → 签名版同模块 → 旧版 `fcg_play_single_song`（海外可用）                           |
 | 播放链接 | 明文 `music.vkey.GetVkey` / `UrlGetVkey` → 签名版同模块 → 旧版 `vkey.GetVkeyServer` / `CgiGetVkey`（GET）→ **浏览器中继** |
-| 登录 | QR 扫码（ptlogin2 + OAuth + musickey），cookie 存房间 |
+| 登录     | QR 扫码（ptlogin2 + OAuth + musickey），cookie 存房间                                                                     |
 
 细节：
 
@@ -44,29 +44,29 @@
 
 ### 酷狗（kugou）
 
-| 能力 | 实现 |
-| --- | --- |
-| 搜索 / 歌单 / 专辑 / 单曲详情 | 原生移动端 API（`mobilecdn.kugou.com` 等），海外实测可用 |
-| 播放链接 | `kugouAuthService.getPlayUrl`（签名接口，登录态 appid 需与 QR 登录一致） |
-| 歌词 | `@s4p/kugou-lrc`（KRC 逐词） |
-| 登录 | QR 扫码（appid 1005） |
+| 能力                          | 实现                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| 搜索 / 歌单 / 专辑 / 单曲详情 | 原生移动端 API（`mobilecdn.kugou.com` 等），海外实测可用                 |
+| 播放链接                      | `kugouAuthService.getPlayUrl`（签名接口，登录态 appid 需与 QR 登录一致） |
+| 歌词                          | `@s4p/kugou-lrc`（KRC 逐词）                                             |
+| 登录                          | QR 扫码（appid 1005）                                                    |
 
 要点：酷狗播放链接必须走 `kugouAuthService`，不要回退 Meting 的酷狗 provider（其硬编码 appid 1014 与登录 token 不匹配）。
 
 ## 3. QQ 海外 IP 实测行为（香港服务器，2026-07/08）
 
-| 行为 | 结果 |
-| --- | --- |
-| 明文 `musicu.fcg`（搜索/新版 vkey/UniformRuleCtrl） | 500001 风控 |
-| 签名版 `musics.fcg` 搜索 | code 0 但返回空结果 |
-| 签名版 vkey（匿名） | 104003 |
-| 旧版 `client_search_cp` / `fcg_play_single_song` | 正常返回 |
-| 旧版 vkey（GET，匿名） | 104003（API 可达） |
-| 匿名 30 秒试听（`RS02` 文件类型） | 可用 |
-| 登录后完整播放（非绿钻） | 仍 104003 → **海外完整播放要求绿钻/VIP** |
-| 播放 CDN（`isure.stream.qqmusic.qq.com` 等，带有效 vkey） | 海外可直接拉取 |
-| QQ QR 登录 | 海外可发起（ptqrshow 200） |
-| 手机端（Android 平台，L-1124 客户端完整设备指纹 + authst） | vkey 仍 104003（已实测） |
+| 行为                                                       | 结果                                     |
+| ---------------------------------------------------------- | ---------------------------------------- |
+| 明文 `musicu.fcg`（搜索/新版 vkey/UniformRuleCtrl）        | 500001 风控                              |
+| 签名版 `musics.fcg` 搜索                                   | code 0 但返回空结果                      |
+| 签名版 vkey（匿名）                                        | 104003                                   |
+| 旧版 `client_search_cp` / `fcg_play_single_song`           | 正常返回                                 |
+| 旧版 vkey（GET，匿名）                                     | 104003（API 可达）                       |
+| 匿名 30 秒试听（`RS02` 文件类型）                          | 可用                                     |
+| 登录后完整播放（非绿钻）                                   | 仍 104003 → **海外完整播放要求绿钻/VIP** |
+| 播放 CDN（`isure.stream.qqmusic.qq.com` 等，带有效 vkey）  | 海外可直接拉取                           |
+| QQ QR 登录                                                 | 海外可发起（ptqrshow 200）               |
+| 手机端（Android 平台，L-1124 客户端完整设备指纹 + authst） | vkey 仍 104003（已实测）                 |
 
 结论：QQ 对海外 IP 的完整播放是平台级限制，免费歌也不例外；唯一技术解法是浏览器中继（成员浏览器在境内代为请求）或绿钻账号。
 
@@ -81,10 +81,10 @@
 
 事件（`packages/shared`）：
 
-| 方向 | 事件 | 载荷 |
-| --- | --- | --- |
-| 客户端 → 服务端 | `relay:mode_changed` | `{ enabled: boolean }` |
-| 服务端 → 客户端 | `music:relay_request` | `{ requestId: string; url: string }` |
+| 方向            | 事件                   | 载荷                                                                 |
+| --------------- | ---------------------- | -------------------------------------------------------------------- |
+| 客户端 → 服务端 | `relay:mode_changed`   | `{ enabled: boolean }`                                               |
+| 服务端 → 客户端 | `music:relay_request`  | `{ requestId: string; url: string }`                                 |
 | 客户端 → 服务端 | `music:relay_response` | `{ requestId: string; ok: boolean; data?: unknown; error?: string }` |
 
 服务端（`musicRelayService.ts`）：
@@ -111,16 +111,17 @@
 
 ### 哔哩哔哩（bilibili）
 
-| 能力 | 实现 |
-| --- | --- |
-| 搜索 / 单曲详情 | 官方 Web 接口（`x/web-interface/search/type`、`x/web-interface/view`），无需登录 |
-| 播放链接 | `x/player/playurl?fnval=16` 的 DASH 音频流，按房间音质选档；同时下发 `backupUrl` 供客户端兜底 |
-| 歌词 / 封面 | 歌词留空；封面来自 hdslb.com 并统一为 https |
+| 能力            | 实现                                                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 搜索 / 单曲详情 | 官方 Web 接口（`x/web-interface/search/type`、`x/web-interface/view`），无需登录                                                                                                 |
+| 播放链接        | `x/player/playurl?fnval=16` 的 DASH 音频流，按房间音质选档；音频经服务端代理 `/api/music/bilibili/stream` 拉流（带 bilibili Referer、支持 Range，主 CDN 403 时自动切 backupUrl） |
+| 歌词 / 封面     | 歌词留空；封面来自 hdslb.com 并统一为 https                                                                                                                                      |
 
 要点：
 
 - 搜索必须先请求 `x/frontend/finger/spi` 拿 `buvid3/buvid4`，并携带 `origin/referer: search.bilibili.com`，否则接口返回风控错误。该指纹 cookie 进程内缓存，不涉及任何账号。实现参考 [MusicFree 插件 bilibili.js](https://github.com/qwerwhr/musicfree-plugins/blob/main/bilibili.js)。
 - 搜索标题带 `<em>` 高亮标签，服务端统一清洗；时长可能为 `MM:SS` 字符串。
 - `Track` 用 `bvid` 作为 `sourceId/urlId`，`bilibiliCid` 保留分 P cid；输入 av 号时经 view 接口解析后统一为 bvid。
-- 播放主 CDN 在部分网络（如香港）可能 403，此时客户端自动切到 `fallbackStreamUrl`（backupUrl）。
+- 浏览器媒体请求无法携带 bilibili 的 Referer，CDN 会 403，因此音频统一走服务端代理；主 CDN 在部分网络（如香港）403 时由代理自动切换 backupUrl。
+- 封面（hdslb.com）不支持跨域，AMLL 背景图会经 `/api/music/cover-proxy` 加载。
 - bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。

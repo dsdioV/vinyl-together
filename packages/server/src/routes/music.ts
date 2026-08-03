@@ -17,6 +17,8 @@ import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { logger } from '../utils/logger.js'
 import { readCoverResponse } from '../utils/coverResponse.js'
+import { Readable } from 'node:stream'
+import { z } from 'zod/v4'
 
 const router: RouterType = Router()
 
@@ -105,6 +107,72 @@ router.get(
     const url = await musicProvider.getStreamUrl(source, urlId, bitrate)
     res.json({ url })
   }),
+)
+
+/**
+ * bilibili 音频流代理：浏览器媒体请求无法携带 bilibili 的 Referer，CDN 会 403；
+ * 由服务端带 Referer 拉流并转发 Range，主 CDN 失败时自动切换到 backupUrl。
+ */
+router.get(
+  '/bilibili/stream',
+  validated(
+    z.object({
+      id: z.string().regex(/^(?:BV[0-9A-Za-z]+|av\d+)$/i, '无效的 bilibili 视频 ID'),
+      cid: z.coerce.number().int().positive().optional(),
+      bitrate: z.coerce.number().int().min(1).max(999).default(320),
+    }),
+    'Bilibili stream proxy',
+    async (data, req, res) => {
+      const result = await musicProvider.getStreamUrlResult('bilibili', data.id, data.bitrate)
+      const candidates = [result.url, result.backupUrl].filter((u): u is string => Boolean(u))
+      if (candidates.length === 0) {
+        res.status(502).json({ error: '无法获取 bilibili 播放链接' })
+        return
+      }
+
+      const headers: Record<string, string> = {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36 Edg/89.0.774.63',
+        Referer: 'https://www.bilibili.com/',
+      }
+      if (typeof req.headers.range === 'string') headers.Range = req.headers.range
+      if (typeof req.headers['if-range'] === 'string') headers['If-Range'] = req.headers['if-range']
+
+      for (const candidate of candidates) {
+        try {
+          const upstream = await fetch(candidate, { headers, redirect: 'error' })
+          if (!upstream.ok && upstream.status !== 206) {
+            logger.warn(`bilibili stream candidate failed: ${upstream.status}`, { id: data.id })
+            continue
+          }
+          res.status(upstream.status)
+          for (const name of [
+            'content-type',
+            'content-length',
+            'content-range',
+            'accept-ranges',
+            'cache-control',
+            'etag',
+            'last-modified',
+            'expires',
+          ]) {
+            const value = upstream.headers.get(name)
+            if (value) res.setHeader(name, value)
+          }
+          const body = Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream)
+          body.on('error', () => res.destroy())
+          req.on('close', () => body.destroy())
+          body.pipe(res)
+          return
+        } catch (err) {
+          logger.error('bilibili stream candidate fetch failed', err, { id: data.id })
+        }
+      }
+
+      if (!res.headersSent) res.status(502).json({ error: 'bilibili 音频流获取失败' })
+      else res.end()
+    },
+  ),
 )
 
 router.get(

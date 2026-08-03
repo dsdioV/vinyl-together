@@ -69,5 +69,10 @@ export function resolveLocalAudioMediaUrl(value: string | null | undefined): str
 /** Covers in authoritative local tracks are server-generated and may be relative. */
 export function getTrackCoverUrl(track: Pick<Track, 'source' | 'cover'>): string | undefined {
   if (!track.cover) return undefined
-  return track.source === 'local' ? resolveLocalAudioMediaUrl(track.cover) : track.cover
+  if (track.source === 'local') return resolveLocalAudioMediaUrl(track.cover)
+  // bilibili 封面 CDN 有防盗链（浏览器直连会因非 bilibili Referer 返回 403），统一走服务端代理
+  if (track.source === 'bilibili') {
+    return `${SERVER_URL}/api/music/cover-proxy?url=${encodeURIComponent(track.cover)}`
+  }
+  return track.cover
 }

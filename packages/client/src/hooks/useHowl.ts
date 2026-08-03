@@ -143,7 +143,11 @@ export function useHowl(onTrackEnd: () => void) {
         track.fallbackStreamUrl
           ? track.fallbackStreamUrl
           : initialUrl
-      const streamUrl = track.source === 'local' ? (resolveLocalAudioMediaUrl(selectedUrl) ?? selectedUrl) : selectedUrl
+      // local / bilibili 的 streamUrl 可能是服务端相对路径，需解析到 SERVER_URL
+      const streamUrl =
+        track.source === 'local' || track.source === 'bilibili'
+          ? (resolveLocalAudioMediaUrl(selectedUrl) ?? selectedUrl)
+          : selectedUrl
       // Howler's format array is positional to `src`, not a codec preference
       // list. A single local URL therefore needs its actual generated format;
       // otherwise a WebView without FLAC support would reject even the MP3
