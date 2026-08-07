@@ -1,8 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn, getSourceUrl, getTrackCoverUrl } from '@/lib/utils'
+import { filterQueueTracks } from '@/lib/queueFilter'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSocketContext } from '@/providers/SocketProvider'
@@ -22,6 +24,7 @@ import {
   ListX,
   Music,
   Play,
+  Search,
   Trash2,
   User,
   X,
@@ -73,24 +76,28 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
 
   // Toggle: show queue in original order or sorted by likes (when songLikes mode is on)
   const [sortByLikes, setSortByLikes] = useState(false)
+  const [queueSearchQuery, setQueueSearchQuery] = useState('')
 
   useEffect(() => {
     setSortByLikes(songLikes)
   }, [songLikes])
 
   const displayQueue = useMemo<Track[]>(() => {
-    if (!songLikes || !sortByLikes) return queue
-    return [...queue].sort((a, b) => {
-      // Current track always first
-      if (a.id === currentTrack?.id) return -1
-      if (b.id === currentTrack?.id) return 1
-      // Then sort by likes desc → queue index asc
-      const aLikes = trackLikes[a.id]?.length ?? 0
-      const bLikes = trackLikes[b.id]?.length ?? 0
-      if (bLikes !== aLikes) return bLikes - aLikes
-      return queue.indexOf(a) - queue.indexOf(b)
-    })
-  }, [songLikes, sortByLikes, queue, trackLikes, currentTrack?.id])
+    const sorted =
+      !songLikes || !sortByLikes
+        ? queue
+        : [...queue].sort((a, b) => {
+            // Current track always first
+            if (a.id === currentTrack?.id) return -1
+            if (b.id === currentTrack?.id) return 1
+            // Then sort by likes desc → queue index asc
+            const aLikes = trackLikes[a.id]?.length ?? 0
+            const bLikes = trackLikes[b.id]?.length ?? 0
+            if (bLikes !== aLikes) return bLikes - aLikes
+            return queue.indexOf(a) - queue.indexOf(b)
+          })
+    return filterQueueTracks(sorted, queueSearchQuery)
+  }, [songLikes, sortByLikes, queue, trackLikes, currentTrack?.id, queueSearchQuery])
 
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
   const virtualizer = useVirtualizer({
@@ -229,7 +236,8 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           <div className="flex items-center justify-between">
             <DrawerTitle className="flex items-center gap-2 text-base">
               <Music className="h-4 w-4" />
-              播放列表 ({displayQueue.length})
+              播放列表 (
+              {queueSearchQuery.trim() ? `${displayQueue.length}/${queue.length}` : queue.length})
             </DrawerTitle>
             {songLikes && (
               <button
@@ -278,9 +286,36 @@ export function QueueDrawer({ open, onOpenChange, onRemoveFromQueue, onReorderQu
           </div>
         </DrawerHeader>
 
+        {queue.length > 0 && (
+          <div className="shrink-0 border-b px-4 py-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={queueSearchQuery}
+                onChange={(e) => setQueueSearchQuery(e.target.value)}
+                placeholder="在当前队列中搜索歌名或歌手..."
+                className="h-8 pr-8 pl-8 text-sm"
+                aria-label="搜索当前播放列表"
+              />
+              {queueSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setQueueSearchQuery('')}
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="清除搜索"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div ref={setScrollElement} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2">
           {displayQueue.length === 0 ? (
-            <div className="flex h-40 items-center justify-center text-muted-foreground">播放列表为空</div>
+            <div className="flex h-40 items-center justify-center text-muted-foreground">
+              {queue.length === 0 ? '播放列表为空' : '未找到匹配的歌曲'}
+            </div>
           ) : (
             <div className="w-full" style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
