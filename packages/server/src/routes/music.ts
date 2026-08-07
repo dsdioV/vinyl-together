@@ -6,7 +6,9 @@ import {
   playlistQuerySchema,
   playlistSearchQuerySchema,
   trackQuerySchema,
+  defaultQueueTracksQuerySchema,
   sanitizeCoverProxyUrl,
+  type DefaultQueueTrackRef,
   type MusicSource,
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
@@ -15,6 +17,7 @@ import { musicProvider, PlaylistSearchLimitError } from '../services/musicProvid
 import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { resolveDefaultQueueRefs } from '../utils/defaultQueueRef.js'
 import { logger } from '../utils/logger.js'
 import { readCoverResponse } from '../utils/coverResponse.js'
 import { Readable } from 'node:stream'
@@ -173,6 +176,41 @@ router.get(
       else res.end()
     },
   ),
+)
+
+router.get(
+  '/default-queue/tracks',
+  validated(defaultQueueTracksQuerySchema, 'Default queue tracks', async (data, req, res) => {
+    const identityUserId = req.identityUserId
+    if (!identityUserId) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+    const room = roomRepo.get(data.roomId)
+    if (!room) {
+      res.status(404).json({ error: 'Room not found' })
+      return
+    }
+    const user = room.users.find((u) => u.id === identityUserId)
+    if (!user || (user.role !== 'owner' && user.role !== 'admin')) {
+      res.status(403).json({ error: 'Forbidden' })
+      return
+    }
+
+    const ids = [...new Set(data.ids.split(',').map((id) => id.trim()).filter(Boolean))].slice(0, 50)
+    if (ids.length === 0) {
+      res.status(400).json({ error: 'No track ids provided' })
+      return
+    }
+
+    const byId = new Map(room.defaultQueue.map((ref) => [ref.id, ref]))
+    const refs = ids
+      .map((id) => byId.get(id))
+      .filter((ref): ref is DefaultQueueTrackRef => Boolean(ref))
+    const { tracks, missingIds } = await resolveDefaultQueueRefs(data.roomId, refs)
+    const notFound = ids.filter((id) => !byId.has(id))
+    res.json({ tracks, missingIds: [...missingIds, ...notFound] })
+  }),
 )
 
 router.get(

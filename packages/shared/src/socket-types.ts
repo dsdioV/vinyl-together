@@ -2,6 +2,8 @@ import type { EVENTS } from './events.js'
 import type {
   AudioQuality,
   ChatMessage,
+  DefaultQueueDelta,
+  DefaultQueueTrackRef,
   LocalAudioAsset,
   LocalAudioState,
   LocalAudioTask,
@@ -110,7 +112,8 @@ export interface ServerToClientEvents {
   [EVENTS.PLAYLIST_MY_LIST]: (data: { platform: MusicSource; playlists: Playlist[] }) => void
 
   // Default queue
-  [EVENTS.DEFAULT_QUEUE_UPDATED]: (data: { defaultQueue: Track[] }) => void
+  [EVENTS.DEFAULT_QUEUE_UPDATED]: (data: { defaultQueue: DefaultQueueTrackRef[] }) => void
+  [EVENTS.DEFAULT_QUEUE_DELTA]: (data: DefaultQueueDelta) => void
 
   // Song likes
   [EVENTS.QUEUE_LIKES_UPDATED]: (data: { trackLikes: Record<string, string[]> }) => void

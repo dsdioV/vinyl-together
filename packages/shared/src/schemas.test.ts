@@ -5,6 +5,7 @@ import type { QueueTrackInput } from './socket-types.js'
 import {
   defaultQueueAddBatchSchema,
   defaultQueueAddSchema,
+  defaultQueueTracksQuerySchema,
   localAudioAssetDeleteSchema,
   localAudioAssetUpdateSchema,
   localAudioTaskCancelSchema,
@@ -218,6 +219,20 @@ describe('local audio queue input schemas', () => {
     expect(parsed.track).not.toHaveProperty('streamUrl')
     expect(parsed.track).not.toHaveProperty('fallbackStreamUrl')
     expect(parsed.track).not.toHaveProperty('localAudioAccessExpiresAt')
+  })
+})
+
+describe('default queue tracks query schema', () => {
+  it('accepts a room id and comma-separated ids', () => {
+    expect(defaultQueueTracksQuerySchema.parse({ roomId: 'ROOM1', ids: 'a,b,c' })).toEqual({
+      roomId: 'ROOM1',
+      ids: 'a,b,c',
+    })
+  })
+
+  it('rejects empty ids or missing room', () => {
+    expect(defaultQueueTracksQuerySchema.safeParse({ roomId: 'ROOM1', ids: '' }).success).toBe(false)
+    expect(defaultQueueTracksQuerySchema.safeParse({ ids: 'a' }).success).toBe(false)
   })
 })
 

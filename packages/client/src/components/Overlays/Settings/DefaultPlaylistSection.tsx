@@ -10,13 +10,14 @@ import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { EVENTS, LIMITS } from '@music-together/shared'
-import type { MusicSource, Track, Playlist } from '@music-together/shared'
+import type { MusicSource, Playlist, Track } from '@music-together/shared'
 import { Loader2, Music2, Search, ListMusic, Hash, ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PlaylistDetail } from './PlaylistDetail'
 import { TrackListItem } from '@/components/TrackListItem'
+import { fetchDefaultQueueTracks } from '@/lib/defaultQueue'
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
@@ -62,6 +63,71 @@ export function DefaultPlaylistSection() {
   const pageTracks = useMemo(
     () => filteredDefaultTracks.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
     [filteredDefaultTracks, currentPage],
+  )
+  const roomId = useRoomStore((s) => s.room?.id)
+  /** 当前页完整元数据缓存（FIFO 限容，避免全量列表放大客户端内存） */
+  const [trackCache, setTrackCache] = useState<Map<string, Track>>(() => new Map())
+  /** 补全失败（平台下架/本地资产消失）的引用 ID，避免每次翻页重复请求同一批坏条目 */
+  const [failedRefIds, setFailedRefIds] = useState<ReadonlySet<string>>(() => new Set())
+
+  // 批量补全当前页缺失的元数据；补全结果进入缓存，失败条目进入 failed 集合。
+  useEffect(() => {
+    if (!roomId) return
+    const missing = pageTracks
+      .filter((ref) => !trackCache.has(ref.id) && !failedRefIds.has(ref.id))
+      .map((ref) => ref.id)
+    if (missing.length === 0) return
+    let cancelled = false
+    fetchDefaultQueueTracks(roomId, missing)
+      .then(({ tracks, missingIds }) => {
+        if (cancelled) return
+        if (tracks.length > 0) {
+          setTrackCache((prev) => {
+            const next = new Map(prev)
+            for (const t of tracks) next.set(t.id, t)
+            while (next.size > 500) {
+              const oldest = next.keys().next().value
+              if (oldest === undefined) break
+              next.delete(oldest)
+            }
+            return next
+          })
+        }
+        if (missingIds.length > 0) {
+          setFailedRefIds((prev) => {
+            const next = new Set(prev)
+            for (const id of missingIds) next.add(id)
+            return next
+          })
+        }
+      })
+      .catch(() => {
+        // 网络/服务端错误：不标记 failed，翻页或下次渲染会重试
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pageTracks, roomId, trackCache, failedRefIds])
+
+  const displayTracks = useMemo(
+    () =>
+      pageTracks.map((ref) => {
+        const cached = trackCache.get(ref.id)
+        if (cached) return cached
+        return {
+          id: ref.id,
+          title: ref.title,
+          artist: ref.artist,
+          album: '',
+          duration: 0,
+          cover: '',
+          source: ref.source,
+          sourceId: ref.sourceId,
+          urlId: ref.sourceId,
+          ...(ref.assetId ? { assetId: ref.assetId } : {}),
+        } satisfies Track
+      }),
+    [pageTracks, trackCache],
   )
   const handleDefaultSearchChange = useCallback((value: string) => {
     setDefaultSearchQuery(value)
@@ -483,8 +549,8 @@ export function DefaultPlaylistSection() {
         <>
           <div className="max-h-64 overflow-x-hidden overflow-y-auto rounded-md border">
             <div className="grid grid-cols-1 divide-y">
-              {pageTracks.map((track) => {
-                const globalIndex = defaultQueue.indexOf(track)
+              {displayTracks.map((track) => {
+                const globalIndex = defaultQueue.findIndex((t) => t.id === track.id)
                 return (
                   <TrackListItem
                     key={track.id}

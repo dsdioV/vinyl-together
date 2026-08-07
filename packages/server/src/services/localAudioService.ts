@@ -11,6 +11,7 @@ import {
   ERROR_CODE,
   LIMITS,
   type AudioQuality,
+  type DefaultQueueDelta,
   type LocalAudioAsset,
   type LocalAudioState,
   type LocalAudioTask,
@@ -33,6 +34,7 @@ import {
   type QualityOutputProfile,
 } from './localAudioMedia.js'
 import { issueLocalAudioAccessTokenAt, type LocalAudioAccessVariant } from './localAudioAccess.js'
+import { toDefaultQueueRef } from '../utils/defaultQueueRef.js'
 import { logger } from '../utils/logger.js'
 import { toPublicRoomState, toPublicRoomStateForMember } from '../utils/roomUtils.js'
 
@@ -403,16 +405,11 @@ export class LocalAudioService {
     if (members.length > 0) this.io.to(members).emit(EVENTS.ROOM_STATE, toPublicRoomStateForMember(room))
   }
 
-  private broadcastDefaultQueue(roomId: string): void {
+  private broadcastDefaultQueueDelta(roomId: string, delta: DefaultQueueDelta): void {
     if (!this.io) return
-    const room = roomRepo.get(roomId)
-    if (!room) return
-    const { privileged, members } = this.socketsByRole(roomId)
+    const { privileged } = this.socketsByRole(roomId)
     if (privileged.length > 0) {
-      this.io.to(privileged).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: room.defaultQueue })
-    }
-    if (members.length > 0) {
-      this.io.to(members).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: [] })
+      this.io.to(privileged).emit(EVENTS.DEFAULT_QUEUE_DELTA, delta)
     }
   }
 
@@ -1212,8 +1209,9 @@ export class LocalAudioService {
     const room = roomRepo.get(roomId)
     if (!track || !room) return null
     if (room.defaultQueue.length >= LIMITS.DEFAULT_QUEUE_MAX_SIZE) return null
-    room.defaultQueue.push(track)
-    this.broadcastDefaultQueue(roomId)
+    const ref = toDefaultQueueRef(track)
+    room.defaultQueue.push(ref)
+    this.broadcastDefaultQueueDelta(roomId, { type: 'add', tracks: [ref] })
     return track
   }
 
@@ -1295,7 +1293,9 @@ export class LocalAudioService {
         ? { ...track, title: asset.title, artist: asset.artist, album: asset.album, duration: asset.duration }
         : track
     room.queue = room.queue.map(apply)
-    room.defaultQueue = room.defaultQueue.map(apply)
+    room.defaultQueue = room.defaultQueue.map((ref) =>
+      ref.assetId === asset.assetId ? { ...ref, title: asset.title, artist: asset.artist } : ref,
+    )
     room.playedHistory = room.playedHistory.map((entry) => ({ ...entry, track: apply(entry.track) }))
     if (room.currentTrack) room.currentTrack = apply(room.currentTrack)
     this.broadcastRoomState(roomId)
@@ -1323,14 +1323,17 @@ export class LocalAudioService {
       removedIds.push(track.id)
       return false
     })
-    room.defaultQueue = room.defaultQueue.filter((track) => track.assetId !== assetId)
+    const removedRefs = room.defaultQueue.filter((ref) => ref.assetId === assetId)
+    room.defaultQueue = room.defaultQueue.filter((ref) => ref.assetId !== assetId)
+    if (removedRefs.length > 0) {
+      this.broadcastDefaultQueueDelta(roomId, { type: 'remove', trackIds: removedRefs.map((ref) => ref.id) })
+    }
     room.playedHistory = room.playedHistory.filter((entry) => entry.track.assetId !== assetId)
     for (const id of removedIds) {
       room.trackLikes.delete(id)
       room.trackLikeTimestamps.delete(id)
     }
     if (removedIds.length > 0) this.io?.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: removedIds })
-    this.broadcastDefaultQueue(roomId)
     this.io?.to(roomId).emit(EVENTS.PLAYED_HISTORY_UPDATED, { playedHistory: room.playedHistory })
 
     asset.pendingDelete = true
@@ -1436,9 +1439,12 @@ export class LocalAudioService {
         }
         this.io?.to(asset.roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'remove', trackIds: removedIds })
       }
-      room.defaultQueue = room.defaultQueue.filter((track) => track.assetId !== asset.assetId)
+      const removedRefs = room.defaultQueue.filter((ref) => ref.assetId === asset.assetId)
+      room.defaultQueue = room.defaultQueue.filter((ref) => ref.assetId !== asset.assetId)
+      if (removedRefs.length > 0) {
+        this.broadcastDefaultQueueDelta(asset.roomId, { type: 'remove', trackIds: removedRefs.map((ref) => ref.id) })
+      }
       room.playedHistory = room.playedHistory.filter((entry) => entry.track.assetId !== asset.assetId)
-      this.broadcastDefaultQueue(asset.roomId)
       this.io?.to(asset.roomId).emit(EVENTS.PLAYED_HISTORY_UPDATED, { playedHistory: room.playedHistory })
     }
 

@@ -14,9 +14,11 @@ import { musicProvider } from './musicProvider.js'
 import * as queueService from './queueService.js'
 import * as trackFallbackService from './trackFallbackService.js'
 import * as authService from './authService.js'
+import * as chatService from './chatService.js'
 import { estimateCurrentTime } from './syncService.js'
 import { broadcastRoomList } from './roomLifecycleService.js'
 import { toPublicRoomState } from '../utils/roomUtils.js'
+import { resolveDefaultQueueRef } from '../utils/defaultQueueRef.js'
 import { config } from '../config.js'
 import { logger } from '../utils/logger.js'
 import type { RoomData } from '../repositories/types.js'
@@ -658,7 +660,7 @@ async function _executePlayNext(
 
   if (!nextTrack) {
     // Fallback: if default queue is configured, randomly pick one and play
-    const picked = pickFromDefaultQueue(io, roomId)
+    const picked = await pickFromDefaultQueue(io, roomId)
     if (picked) {
       const success = await _playTrackInRoom(io, roomId, picked)
       if (!success) {
@@ -723,15 +725,38 @@ export function playPrevTrackInRoom(
 // Playback sync for newly-joined clients
 // ---------------------------------------------------------------------------
 
-/** 主队列为空且默认播放列表非空时，随机取一首加入主队列并广播，返回加入的歌曲。 */
-function pickFromDefaultQueue(io: TypedServer, roomId: string): Track | null {
-  const room = roomRepo.get(roomId)
-  if (!room || room.defaultQueue.length === 0) return null
-  const picked = room.defaultQueue[Math.floor(Math.random() * room.defaultQueue.length)]
-  const added = queueService.addTrack(roomId, picked)
-  if (!added) return null
-  io.to(roomId).emit(EVENTS.QUEUE_UPDATED, { type: 'insert', tracks: [picked], atIndex: room.queue.length - 1 })
-  return room.queue[room.queue.length - 1] ?? null
+/** 单次接续播放时最多尝试补全的默认列表条目数（防止全坏列表导致无限循环）。 */
+const DEFAULT_QUEUE_PICK_MAX_ATTEMPTS = 5
+
+/**
+ * 主队列为空且默认播放列表非空时，随机抽一条引用、补全为完整 Track 后加入主队列并广播。
+ * 补全失败（平台下架/本地资产消失）的条目会被移除并广播通知，避免后续每次兜底都卡在该条目上。
+ */
+async function pickFromDefaultQueue(io: TypedServer, roomId: string): Promise<Track | null> {
+  for (let attempt = 0; attempt < DEFAULT_QUEUE_PICK_MAX_ATTEMPTS; attempt++) {
+    const room = roomRepo.get(roomId)
+    if (!room || room.defaultQueue.length === 0) return null
+    const index = Math.floor(Math.random() * room.defaultQueue.length)
+    const ref = room.defaultQueue[index]!
+    const resolved = await resolveDefaultQueueRef(roomId, ref)
+    if (resolved) {
+      const added = queueService.addTrack(roomId, resolved)
+      if (!added) return null
+      io.to(roomId).emit(EVENTS.QUEUE_UPDATED, {
+        type: 'insert',
+        tracks: [resolved],
+        atIndex: room.queue.length - 1,
+      })
+      return room.queue[room.queue.length - 1] ?? null
+    }
+
+    room.defaultQueue.splice(index, 1)
+    io.to(roomId).emit(EVENTS.DEFAULT_QUEUE_DELTA, { type: 'remove', trackIds: [ref.id] })
+    const msg = chatService.createSystemMessage(roomId, `「${ref.title}」已无法解析，已从默认播放列表移除`)
+    io.to(roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+    logger.warn(`Default queue ref resolution failed, removed: ${ref.source}/${ref.sourceId}`, { roomId })
+  }
+  return null
 }
 
 /**
@@ -739,7 +764,7 @@ function pickFromDefaultQueue(io: TypedServer, roomId: string): Track | null {
  * 供 QUEUE_CLEAR 等场景在清空队列后接续播放；没有可用歌曲时返回 false。
  */
 export async function playFromDefaultQueue(io: TypedServer, roomId: string): Promise<boolean> {
-  const picked = pickFromDefaultQueue(io, roomId)
+  const picked = await pickFromDefaultQueue(io, roomId)
   if (!picked) return false
   return playTrackInRoom(io, roomId, picked)
 }
@@ -795,7 +820,7 @@ export async function syncPlaybackToSocket(
     await playTrackInRoom(io, roomId, firstTrack)
   } else if (isAloneInRoom) {
     // No current track, queue empty, but default queue has items → random pick
-    const picked = pickFromDefaultQueue(io, roomId)
+    const picked = await pickFromDefaultQueue(io, roomId)
     if (picked) await playTrackInRoom(io, roomId, picked)
   }
 }

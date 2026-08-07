@@ -82,6 +82,28 @@ export interface Track {
   requestedBy?: string
 }
 
+/**
+ * 默认播放列表的轻量引用。完整元数据（封面/时长/专辑等）通过服务端补全接口按需获取；
+ * 标题与歌手保留在引用中，供列表展示和本地搜索使用。
+ */
+export interface DefaultQueueTrackRef {
+  /** 稳定 ID（删除/去重/排序依赖） */
+  id: string
+  source: TrackSource
+  sourceId: string
+  title: string
+  artist: string[]
+  /** Room-local asset identifier; present only for local tracks. */
+  assetId?: string
+}
+
+/** 默认播放列表增量变更（存活期间使用；进房/晋升走全量快照 DEFAULT_QUEUE_UPDATED） */
+export type DefaultQueueDelta =
+  | { type: 'add'; tracks: DefaultQueueTrackRef[] }
+  | { type: 'remove'; trackIds: string[] }
+  | { type: 'replace'; track: DefaultQueueTrackRef }
+  | { type: 'clear' }
+
 /** Public metadata for a room-local audio asset. Filesystem paths are never exposed. */
 export interface LocalAudioAsset {
   assetId: string
@@ -194,7 +216,7 @@ export interface RoomState {
   playState: PlayState
   playMode: PlayMode
   /** 默认播放列表池，主队列为空时从中随机抽取（房主手动维护，不被消费） */
-  defaultQueue: Track[]
+  defaultQueue: DefaultQueueTrackRef[]
   /** 播完自动移出队列（房主开关，默认开启） */
   autoRemovePlayed: boolean
   /** 点赞模式（房主开关，需 autoRemovePlayed 开启，默认开启） */

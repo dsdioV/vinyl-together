@@ -12,7 +12,7 @@ import {
   queueUnlikeSchema,
   LIMITS,
 } from '@music-together/shared'
-import type { QueueTrackInput, Track } from '@music-together/shared'
+import type { DefaultQueueDelta, QueueTrackInput, Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -22,6 +22,7 @@ import * as playerService from '../services/playerService.js'
 import * as queueService from '../services/queueService.js'
 import { localAudioService } from '../services/localAudioService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
+import { toDefaultQueueRef } from '../utils/defaultQueueRef.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
@@ -46,29 +47,18 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
     })
   }
 
-  /**
-   * Broadcast defaultQueue update to admin/owner with full data,
-   * send empty array to members to save bandwidth.
-   */
-  function broadcastDefaultQueueUpdate(roomId: string, defaultQueue: Track[]) {
+  /** 广播默认播放列表增量（仅 owner/admin 持有默认列表状态，成员不接收）。 */
+  function broadcastDefaultQueueDelta(roomId: string, delta: DefaultQueueDelta) {
     const adminSids: string[] = []
-    const memberSids: string[] = []
     const room = roomRepo.get(roomId)
     if (!room) return
     for (const user of room.users) {
       const sid = roomRepo.getSocketIdForUser(roomId, user.id)
       if (!sid) continue
-      if (user.role === 'owner' || user.role === 'admin') {
-        adminSids.push(sid)
-      } else {
-        memberSids.push(sid)
-      }
+      if (user.role === 'owner' || user.role === 'admin') adminSids.push(sid)
     }
     if (adminSids.length > 0) {
-      io.to(adminSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue })
-    }
-    if (memberSids.length > 0) {
-      io.to(memberSids).emit(EVENTS.DEFAULT_QUEUE_UPDATED, { defaultQueue: [] })
+      io.to(adminSids).emit(EVENTS.DEFAULT_QUEUE_DELTA, delta)
     }
   }
 
@@ -314,8 +304,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      ctx.room.defaultQueue.push(track)
-      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
+      const ref = toDefaultQueueRef(track)
+      ctx.room.defaultQueue.push(ref)
+      broadcastDefaultQueueDelta(ctx.roomId, { type: 'add', tracks: [ref] })
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -386,9 +377,10 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
 
       const tracks = validTracks.slice(0, remainingCapacity)
+      const refs = tracks.map(toDefaultQueueRef)
 
-      ctx.room.defaultQueue.push(...tracks)
-      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
+      ctx.room.defaultQueue.push(...refs)
+      broadcastDefaultQueueDelta(ctx.roomId, { type: 'add', tracks: refs })
 
       const msg = chatService.createSystemMessage(
         ctx.roomId,
@@ -412,7 +404,7 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       const { trackId } = parsed.data
 
       ctx.room.defaultQueue = ctx.room.defaultQueue.filter((t) => t.id !== trackId)
-      broadcastDefaultQueueUpdate(ctx.roomId, ctx.room.defaultQueue)
+      broadcastDefaultQueueDelta(ctx.roomId, { type: 'remove', trackIds: [trackId] })
 
       logger.info(`Default queue remove`, { roomId: ctx.roomId })
     }),

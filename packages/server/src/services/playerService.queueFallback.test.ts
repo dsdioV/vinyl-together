@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EVENTS, LIMITS } from '@music-together/shared'
-import type { Track, User } from '@music-together/shared'
+import type { DefaultQueueTrackRef, Track, User } from '@music-together/shared'
 import type { RoomData } from '../repositories/types.js'
 
 const mocks = vi.hoisted(() => ({
   getStreamUrlResult: vi.fn(),
+  getTrackById: vi.fn(),
   getAnyCookie: vi.fn(),
+  createSystemMessage: vi.fn(),
 }))
 
 vi.mock('./musicProvider.js', () => ({
-  musicProvider: { getStreamUrlResult: mocks.getStreamUrlResult },
+  musicProvider: { getStreamUrlResult: mocks.getStreamUrlResult, getTrackById: mocks.getTrackById },
 }))
 
 vi.mock('./authService.js', async () => {
@@ -18,6 +20,10 @@ vi.mock('./authService.js', async () => {
 })
 
 vi.mock('./trackFallbackService.js', () => ({}))
+
+vi.mock('./chatService.js', () => ({
+  createSystemMessage: mocks.createSystemMessage,
+}))
 
 import { roomRepo } from '../repositories/roomRepository.js'
 import * as playerService from './playerService.js'
@@ -36,7 +42,17 @@ function makeTrack(id: string): Track {
   }
 }
 
-function makeRoom(user: User, defaultQueue: Track[] = []): RoomData {
+function makeRef(id: string): DefaultQueueTrackRef {
+  return {
+    id,
+    source: 'netease',
+    sourceId: `source-${id}`,
+    title: `Track ${id}`,
+    artist: ['Test Artist'],
+  }
+}
+
+function makeRoom(user: User, defaultQueue: DefaultQueueTrackRef[] = []): RoomData {
   return {
     id: 'queue-fallback-room',
     name: 'Queue Fallback Test Room',
@@ -70,6 +86,15 @@ describe('playerService.playFromDefaultQueue', () => {
     vi.clearAllMocks()
     mocks.getAnyCookie.mockReturnValue(undefined)
     mocks.getStreamUrlResult.mockResolvedValue({ url: 'https://cdn.example/audio.mp3' })
+    mocks.getTrackById.mockResolvedValue({ ...makeTrack('resolved'), id: 'resolved' })
+    mocks.createSystemMessage.mockReturnValue({
+      id: 'msg-1',
+      userId: 'system',
+      nickname: 'system',
+      content: '',
+      timestamp: 0,
+      type: 'system',
+    })
     const emit = vi.fn()
     io = { to: vi.fn(() => ({ emit })) }
   })
@@ -80,7 +105,7 @@ describe('playerService.playFromDefaultQueue', () => {
 
   it('plays a random track from the default queue when the main queue is empty', async () => {
     const user: User = { id: 'user-1', nickname: 'owner', role: 'owner' }
-    const room = makeRoom(user, [makeTrack('default-1'), makeTrack('default-2')])
+    const room = makeRoom(user, [makeRef('default-1'), makeRef('default-2')])
     roomRepo.set(room.id, room)
 
     const ok = await playerService.playFromDefaultQueue(io as never, room.id)
@@ -104,5 +129,25 @@ describe('playerService.playFromDefaultQueue', () => {
     expect(room.queue).toHaveLength(0)
     expect(room.currentTrack).toBeNull()
     expect(io.to).not.toHaveBeenCalled()
+  })
+
+  it('removes unresolvable default queue refs and notifies instead of stalling', async () => {
+    const user: User = { id: 'user-1', nickname: 'owner', role: 'owner' }
+    const room = makeRoom(user, [makeRef('dead-1')])
+    roomRepo.set(room.id, room)
+    mocks.getTrackById.mockResolvedValue(null)
+
+    const ok = await playerService.playFromDefaultQueue(io as never, room.id)
+
+    expect(ok).toBe(false)
+    expect(room.defaultQueue).toHaveLength(0)
+    expect(room.queue).toHaveLength(0)
+    expect(room.currentTrack).toBeNull()
+    expect(io.to(room.id).emit).toHaveBeenCalledWith(EVENTS.DEFAULT_QUEUE_DELTA, {
+      type: 'remove',
+      trackIds: ['dead-1'],
+    })
+    expect(io.to(room.id).emit).toHaveBeenCalledWith(EVENTS.CHAT_MESSAGE, expect.anything())
+    expect(mocks.createSystemMessage).toHaveBeenCalledWith(room.id, expect.stringContaining('已无法解析'))
   })
 })

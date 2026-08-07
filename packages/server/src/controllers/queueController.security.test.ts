@@ -1,5 +1,5 @@
 import { ERROR_CODE, EVENTS, LIMITS } from '@music-together/shared'
-import type { Track, User } from '@music-together/shared'
+import type { DefaultQueueTrackRef, Track, User } from '@music-together/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RoomData } from '../repositories/types.js'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
@@ -58,7 +58,18 @@ function makeTrack(id: string | number): Track {
   }
 }
 
-function makeRoom(user: User, defaultQueue: Track[] = [], queue: Track[] = []): RoomData {
+function makeRef(id: string | number): DefaultQueueTrackRef {
+  const suffix = String(id)
+  return {
+    id: `track-${suffix}`,
+    source: 'netease',
+    sourceId: `source-${suffix}`,
+    title: `Track ${suffix}`,
+    artist: ['Test Artist'],
+  }
+}
+
+function makeRoom(user: User, defaultQueue: DefaultQueueTrackRef[] = [], queue: Track[] = []): RoomData {
   return {
     id: `security-room-${fixtureNumber}`,
     name: 'Security Test Room',
@@ -85,7 +96,7 @@ function makeRoom(user: User, defaultQueue: Track[] = [], queue: Track[] = []): 
   }
 }
 
-function mount(role: User['role'], options?: { defaultQueue?: Track[]; queue?: Track[] }): Harness {
+function mount(role: User['role'], options?: { defaultQueue?: DefaultQueueTrackRef[]; queue?: Track[] }): Harness {
   fixtureNumber += 1
   const user: User = { id: `user-${fixtureNumber}`, nickname: role, role }
   const room = makeRoom(user, options?.defaultQueue, options?.queue)
@@ -162,7 +173,7 @@ afterEach(() => {
 
 describe('default queue permissions', () => {
   it('does not let a member add, batch-add, or remove default queue tracks', async () => {
-    const seed = makeTrack('seed')
+    const seed = makeRef('seed')
     const fixture = mount('member', { defaultQueue: [seed] })
 
     await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD, { track: makeTrack('single') })
@@ -176,7 +187,7 @@ describe('default queue permissions', () => {
   })
 
   it.each(['admin', 'owner'] as const)('%s can add, batch-add, and remove default queue tracks', async (role) => {
-    const seed = makeTrack('seed')
+    const seed = makeRef('seed')
     const fixture = mount(role, { defaultQueue: [seed] })
 
     await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD, { track: makeTrack('single') })
@@ -259,13 +270,13 @@ describe('main queue capacity', () => {
 })
 
 describe('default queue capacity', () => {
-  it('does not add a single track when the default queue already has 1000 tracks', async () => {
-    const existing = Array.from({ length: 1_000 }, (_, index) => makeTrack(index))
+  it('does not add a single track when the default queue already has the max size', async () => {
+    const existing = Array.from({ length: LIMITS.DEFAULT_QUEUE_MAX_SIZE }, (_, index) => makeRef(index))
     const fixture = mount('admin', { defaultQueue: existing })
 
     await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD, { track: makeTrack('overflow') })
 
-    expect(fixture.room.defaultQueue).toHaveLength(1_000)
+    expect(fixture.room.defaultQueue).toHaveLength(LIMITS.DEFAULT_QUEUE_MAX_SIZE)
     expect(fixture.room.defaultQueue).toEqual(existing)
     expect(fixture.ioEmit).not.toHaveBeenCalled()
     expect(fixture.socketEmit).toHaveBeenCalledWith(
@@ -274,22 +285,22 @@ describe('default queue capacity', () => {
     )
   })
 
-  it('adds only the remaining slot when 999 tracks receive a 2-track batch', async () => {
-    const existing = Array.from({ length: 999 }, (_, index) => makeTrack(index))
+  it('adds only the remaining slot when the queue is one short of the max', async () => {
+    const existing = Array.from({ length: LIMITS.DEFAULT_QUEUE_MAX_SIZE - 1 }, (_, index) => makeRef(index))
     const fixture = mount('admin', { defaultQueue: existing })
 
     await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_BATCH, {
       tracks: [makeTrack('first-new'), makeTrack('second-new')],
     })
 
-    expect(fixture.room.defaultQueue).toHaveLength(1_000)
+    expect(fixture.room.defaultQueue).toHaveLength(LIMITS.DEFAULT_QUEUE_MAX_SIZE)
     expect(fixture.room.defaultQueue.at(-1)?.id).toBe('track-first-new')
     expect(fixture.room.defaultQueue.some((track) => track.id === 'track-second-new')).toBe(false)
-    const updateCall = fixture.ioEmit.mock.calls.find(([event]) => event === EVENTS.DEFAULT_QUEUE_UPDATED)
-    expect(updateCall).toBeDefined()
-    const update = updateCall?.[1] as { defaultQueue: Track[] }
-    expect(update.defaultQueue).toHaveLength(1_000)
-    expect(update.defaultQueue.at(-1)?.id).toBe('track-first-new')
+    const deltaCall = fixture.ioEmit.mock.calls.find(([event]) => event === EVENTS.DEFAULT_QUEUE_DELTA)
+    expect(deltaCall).toBeDefined()
+    const delta = deltaCall?.[1] as { type: 'add'; tracks: DefaultQueueTrackRef[] }
+    expect(delta.tracks).toHaveLength(1)
+    expect(delta.tracks.at(-1)?.id).toBe('track-first-new')
     expect(mocks.createSystemMessage).toHaveBeenCalledWith(fixture.room.id, expect.stringContaining('添加了 1 首歌'))
   })
 })
@@ -300,7 +311,7 @@ describe('default queue rate limiting', () => {
     [EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: [makeTrack('rate-batch')] }],
     [EVENTS.DEFAULT_QUEUE_REMOVE, { trackId: 'existing' }],
   ] as const)('has no side effects when rate limited: %s', async (event, payload) => {
-    const existing = makeTrack('existing')
+    const existing = makeRef('existing')
     const fixture = mount('admin', { defaultQueue: [existing] })
     mocks.checkSocketRateLimit.mockResolvedValue(false)
 
@@ -315,7 +326,7 @@ describe('default queue rate limiting', () => {
 
 describe('queue clear default queue fallback', () => {
   it('picks from the default queue after clearing when a default queue exists', async () => {
-    const fixture = mount('owner', { defaultQueue: [makeTrack('default-1')] })
+    const fixture = mount('owner', { defaultQueue: [makeRef('default-1')] })
     fixture.room.queue = [makeTrack('queued-1')]
 
     await fixture.dispatch(EVENTS.QUEUE_CLEAR)

@@ -1,4 +1,14 @@
-import type { AudioQuality, ChatMessage, PlayMode, PlayState, PlayedTrack, RoomListItem, Track, User } from '@music-together/shared'
+import type {
+  AudioQuality,
+  ChatMessage,
+  DefaultQueueTrackRef,
+  PlayMode,
+  PlayState,
+  PlayedTrack,
+  RoomListItem,
+  Track,
+  User,
+} from '@music-together/shared'
 
 /** 服务端内部房间数据模型 -- 含密码（永远不发送给客户端） */
 export interface RoomData {
@@ -13,8 +23,8 @@ export interface RoomData {
   audioQuality: AudioQuality
   users: User[]
   queue: Track[]
-  /** 默认播放列表池，主队列为空时从中随机抽取 */
-  defaultQueue: Track[]
+  /** 默认播放列表池（轻量引用，完整元数据按需补全），主队列为空时从中随机抽取 */
+  defaultQueue: DefaultQueueTrackRef[]
   currentTrack: Track | null
   playState: PlayState
   playMode: PlayMode

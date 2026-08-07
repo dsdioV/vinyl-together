@@ -3,7 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ERROR_CODE, EVENTS, type AudioQuality, type Track, type User } from '@music-together/shared'
+import {
+  ERROR_CODE,
+  EVENTS,
+  type AudioQuality,
+  type DefaultQueueTrackRef,
+  type Track,
+  type User,
+} from '@music-together/shared'
 import type { TypedServer } from '../middleware/types.js'
 import type { RoomData } from '../repositories/types.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -1396,7 +1403,15 @@ describe('LocalAudioService deletion and room cleanup', () => {
     const data = roomRepo.get(roomId)!
     data.queue = [track]
     data.currentTrack = track
-    data.defaultQueue = [track]
+    const ref: DefaultQueueTrackRef = {
+      id: track.id,
+      source: 'local',
+      sourceId: track.sourceId,
+      title: track.title,
+      artist: track.artist,
+      assetId: track.assetId,
+    }
+    data.defaultQueue = [ref]
     data.playedHistory = [{ track, playedAt: Date.now(), requestedBy: 'owner' }]
 
     await expect(service.deleteAsset(roomId, assetId, actor('owner', 'owner'), false)).resolves.toBe(true)

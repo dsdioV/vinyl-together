@@ -10,8 +10,8 @@ export const LIMITS = {
   CHAT_RATE_LIMIT_PER_SECOND: 5,
   QUEUE_MAX_SIZE: 1_000,
   QUEUE_BATCH_MAX_SIZE: 1_000,
-  /** 默认播放列表的固定歌曲上限 */
-  DEFAULT_QUEUE_MAX_SIZE: 1_000,
+  /** 默认播放列表的固定歌曲上限（65536 为实际不可达的防滥用上限） */
+  DEFAULT_QUEUE_MAX_SIZE: 65_536,
   /** 新建房间时主队列默认上限（房主可在设置中调整） */
   QUEUE_MAX_SIZE_DEFAULT: 1_000,
   /** 主队列上限可设置的最小值 */

@@ -162,6 +162,12 @@ export const defaultQueueAddBatchSchema = z.object({
 
 export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })
 
+/** 默认播放列表批量元数据补全查询（REST：ids 逗号分隔，服务端按批大小上限截断） */
+export const defaultQueueTracksQuerySchema = z.object({
+  roomId: z.string().min(1).max(200),
+  ids: z.string().min(1).max(2000),
+})
+
 // ---------------------------------------------------------------------------
 // Room-local audio
 // ---------------------------------------------------------------------------

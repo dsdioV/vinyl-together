@@ -1,6 +1,6 @@
 import express from 'express'
 import type { Server } from 'node:http'
-import { LIMITS } from '@music-together/shared'
+import { LIMITS, type DefaultQueueTrackRef, type User } from '@music-together/shared'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     getPlaylistPage: vi.fn(),
     searchPlaylistTracks: vi.fn(),
     getUserCookie: vi.fn(),
+    getAnyCookie: vi.fn(),
     PlaylistSearchLimitError: MockPlaylistSearchLimitError,
   }
 })
@@ -38,6 +39,7 @@ vi.mock('../services/musicProvider.js', () => ({
 
 vi.mock('../services/authService.js', () => ({
   getUserCookie: mocks.getUserCookie,
+  getAnyCookie: mocks.getAnyCookie,
 }))
 
 import musicRouter from './music.js'
@@ -76,10 +78,24 @@ beforeEach(() => {
   for (const roomId of mountedRoomIds.splice(0)) roomRepo.delete(roomId)
 })
 
-function mountRoom(roomId: string, userId: string): void {
+function mountRoom(roomId: string, userId: string, role: User['role'] = 'member'): void {
   roomRepo.set(roomId, {
     id: roomId,
-    users: [{ id: userId, nickname: 'Tester', role: 'member' }],
+    users: [{ id: userId, nickname: 'Tester', role }],
+  } as RoomData)
+  mountedRoomIds.push(roomId)
+}
+
+function mountDefaultQueueRoom(
+  roomId: string,
+  userId: string,
+  role: User['role'],
+  refs: DefaultQueueTrackRef[] = [],
+): void {
+  roomRepo.set(roomId, {
+    id: roomId,
+    users: [{ id: userId, nickname: 'Tester', role }],
+    defaultQueue: refs,
   } as RoomData)
   mountedRoomIds.push(roomId)
 }
@@ -272,5 +288,110 @@ describe('GET /playlist/search', () => {
       maxTracks: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
       actualTracks,
     })
+  })
+})
+
+describe('GET /default-queue/tracks', () => {
+  const makeRef = (id: string): DefaultQueueTrackRef => ({
+    id,
+    source: 'netease',
+    sourceId: `source-${id}`,
+    title: `Track ${id}`,
+    artist: ['Test Artist'],
+  })
+
+  it('requires identity', async () => {
+    mountDefaultQueueRoom('dq-room-unauth', 'u1', 'owner')
+
+    const response = await fetch(`${baseUrl}/default-queue/tracks?roomId=dq-room-unauth&ids=a`)
+
+    expect(response.status).toBe(401)
+  })
+
+  it('rejects non-privileged roles', async () => {
+    mountDefaultQueueRoom('dq-room-member', 'u1', 'member')
+
+    const response = await fetch(`${baseUrl}/default-queue/tracks?roomId=dq-room-member&ids=a`, {
+      headers: { 'x-test-user-id': 'u1' },
+    })
+
+    expect(response.status).toBe(403)
+  })
+
+  it('returns 404 for unknown rooms', async () => {
+    const response = await fetch(`${baseUrl}/default-queue/tracks?roomId=nope&ids=a`, {
+      headers: { 'x-test-user-id': 'u1' },
+    })
+
+    expect(response.status).toBe(404)
+  })
+
+  it('resolves refs to full tracks while keeping the stable ref id', async () => {
+    const ref = makeRef('ref-1')
+    mountDefaultQueueRoom('dq-room-ok', 'u2', 'admin', [ref])
+    mocks.getAnyCookie.mockReturnValue(null)
+    mocks.getTrackById.mockResolvedValue({
+      id: 'server-generated-id',
+      title: 'Full Track',
+      artist: ['Test Artist'],
+      album: 'Album',
+      duration: 180,
+      cover: '',
+      source: 'netease',
+      sourceId: 'source-ref-1',
+      urlId: 'url-ref-1',
+    })
+
+    const response = await fetch(`${baseUrl}/default-queue/tracks?roomId=dq-room-ok&ids=ref-1`, {
+      headers: { 'x-test-user-id': 'u2' },
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { tracks: Array<{ id: string }>; missingIds: string[] }
+    expect(body.tracks).toHaveLength(1)
+    expect(body.tracks[0]?.id).toBe('ref-1')
+    expect(body.missingIds).toEqual([])
+    expect(mocks.getTrackById).toHaveBeenCalledWith('netease', 'source-ref-1', undefined)
+  })
+
+  it('reports both unresolvable refs and ids not present in the room', async () => {
+    const ref = makeRef('ref-1')
+    mountDefaultQueueRoom('dq-room-missing', 'u3', 'owner', [ref])
+    mocks.getAnyCookie.mockReturnValue(null)
+    mocks.getTrackById.mockResolvedValue(null)
+
+    const response = await fetch(`${baseUrl}/default-queue/tracks?roomId=dq-room-missing&ids=ref-1,ghost`, {
+      headers: { 'x-test-user-id': 'u3' },
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { tracks: unknown[]; missingIds: string[] }
+    expect(body.tracks).toEqual([])
+    expect(body.missingIds).toEqual(['ref-1', 'ghost'])
+  })
+
+  it('caps a request to 50 ids', async () => {
+    const refs = Array.from({ length: 60 }, (_, index) => makeRef(`ref-${index}`))
+    mountDefaultQueueRoom('dq-room-cap', 'u4', 'owner', refs)
+    mocks.getAnyCookie.mockReturnValue(null)
+    mocks.getTrackById.mockResolvedValue({
+      id: 'x',
+      title: 'T',
+      artist: ['A'],
+      album: '',
+      duration: 0,
+      cover: '',
+      source: 'netease',
+      sourceId: 's',
+      urlId: 'u',
+    })
+
+    const response = await fetch(
+      `${baseUrl}/default-queue/tracks?roomId=dq-room-cap&ids=${refs.map((r) => r.id).join(',')}`,
+      { headers: { 'x-test-user-id': 'u4' } },
+    )
+
+    expect(response.status).toBe(200)
+    expect(mocks.getTrackById).toHaveBeenCalledTimes(50)
   })
 })

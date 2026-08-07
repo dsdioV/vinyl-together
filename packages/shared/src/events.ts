@@ -89,6 +89,7 @@ export const EVENTS = {
   DEFAULT_QUEUE_ADD_BATCH: 'default_queue:add_batch',
   DEFAULT_QUEUE_REMOVE: 'default_queue:remove',
   DEFAULT_QUEUE_UPDATED: 'default_queue:updated',
+  DEFAULT_QUEUE_DELTA: 'default_queue:delta',
 
   // Played history
   PLAYED_HISTORY_UPDATED: 'played_history:updated',
