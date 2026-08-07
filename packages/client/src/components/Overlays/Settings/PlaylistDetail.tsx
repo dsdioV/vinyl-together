@@ -210,7 +210,7 @@ export function PlaylistDetail({
       for (const t of addAllTracks) next.add(trackKey(t))
       return next
     })
-    toast.success(`已添加 ${addAllTracks.length} 首到${addAllTargetLabel ?? '队列'}`)
+    toast.success(`开始添加 ${addAllTracks.length} 首到${addAllTargetLabel ?? '队列'}`)
   }, [addAllTracks, onAddAll, playlist?.name, addAllTargetLabel])
 
   const handleAddToDefault = useCallback(() => {

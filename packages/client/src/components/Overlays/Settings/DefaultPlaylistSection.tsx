@@ -18,6 +18,7 @@ import { toast } from 'sonner'
 import { PlaylistDetail } from './PlaylistDetail'
 import { TrackListItem } from '@/components/TrackListItem'
 import { fetchDefaultQueueTracks } from '@/lib/defaultQueue'
+import { emitInChunks } from '@/lib/batchQueueAdd'
 
 const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'netease', label: '网易云' },
@@ -205,7 +206,9 @@ export function DefaultPlaylistSection() {
     (tracks: Track[]) => {
       const tracksToAdd = tracks.slice(0, remainingCapacity)
       if (tracksToAdd.length === 0) return
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd.map(toQueueTrackInput) })
+      void emitInChunks(tracksToAdd, (chunk) => {
+        socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk.map(toQueueTrackInput) })
+      })
     },
     [socket, remainingCapacity],
   )

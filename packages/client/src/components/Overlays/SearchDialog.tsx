@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VirtualTrackList, type VirtualTrackListRef } from '@/components/VirtualTrackList'
 import { PLATFORM_ACTIVE, PLATFORM_TEXT } from '@/lib/platform'
 import { cn, toQueueTrackInput, trackKey } from '@/lib/utils'
+import { emitInChunks } from '@/lib/batchQueueAdd'
 import { useRoomStore } from '@/stores/roomStore'
 import { useSearch } from '@/hooks/useSearch'
 import { usePlaylist, parsePlaylistInput } from '@/hooks/usePlaylist'
@@ -203,13 +204,18 @@ export function SearchDialog({
   const handleAddBatch = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks: tracks.map(toQueueTrackInput), playlistName })
+      void emitInChunks(tracks, (chunk, index) => {
+        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
+          tracks: chunk.map(toQueueTrackInput),
+          ...(index === 0 && playlistName ? { playlistName } : {}),
+        })
+      })
       setAddedIds((prev) => {
         const next = new Set(prev)
         for (const t of tracks) next.add(trackKey(t))
         return next
       })
-      toast.success(`已添加 ${tracks.length} 首歌曲`)
+      toast.success(`开始添加 ${tracks.length} 首歌曲`)
     },
     [socket],
   )

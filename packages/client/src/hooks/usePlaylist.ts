@@ -7,6 +7,7 @@ import { SERVER_URL } from '@/lib/config'
 import { trackLookupFailure, type TrackLookupResult } from '@/lib/trackLookup'
 import { getPlaylistLoadError, PLAYLIST_NETWORK_ERROR } from '@/lib/playlistLoad'
 import { toQueueTrackInput } from '@/lib/utils'
+import { emitInChunks } from '@/lib/batchQueueAdd'
 
 export { parsePlaylistInput } from '@/lib/musicInput'
 
@@ -406,7 +407,12 @@ export function usePlaylist() {
   const addBatchToQueue = useCallback(
     (tracks: Track[], playlistName?: string) => {
       if (tracks.length === 0) return
-      socket.emit(EVENTS.QUEUE_ADD_BATCH, { tracks: tracks.map(toQueueTrackInput), playlistName })
+      void emitInChunks(tracks, (chunk, index) => {
+        socket.emit(EVENTS.QUEUE_ADD_BATCH, {
+          tracks: chunk.map(toQueueTrackInput),
+          ...(index === 0 && playlistName ? { playlistName } : {}),
+        })
+      })
     },
     [socket],
   )
@@ -420,8 +426,10 @@ export function usePlaylist() {
         toast.info('默认播放列表已满')
         return
       }
-      socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: tracksToAdd.map(toQueueTrackInput) })
-      toast.success(`已添加 ${tracksToAdd.length} 首歌到默认播放列表`)
+      void emitInChunks(tracksToAdd, (chunk) => {
+        socket.emit(EVENTS.DEFAULT_QUEUE_ADD_BATCH, { tracks: chunk.map(toQueueTrackInput) })
+      })
+      toast.success(`开始添加 ${tracksToAdd.length} 首歌到默认播放列表`)
     },
     [socket],
   )
