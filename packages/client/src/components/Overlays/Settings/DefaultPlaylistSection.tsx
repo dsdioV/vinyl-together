@@ -444,7 +444,7 @@ export function DefaultPlaylistSection() {
             {/* Search results */}
             {hasSearched &&
               (searchType === 'song' ? (
-                <div className="rounded-md border max-h-48 overflow-hidden">
+                <div className="flex max-h-48 min-h-0 flex-col overflow-hidden rounded-md border">
                   <VirtualTrackList
                     ref={listRef}
                     tracks={results as Track[]}
