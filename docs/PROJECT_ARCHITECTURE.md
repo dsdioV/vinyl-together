@@ -1,17 +1,17 @@
-# Music Together — 项目速查手册
+# Vinyl Together — 项目速查手册
 
 > 供 AI 助手快速理解项目全貌的参考文档。
 
 ## 1. 项目概览
 
-**Music Together** 是一个在线同步听歌平台，允许多人在同一房间内实时同步播放音乐、聊天互动。
+**Vinyl Together**（由 [Music Together](https://github.com/Yueby/music-together) fork 而来）是一个在线同步听歌平台，允许多人在同一房间内实时同步播放音乐、聊天互动。
 
 ### 核心功能
 
 | 功能       | 说明                                                                                                                                 |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | 房间系统   | 创建/加入房间，房间号邀请，可选密码保护                                                                                              |
-| 多音源搜索 | 网易云、QQ音乐、酷狗                                                                                                                 |
+| 多音源搜索 | 网易云、QQ音乐、酷狗、哔哩哔哩                                                                                                        |
 | 同步播放   | 房间内播放进度实时同步                                                                                                               |
 | 实时聊天   | 房间内文字聊天                                                                                                                       |
 | 权限控制   | RBAC 三级权限（owner > admin > member）基于 @casl/ability，hostId 为自动选举的播放主持（conductor）                                  |
@@ -43,4 +43,4 @@
 | 7. UI 设计规范  | [ui-design.md](architecture/ui-design.md)                     | 组件库、颜色系统、动画、歌词、响应式                                                                |
 | 8. 开发指南     | [dev-guide.md](architecture/dev-guide.md)                     | 快速启动、构建、添加组件、注意事项                                                                  |
 | 9. 部署方案     | [deployment.md](architecture/deployment.md)                   | Docker、FFmpeg、本地音频数据盘、CORS、Watchtower、1Panel                                            |
-| 10. 音源与播放链接 | [music-sources.md](architecture/music-sources.md)           | 三平台降级链、QQ 海外行为、JSONP 细节、浏览器中继协议、测试与验证                            |
+| 10. 音源与播放链接 | [music-sources.md](architecture/music-sources.md)           | 四平台（网易云/QQ/酷狗/哔哩哔哩）降级链、QQ 海外行为、JSONP 细节、浏览器中继协议、测试与验证  |

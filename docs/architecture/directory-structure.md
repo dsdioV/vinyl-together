@@ -48,10 +48,13 @@ src/
 │   │   ├── QueueDrawer.tsx     #     播放队列抽屉（vaul Drawer，移动端底部/桌面端右侧）
 │   │   ├── SearchDialog.tsx    #     音乐搜索弹窗（VirtualTrackList 虚拟滚动 + 自动无限加载 + AbortController 竞态防护）
 │   │   ├── LocalAudioPanel.tsx #     房间本地音频上传任务、资产编辑/删除与排序
+│   │   ├── LocalAudioDropOverlay.tsx # 本地音频拖拽上传覆盖层（全局拖拽准入提示）
+│   │   ├── HistoryDrawer.tsx   #     播放历史抽屉（相对/绝对时间展示）
 │   │   ├── SettingsDialog.tsx  #     设置弹窗（壳，Tab 导航：房间/成员/账号/个人/外观，移动端 nav scrollbar-hide）
 │   │   └── Settings/
 │   │       ├── SettingRow.tsx              # 设置行共享组件
 │   │       ├── RoomSettingsSection.tsx     # 房间设置（名称、密码）
+│   │       ├── DefaultPlaylistSection.tsx  # 默认播放列表设置（房主：指定歌单/开关/上限）
 │   │       ├── MembersSection.tsx          # 成员列表（角色管理）
 │   │       ├── PlatformAuthSection.tsx     # 平台账号认证（VIP Cookie，旧版，已被 PlatformHub 替代）
 │   │       ├── PlatformHub.tsx            # 平台中心（登录 + 歌单浏览 + 导入，替代 PlatformAuthSection）
@@ -59,7 +62,8 @@ src/
 │   │       ├── PlaylistSection.tsx        # 歌单列表 + 手动输入（PlatformHub 子组件）
 │   │       ├── PlaylistDetail.tsx         # 歌单详情（header + VirtualTrackList + queueKeys/addedIds 去重 + 动态全部添加过滤重复）
 │   │       ├── ProfileSettingsSection.tsx  # 个人设置（昵称）
-│   │       ├── AppearanceSection.tsx       # 外观设置（歌词 + 背景 + 布局）
+│   │       ├── AppearanceSection.tsx       # 外观设置（背景 + 布局）
+│   │       ├── LyricsSection.tsx           # 歌词外观设置（TTML 逐词开关等）
 │   │       ├── OtherSettingsSection.tsx    # 其他设置
 │   │       ├── ManualCookieDialog.tsx      # 手动输入 Cookie 弹窗
 │   │       └── QrLoginDialog.tsx           # 通用 QR 扫码登录弹窗（网易云 + 酷狗 + QQ 音乐）
@@ -91,12 +95,15 @@ src/
 │       ├── select.tsx
 │       ├── separator.tsx
 │       ├── marquee-text.tsx
+│       ├── numeric-input.tsx
 │       ├── responsive-dialog.tsx
 │       ├── sheet.tsx
 │       ├── skeleton.tsx
 │       ├── slider.tsx
 │       ├── switch.tsx
 │       ├── tabs.tsx
+│       ├── toggle.tsx
+│       ├── toggle-group.tsx
 │       └── tooltip.tsx
 │
 ├── hooks/                      # 自定义 Hooks
@@ -123,7 +130,13 @@ src/
 │   ├── useIsMobile.ts          #   布局维度：orientation 检测（portrait=竖屏布局，landscape=横屏布局）
 │   ├── useHasHover.ts          #   交互维度：hover 能力检测（(hover: hover) 媒体查询，触控设备=false）
 │   ├── useContainerPortrait.ts #   容器宽高比检测（ResizeObserver，用于播放器横竖屏切换）
-│   └── useCoverWidth.ts        #   封面容器最小尺寸测量（约束信息栏/控件宽度与封面对齐）
+│   ├── useCoverWidth.ts        #   封面容器最小尺寸测量（约束信息栏/控件宽度与封面对齐）
+│   ├── useSearch.ts            #   搜索逻辑（分页 / abort / 竞态保护，从 SearchDialog 抽出，UI 组件只负责渲染）
+│   ├── useMusicRelay.ts        #   通过 <script> 标签执行一次 JSONP 中继请求（跨域读取响应）
+│   ├── usePlatformAutoSwitch.ts #   自动切到全房间最早 VIP 的平台（听到 VIP 曲目时自动换源）
+│   ├── useVersionCheck.ts      #   客户端比服务端旧时提示刷新（GET /api/version）
+│   ├── useMediaSession.ts      #   系统媒体控制集成（Media Session API：播放/暂停/上下曲）
+│   └── useLocalAudioFileQueue.ts # 本地音频文件选择/拖拽统一准入（先校验再入队）
 │
 ├── stores/                     # Zustand 状态仓库
 │   ├── playerStore.ts          #   播放状态（currentTrack, isPlaying, volume 等）
@@ -148,6 +161,16 @@ src/
     ├── format.ts               #   格式化工具（时间、文本等）
     ├── audioUnlock.ts          #   浏览器音频自动播放解锁
     ├── localAudioProtocol.ts   #   本地媒体 URL 与上传 API 协议工具
+    ├── localAudioDrop.ts       #   本地音频拖拽事件准入（防误拖文件/链接）
+    ├── localAudioFiles.ts      #   本地音频文件统一准入规则（按钮 + 拖拽共用）
+    ├── localAudioPlayback.ts   #   本地音频播放前缀/URL 处理
+    ├── localAudioUploadPolicy.ts # 本地上传策略（配额/格式/扩展名校验）
+    ├── batchQueueAdd.ts        #   批量添加按单条消息上限分块（预设余量 < 服务端 1000 上限）
+    ├── defaultQueue.ts         #   默认播放列表元数据批量补全（仅 owner/admin，单批 ≤50 id）
+    ├── queueFilter.ts          #   主队列本地搜索过滤（标题/歌手，大小写不敏感）
+    ├── musicInput.ts           #   平台资源 ID / 官方链接 / 酷狗短码 / BV・av 号解析
+    ├── playlistLoad.ts         #   歌单加载 HTTP 错误 → 可安全展示的文案
+    ├── trackLookup.ts          #   曲目精确查找失败归一化（code/message）
     └── utils.ts                #   cn() + trackKey() 等通用工具
 ```
 
@@ -167,7 +190,8 @@ src/
 │   ├── voteController.ts       #   投票系统（发起/投票/超时/执行，支持 set-mode / play-track / remove-track 投票）
 │   ├── authController.ts       #   平台认证（QR 登录/Cookie 管理/状态查询；支持网易云/酷狗/QQ 音乐三平台；策略模式——通过 AUTH_PROVIDERS 映射表统一处理；fast path: 内存池命中跳过 API；slow path: getUserInfo + 任意失败重试 1 次）
 │   ├── localAudioController.ts #   房间本地音频任务取消、资产编辑/删除
-│   └── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
+│   ├── playlistController.ts   #   歌单管理（获取用户歌单列表 via Socket，使用 getUserCookie 取请求者自己的 cookie，歌单私有）
+│   └── musicRelayController.ts #   浏览器中继开关与回传事件注册（relay:mode_changed / music:relay_response）
 │
 ├── services/                   # 服务层：业务逻辑
 │   ├── roomService.ts          #   房间 CRUD + 角色管理 + 加入校验（validateJoinRequest）
@@ -185,6 +209,11 @@ src/
 │   ├── localAudioAccess.ts     #   房间/资产/variant 绑定的 HMAC 媒体访问签名
 │   ├── localAudioMedia.ts      #   FFprobe 白名单校验、FFmpeg 转码/封面提取与 Range 解析
 │   ├── localAudioService.ts    #   上传任务、配额、资产生命周期、队列引用与房间清理
+│   ├── identityService.ts      #   HMAC 签名身份 token（mt_identity cookie：uid + iat/exp/ver）
+│   ├── rejoinTicketService.ts  #   断线重连令牌（短时有效，凭票免全套校验重入房间）
+│   ├── kugouShortCodeService.ts #  酷狗 `#短码` / `#hash=` 链接解析（mixsong 页面）
+│   ├── musicRelayService.ts    #   QQ 浏览器中继（白名单 URL 前缀、10s 超时、最多轮询 3 个客户端、断线清理）
+│   ├── trackFallbackService.ts #   netease ↔ tencent 自动换源（标题/歌手归一化 + Jaccard 打分）
 │   └── voteService.ts          #   投票状态管理
 │
 ├── repositories/               # 数据仓库：内存存储
@@ -192,15 +221,19 @@ src/
 │   ├── roomRepository.ts       #   房间数据 + Socket 映射 + per-socket RTT + roomToSockets 反向索引（Map<string, RoomData>）
 │   └── chatRepository.ts       #   聊天记录（Map<string, ChatMessage[]>）
 │
-├── middleware/                  # Socket.IO 中间件
+├── middleware/                  # 中间件（Socket.IO + HTTP）
 │   ├── types.ts                #   TypedServer, TypedSocket, HandlerContext
 │   ├── withRoom.ts             #   房间成员身份校验
 │   ├── withControl.ts          #   操作权限校验（包装 withRoom）
-│   └── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）+ 断连清理（cleanupSocketRateLimit）
+│   ├── socketRateLimiter.ts    #   Socket 事件速率限制（per-socket，10次/5秒）+ 断连清理（cleanupSocketRateLimit）
+│   ├── socketIdentity.ts       #   Socket 握手身份守卫：必须携带有效 mt_identity cookie
+│   ├── identityHttp.ts         #   HTTP 身份中间件（解析 mt_identity cookie → req.identityUserId）
+│   └── localAudioHttpRateLimiter.ts # 本地音频媒体流 / 导出请求的 HTTP 限流
 │
 ├── routes/                     # Express REST 路由
-│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|playlist|playlist/search|ttml（统一 validated() 路由包装器 + Zod 模式）
+│   ├── music.ts                #   GET /api/music/search|url|lyric|cover|bilibili/stream|playlist|playlist/search|ttml|cover-proxy（统一 validated() 路由包装器 + Zod 模式）
 │   ├── localAudio.ts           #   本地音频任务/资产 REST、签名媒体 Range/HEAD（成员鉴权）
+│   ├── auth.ts                 #   POST /api/identity/bootstrap（签发/续期身份 cookie，返回 204）
 │   └── rooms.ts                #   GET /api/rooms/:roomId/check（房间预检）
 │
 ├── types/
@@ -208,7 +241,10 @@ src/
 │
 └── utils/
     ├── logger.ts               #   结构化日志（基于 pino，info/warn/error + JSON context）
-    └── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState / toPublicRoomStateForOwner，密码仅 owner 可见）
+    ├── roomUtils.ts            #   房间数据转换纯函数（toPublicRoomState / toPublicRoomStateForOwner，密码仅 owner 可见）
+    ├── cookieUtils.ts          #   Cookie 字符串解析（兼容 Netscape 文件导出格式，替代各 authService 重复实现）
+    ├── coverResponse.ts        #   封面响应流式读取（内存上限保护，供 cover-proxy 使用）
+    └── defaultQueueRef.ts      #   默认播放列表 Track ↔ DefaultQueueTrackRef 收窄/批量补全
 ```
 
 ## packages/shared/src/ — 共享代码
@@ -221,7 +257,9 @@ src/
 ├── socket-types.ts    # Socket.IO 类型：ServerToClientEvents, ClientToServerEvents
 ├── constants.ts       # 业务常量：LIMITS（长度/数量限制）, TIMING（同步间隔/宽限期）, NTP（时钟同步参数）, QR_STATUS（扫码状态码）, QR_TIMING（轮询间隔）
 ├── schemas.ts         # Zod 验证 schema
-└── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
+├── abilities.ts       # CASL 权限定义（Actions incl. set-mode, Subjects, defineAbilityFor）
+├── coverUrl.ts        # 封面 URL 白名单校验与清洗（按平台限定 CDN 主机，防 SSRF/注入）
+└── vote.ts            # 投票动作 / 播放模式中文文案（ACTION_LABELS、PLAY_MODE_LABELS）
 ```
 
 ---
