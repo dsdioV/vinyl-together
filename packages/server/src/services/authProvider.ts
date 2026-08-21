@@ -58,7 +58,7 @@ export interface AuthProvider {
  * authController 通过此映射表获取对应平台的认证服务实例，
  * 从而用一份代码处理所有平台的 QR 登录/Cookie 验证/歌单获取。
  */
-export const AUTH_PROVIDERS: Record<Exclude<MusicSource, 'bilibili'>, AuthProvider> = {
+export const AUTH_PROVIDERS: Record<Exclude<MusicSource, 'bilibili' | 'bandcamp'>, AuthProvider> = {
   netease: neteaseAuth,
   kugou: kugouAuth,
   tencent: tencentAuth,

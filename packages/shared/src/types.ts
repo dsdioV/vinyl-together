@@ -25,7 +25,7 @@ export const ERROR_CODE = {
 
 export type ErrorCode = (typeof ERROR_CODE)[keyof typeof ERROR_CODE]
 
-export type MusicSource = 'netease' | 'tencent' | 'kugou' | 'bilibili'
+export type MusicSource = 'netease' | 'tencent' | 'kugou' | 'bilibili' | 'bandcamp'
 
 /** Track origin. MusicSource intentionally remains limited to online platforms. */
 export type TrackSource = MusicSource | 'local'
@@ -38,8 +38,8 @@ export interface RoomAutoFallbackEvent {
   /** Correlates trying/success/failed toasts */
   attemptId: string
   status: AutoFallbackStatus
-  fromSource: Exclude<MusicSource, 'kugou' | 'bilibili'>
-  toSource: Exclude<MusicSource, 'kugou' | 'bilibili'>
+  fromSource: Exclude<MusicSource, 'kugou' | 'bilibili' | 'bandcamp'>
+  toSource: Exclude<MusicSource, 'kugou' | 'bilibili' | 'bandcamp'>
   trackTitle: string
   reasonType?: AutoFallbackReasonType
   /** Safe, short detail suitable for UI (no URLs/cookies/stack traces). */

@@ -11,6 +11,7 @@ const PLATFORM_NAMES: Record<MusicSource, string> = {
   tencent: 'QQ 音乐',
   kugou: '酷狗音乐',
   bilibili: '哔哩哔哩',
+  bandcamp: 'Bandcamp',
 }
 
 /**

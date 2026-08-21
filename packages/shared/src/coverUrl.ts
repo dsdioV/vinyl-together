@@ -5,6 +5,7 @@ const TRACK_COVER_HOSTS: Readonly<Record<MusicSource, ReadonlySet<string>>> = {
   tencent: new Set(['y.gtimg.cn']),
   kugou: new Set(['imge.kugou.com', 'imgessl.kugou.com']),
   bilibili: new Set(['i0.hdslb.com', 'i1.hdslb.com', 'i2.hdslb.com']),
+  bandcamp: new Set(['f4.bcbits.com']),
 }
 
 const ALL_TRACK_COVER_HOSTS = new Set(Object.values(TRACK_COVER_HOSTS).flatMap((hosts) => Array.from(hosts)))

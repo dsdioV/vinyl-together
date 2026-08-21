@@ -5,6 +5,7 @@ const OFFICIAL_HOSTS: Record<MusicSource, ReadonlySet<string>> = {
   tencent: new Set(['y.qq.com']),
   kugou: new Set(['www.kugou.com']),
   bilibili: new Set(['www.bilibili.com']),
+  bandcamp: new Set([]),
 }
 
 function parseNeteaseUrl(url: URL): string | null {
@@ -43,6 +44,24 @@ function parseBilibiliUrl(url: URL): string | null {
   return null
 }
 
+/**
+ * bandcamp 每个艺人一个子域（artist.bandcamp.com），无法枚举精确主机名。
+ * 返回规范化页面 URL（去 query/hash），服务端以 URL 形态抓取 tralbum 数据。
+ */
+function parseBandcampUrl(url: URL): string | null {
+  const match = url.pathname.match(/^\/(track|album)\/([A-Za-z0-9._-]+)\/?$/)
+  if (!match) return null
+  return `https://${url.hostname}${match[0].replace(/\/$/, '')}`
+}
+
+/** bandcamp 域名按后缀匹配（艺人子域名不固定）。 */
+function isOfficialHost(source: MusicSource, hostname: string): boolean {
+  if (source === 'bandcamp') {
+    return hostname === 'bandcamp.com' || hostname.endsWith('.bandcamp.com')
+  }
+  return OFFICIAL_HOSTS[source].has(hostname)
+}
+
 /** Extract a platform resource ID from a supported official URL or a plain ID. */
 export function parsePlaylistInput(input: string, source: MusicSource): string | null {
   const trimmed = input.trim()
@@ -58,7 +77,7 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
     return null
   }
 
-  if (!['http:', 'https:'].includes(url.protocol) || !OFFICIAL_HOSTS[source].has(url.hostname)) {
+  if (!['http:', 'https:'].includes(url.protocol) || !isOfficialHost(source, url.hostname)) {
     return null
   }
 
@@ -71,5 +90,7 @@ export function parsePlaylistInput(input: string, source: MusicSource): string |
       return parseKugouUrl(url)
     case 'bilibili':
       return parseBilibiliUrl(url)
+    case 'bandcamp':
+      return parseBandcampUrl(url)
   }
 }

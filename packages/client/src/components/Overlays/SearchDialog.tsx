@@ -40,7 +40,19 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'tencent', label: 'QQ' },
   { id: 'kugou', label: '酷狗' },
   { id: 'bilibili', label: 'Bilibili' },
+  { id: 'bandcamp', label: 'Bandcamp' },
 ]
+
+/** 不支持歌单搜索的平台（无歌单概念） */
+const PLAYLIST_UNSUPPORTED: ReadonlySet<MusicSource> = new Set(['bilibili', 'bandcamp'])
+/** 不支持专辑搜索的平台 */
+const ALBUM_UNSUPPORTED: ReadonlySet<MusicSource> = new Set(['bilibili'])
+
+function supportsSearchType(id: MusicSource, type: 'song' | 'album' | 'playlist'): boolean {
+  if (type === 'album') return !ALBUM_UNSUPPORTED.has(id)
+  if (type === 'playlist') return !PLAYLIST_UNSUPPORTED.has(id)
+  return true
+}
 
 interface SearchDialogProps {
   open: boolean
@@ -317,7 +329,7 @@ export function SearchDialog({
                       setSource(s.id)
                       resetState()
                       setAddedIds(new Set())
-                      if (s.id === 'bilibili') setSearchType('song')
+                      if (!supportsSearchType(s.id, searchType)) setSearchType('song')
                     }}
                   >
                     {s.label}
@@ -393,15 +405,15 @@ export function SearchDialog({
                   <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
                     单曲
                   </TabsTrigger>
-                  {source !== 'bilibili' && (
-                    <>
-                      <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
-                        专辑
-                      </TabsTrigger>
-                      <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
-                        歌单
-                      </TabsTrigger>
-                    </>
+                  {!ALBUM_UNSUPPORTED.has(source) && (
+                    <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                      专辑
+                    </TabsTrigger>
+                  )}
+                  {!PLAYLIST_UNSUPPORTED.has(source) && (
+                    <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                      歌单
+                    </TabsTrigger>
                   )}
                 </TabsList>
               </Tabs>

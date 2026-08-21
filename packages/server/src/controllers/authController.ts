@@ -34,7 +34,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili'>]
+      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili' | 'bandcamp'>]
       const result = await provider.generateQrCode()
 
       if (!result) {
@@ -62,7 +62,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
         return
       }
 
-      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili'>]
+      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili' | 'bandcamp'>]
       const result = await provider.checkQrStatus(data.key)
 
       socket.emit(EVENTS.AUTH_QR_STATUS, { status: result.status, message: result.message })
@@ -147,7 +147,7 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       }
 
       // 通用验证流程：getUserInfo + 1 次重试
-      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili'>]
+      const provider = AUTH_PROVIDERS[platform as Exclude<MusicSource, 'bilibili' | 'bandcamp'>]
       let infoResult = await provider.getUserInfo(cookie)
       if (!infoResult.ok) {
         logger.info(`${platform} getUserInfo failed (${infoResult.reason}), retrying once...`)

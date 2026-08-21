@@ -39,7 +39,7 @@ export function toQueueTrackInput(track: Track): QueueTrackInput {
 }
 
 /** Construct the source platform URL for a track */
-export const getSourceUrl = (t: Pick<Track, 'source' | 'sourceId'>): string | null => {
+export const getSourceUrl = (t: Pick<Track, 'source' | 'sourceId' | 'urlId'>): string | null => {
   switch (t.source as string) {
     case 'netease':
       return `https://music.163.com/song?id=${t.sourceId}`
@@ -49,6 +49,9 @@ export const getSourceUrl = (t: Pick<Track, 'source' | 'sourceId'>): string | nu
       return `https://www.kugou.com/song/#hash=${t.sourceId}`
     case 'bilibili':
       return `https://www.bilibili.com/video/${t.sourceId}`
+    case 'bandcamp':
+      // bandcamp 的站外链接是曲目页 URL（urlId），数字 sourceId 无法构造链接
+      return /^https:\/\/[A-Za-z0-9-]+\.bandcamp\.com\//.test(t.urlId) ? t.urlId : null
     case 'local':
       return null
     default:

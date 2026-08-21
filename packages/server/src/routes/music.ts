@@ -13,7 +13,7 @@ import {
 } from '@music-together/shared'
 import { Router, type Router as RouterType, type Request, type Response } from 'express'
 import type { ZodSchema } from 'zod'
-import { musicProvider, PlaylistSearchLimitError } from '../services/musicProvider.js'
+import { musicProvider, PlaylistSearchLimitError, BANDCAMP_UA } from '../services/musicProvider.js'
 import { KugouShortCodeError } from '../services/kugouShortCodeService.js'
 import * as authService from '../services/authService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
@@ -174,6 +174,70 @@ router.get(
 
       if (!res.headersSent) res.status(502).json({ error: 'bilibili 音频流获取失败' })
       else res.end()
+    },
+  ),
+)
+
+/**
+ * bandcamp 音频流代理（直连失败时的兜底通道）：每次进入都重新解析页面获取
+ * 新鲜 token 的流地址（token 时效短），转发 Range。正常情况下客户端直连
+ * t4.bcbits.com，不走此路由。
+ */
+router.get(
+  '/bandcamp/stream',
+  validated(
+    z.object({
+      id: z
+        .string()
+        .max(500)
+        .regex(
+          /^https:\/\/[A-Za-z0-9-]+\.bandcamp\.com\/(?:track|album)\/[A-Za-z0-9._%-]+(?:#\d+)?$/,
+          '无效的 bandcamp 页面地址',
+        ),
+      bitrate: z.coerce.number().int().min(1).max(999).default(320),
+    }),
+    'Bandcamp stream proxy',
+    async (data, req, res) => {
+      const result = await musicProvider.getStreamUrlResult('bandcamp', data.id, data.bitrate)
+      if (!result.url) {
+        res.status(502).json({ error: result.detail ?? '无法获取 bandcamp 播放链接' })
+        return
+      }
+
+      const headers: Record<string, string> = { 'User-Agent': BANDCAMP_UA }
+      if (typeof req.headers.range === 'string') headers.Range = req.headers.range
+      if (typeof req.headers['if-range'] === 'string') headers['If-Range'] = req.headers['if-range']
+
+      try {
+        const upstream = await fetch(result.url, { headers, redirect: 'error' })
+        if (!upstream.ok && upstream.status !== 206) {
+          logger.warn(`bandcamp stream upstream failed: ${upstream.status}`, { id: data.id })
+          res.status(502).json({ error: 'bandcamp 音频流获取失败' })
+          return
+        }
+        res.status(upstream.status)
+        for (const name of [
+          'content-type',
+          'content-length',
+          'content-range',
+          'accept-ranges',
+          'cache-control',
+          'etag',
+          'last-modified',
+          'expires',
+        ]) {
+          const value = upstream.headers.get(name)
+          if (value) res.setHeader(name, value)
+        }
+        const body = Readable.fromWeb(upstream.body as import('node:stream/web').ReadableStream)
+        body.on('error', () => res.destroy())
+        req.on('close', () => body.destroy())
+        body.pipe(res)
+      } catch (err) {
+        logger.error('bandcamp stream fetch failed', err, { id: data.id })
+        if (!res.headersSent) res.status(502).json({ error: 'bandcamp 音频流获取失败' })
+        else res.end()
+      }
     },
   ),
 )

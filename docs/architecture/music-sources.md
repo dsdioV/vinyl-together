@@ -1,6 +1,6 @@
 # 音源与播放链接（music-sources.md）
 
-> 记录四个音源平台（网易云 / QQ 音乐 / 酷狗 / 哔哩哔哩）的接入方式、降级链、海外部署行为和浏览器中继协议。修改任何平台相关代码前先读本文。
+> 记录五个音源平台（网易云 / QQ 音乐 / 酷狗 / 哔哩哔哩 / bandcamp）的接入方式、降级链、海外部署行为和浏览器中继协议。修改任何平台相关代码前先读本文。
 
 ## 1. 总体结构
 
@@ -125,3 +125,22 @@
 - 浏览器媒体请求无法携带 bilibili 的 Referer，CDN 会 403，因此音频统一走服务端代理；主 CDN 在部分网络（如香港）403 时由代理自动切换 backupUrl。
 - 封面（hdslb.com）不支持跨域，AMLL 背景图会经 `/api/music/cover-proxy` 加载。
 - bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。
+
+### bandcamp
+
+| 能力            | 实现                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 搜索 / 专辑搜索 | Web 端 `bcsearch_public_api/1/autocomplete_elastic`（匿名 POST，单曲/专辑/艺人混合返回，代码按 `type` 字段过滤 t/a）                                           |
+| 单曲/专辑详情   | 抓 `{artist}.bandcamp.com/track|album/{slug}` 页面，解析 `data-tralbum` JSON 属性（单曲页 = 只含 1 条 trackinfo 的特例，同一解析器）                           |
+| 播放链接        | 播放时实时抓曲目页提取 `trackinfo.file["mp3-128"]`（带时效 token）；**不写 streamUrlCache**（token 短命）                                                      |
+| 封面            | 由 `art_id` 构造 `https://f4.bcbits.com/img/a{art_id}_10.jpg`（**必须带 `a` 前缀**；搜索接口返回的 img 字段是失效旧格式）。CDN 无 CORS 头，AMLL 背景走 cover-proxy |
+| 歌词            | 部分专辑内嵌在 tralbum trackinfo 的 `lyrics` 字段，尽力提取、缺省为空                                                                                          |
+
+要点：
+
+- **无登录、无歌单概念**：与 bilibili 同属"无登录早退"模式（`getLyric`/`getCover`/`batchResolveCover`/`fetchFullPlaylist(playlist)` 早退；前端隐藏歌单页签，但**保留专辑页签**）。
+- **反爬（Client Challenge，F5/Shape 类 JS 挑战）**：专拦"自称浏览器但指纹不符"的请求。必须用固定非浏览器 UA（`BANDCAMP_UA`）；挑战页特征为 `_fs-ch-` 标记 / `Client Challenge` 标题 / 403/503，识别后分类 `upstream_failed`（detail「Bandcamp 反爬拦截」）。**此通道可能随 Bandcamp 收紧失效**，与 QQ 降级链同属需持续维护的灰色通道（yt-dlp 2026-08 起也在持续应对）。
+- **ID 设计**：`sourceId = String(track_id)`（数字 ID，去重键）；`urlId = 单曲页 URL`，专辑展开的曲目无独立链接时回退「专辑页URL#trackId」形态，流解析按 `#` 后的 track id 定位。`getTrackById` 接受 URL 形态入参（粘贴链接导入），纯数字 ID 仅注册表命中。
+- **音频下发：直连优先 + 代理兜底**：`streamUrl` 直接给 `t4.bcbits.com` 直链（无 Referer 校验，大陆实测可达，省服务器带宽）；同时下发 `fallbackStreamUrl = /api/music/bandcamp/stream?id=...`，客户端直连失败时自动切换，代理每次进入重新解析 token 自愈过期。
+- bandcamp 不参与 netease ↔ tencent 自动换源（`RoomAutoFallbackEvent` Exclude），不支持歌单搜索（前端隐藏歌单页签）。
+- 搜索结果**不含时长**（列表显示 `--:--`），专辑详情展开后有真实时长；播放开始后进度条以 howl 实测时长为准。

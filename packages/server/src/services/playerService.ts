@@ -379,6 +379,12 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
         resolved.streamUrl = `/api/music/bilibili/stream?${proxyParams.toString()}`
         resolved.fallbackStreamUrl = undefined
       }
+      // bandcamp：音频 CDN（bcbits）无 Referer 校验且大陆可直连，直连为主以节省
+      // 服务器带宽；流地址 token 时效短，过期时客户端经 fallback 代理重新解析。
+      if (onlineSource === 'bandcamp' && resolved.streamUrl) {
+        const proxyParams = new URLSearchParams({ id: resolved.streamUrl, bitrate: String(room.audioQuality) })
+        resolved.fallbackStreamUrl = `/api/music/bandcamp/stream?${proxyParams.toString()}`
+      }
     } catch (err) {
       logger.error(`getStreamUrl failed for ${resolved.urlId}`, err, { roomId })
       // Auto-remove on unexpected failure too

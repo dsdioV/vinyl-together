@@ -42,6 +42,7 @@ const SOURCE_STYLE: Record<MusicSource, { label: string; className: string }> = 
   tencent: { label: 'QQ', className: 'text-white bg-green-500 ring-green-600/50' },
   kugou: { label: '酷狗', className: 'text-white bg-blue-500 ring-blue-600/50' },
   bilibili: { label: 'Bilibili', className: 'text-white bg-[#F45A8D] ring-[#F45A8D]/50' },
+  bandcamp: { label: 'Bandcamp', className: 'text-white bg-[#1DA0C3] ring-[#1DA0C3]/50' },
 }
 
 interface QueueDrawerProps {

@@ -227,6 +227,109 @@ function bilibiliIdParams(input: string): URLSearchParams {
   return new URLSearchParams({ bvid: trimmed })
 }
 
+// ---------------------------------------------------------------------------
+// bandcamp（无需登录；搜索/详情走 Web 端点，流 URL 播放时从页面现取）
+// ---------------------------------------------------------------------------
+
+/**
+ * 固定非浏览器 UA。Bandcamp 的反爬（Client Challenge）针对"自称浏览器但指纹
+ * 不符"的请求；非浏览器 UA 实测可稳定通过（2026-08 验证）。
+ */
+export const BANDCAMP_UA = 'VinylTogether/1.0 (+https://github.com/dsdiov/vinyl-together)'
+
+const BANDCAMP_SEARCH_API = 'https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic'
+
+interface BandcampSearchItem {
+  type?: string
+  id?: number
+  name?: string
+  band_name?: string | null
+  album_name?: string | null
+  item_url_path?: string
+  /** 旧格式 img 字段已失效，封面一律由 art_id 构造。 */
+  art_id?: number | null
+  img?: string | null
+}
+
+interface BandcampSearchResponse {
+  auto?: { results?: BandcampSearchItem[] }
+}
+
+interface BandcampTrackInfo {
+  id?: number
+  title?: string
+  /** 秒（浮点）。 */
+  duration?: number
+  /** 相对路径（如 /track/slug），缺失时以「专辑页#trackId」形态兜底。 */
+  title_link?: string | null
+  file?: Record<string, string> | null
+  lyrics?: string | null
+}
+
+interface BandcampTralbum {
+  item_type?: string
+  artist?: string
+  title?: string
+  art_id?: number | null
+  trackinfo?: BandcampTrackInfo[]
+}
+
+type BandcampPageResult = { kind: 'ok'; html: string } | { kind: 'challenge' } | { kind: 'unavailable' }
+
+/** 反爬挑战页特征（F5/Shape 类 JS 挑战，约 3KB 固定模板）。 */
+function isBandcampChallenge(body: string): boolean {
+  return body.includes('_fs-ch-') || body.includes('Client Challenge')
+}
+
+/** 补全 bandcamp 页面 URL 协议（搜索结果为完整 URL，用户输入可能省略 scheme）。 */
+function normalizeBandcampPageUrl(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  if (/^https:\/\//i.test(trimmed)) return trimmed
+  if (/^http:\/\//i.test(trimmed)) return trimmed.replace(/^http:\/\//i, 'https://')
+  return `https://${trimmed}`
+}
+
+function decodeBandcampText(input: string | null | undefined): string {
+  if (!input) return ''
+  return input
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim()
+}
+
+/** 从专辑/单曲页 HTML 提取 data-tralbum JSON（属性值经 HTML 转义）。 */
+function parseBandcampTralbum(html: string): BandcampTralbum | null {
+  const match = html.match(/data-tralbum="([^"]*)"/)
+  if (!match?.[1]) return null
+  try {
+    return JSON.parse(decodeBandcampText(match[1])) as BandcampTralbum
+  } catch {
+    return null
+  }
+}
+
+/**
+ * tralbum 的 art_id → 封面 CDN URL。注意必须带 `a` 前缀（og:image 同款格式）；
+ * 搜索接口返回的 img 字段是失效的旧格式（无前缀、补零），不能直接使用。
+ */
+function bandcampArtUrl(artId: number | null | undefined): string {
+  if (!artId || artId <= 0) return ''
+  return `https://f4.bcbits.com/img/a${artId}_10.jpg`
+}
+
+/** 流地址可能是协议相对形式（//t4.bcbits.com/...）。 */
+function normalizeBandcampStreamUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  if (raw.startsWith('//')) return `https:${raw}`
+  return normalizeStreamUrl(raw)
+}
+
 /** External API timeout (ms) */
 const API_TIMEOUT_MS = 15_000
 /** QQ 音乐 CDN fallback：vkey 响应未携带 sip 时使用。 */
@@ -266,6 +369,7 @@ const SEARCH_PATHS: Record<MusicSource, string> = {
   tencent: 'data.song.list',
   kugou: 'data.info',
   bilibili: '',
+  bandcamp: '',
 }
 
 // Path to song list in raw playlist API response per platform
@@ -274,6 +378,7 @@ const PLAYLIST_PATHS: Record<MusicSource, string> = {
   tencent: 'data.cdlist.0.songlist', // JS arrays support string numeric index
   kugou: 'data.info',
   bilibili: '',
+  bandcamp: '',
 }
 
 // ---------------------------------------------------------------------------
@@ -717,6 +822,7 @@ export class MusicProvider {
   ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
     if (source === 'bilibili') return []
+    if (source === 'bandcamp') return this.searchBandcampAlbums(keyword, limit, page)
 
     try {
       if (source === 'tencent') {
@@ -790,7 +896,7 @@ export class MusicProvider {
     page = 1,
   ): Promise<import('@music-together/shared').Playlist[]> {
     if (!keyword.trim()) return []
-    if (source === 'bilibili') return []
+    if (source === 'bilibili' || source === 'bandcamp') return []
 
     try {
       if (source === 'tencent') {
@@ -1092,6 +1198,17 @@ export class MusicProvider {
         })
         return tracks
       }
+
+      // bandcamp 使用 Web 端搜索接口（单曲/专辑混合返回，按 type 过滤）
+      if (source === 'bandcamp') {
+        const tracks = await this.searchBandcamp(keyword, limit, page)
+        this.registerTracks(tracks)
+        this.searchIndex.set(cacheKey, {
+          source,
+          ids: tracks.map((t) => t.sourceId),
+        })
+        return tracks
+      }
       const meting = new Meting(source)
       const raw = await withTimeout(meting.search(keyword, { limit, page }))
       if (raw === null) {
@@ -1367,6 +1484,236 @@ export class MusicProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // bandcamp 音源（无需登录；流 URL 带短时效 token，必须播放时实时解析）
+  // ---------------------------------------------------------------------------
+
+  /** 抓取 bandcamp 页面（专辑/单曲页），识别反爬挑战。 */
+  private async fetchBandcampPage(pageUrl: string): Promise<BandcampPageResult> {
+    try {
+      const response = await withTimeout(
+        fetch(pageUrl, { headers: { 'User-Agent': BANDCAMP_UA, Accept: 'text/html,*/*' } }),
+      )
+      if (!response) {
+        logger.warn(`bandcamp page timeout: ${pageUrl}`)
+        return { kind: 'unavailable' }
+      }
+      if (response.status === 403 || response.status === 503) {
+        logger.warn(`bandcamp page blocked: ${pageUrl} status=${response.status}`)
+        return { kind: 'challenge' }
+      }
+      if (!response.ok) {
+        logger.warn(`bandcamp page failed: ${pageUrl} status=${response.status}`)
+        return { kind: 'unavailable' }
+      }
+      const html = await response.text()
+      if (isBandcampChallenge(html)) {
+        logger.warn(`bandcamp page challenge: ${pageUrl}`)
+        return { kind: 'challenge' }
+      }
+      return { kind: 'ok', html }
+    } catch (err) {
+      logger.error(`bandcamp page failed: ${pageUrl}`, err)
+      return { kind: 'unavailable' }
+    }
+  }
+
+  /** Web 端搜索接口（单曲/专辑/艺人混合返回）。 */
+  private async bandcampSearchRaw(keyword: string): Promise<BandcampSearchItem[]> {
+    try {
+      const response = await withTimeout(
+        fetch(BANDCAMP_SEARCH_API, {
+          method: 'POST',
+          headers: {
+            'User-Agent': BANDCAMP_UA,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ search_text: keyword, search_filter: '', full_page: false }),
+        }),
+      )
+      if (!response) {
+        logger.warn(`bandcamp search timeout for "${keyword}"`)
+        return []
+      }
+      const text = await response.text()
+      if (isBandcampChallenge(text)) {
+        logger.warn('bandcamp search blocked by anti-bot challenge')
+        return []
+      }
+      const data = JSON.parse(text) as BandcampSearchResponse
+      return Array.isArray(data.auto?.results) ? data.auto.results : []
+    } catch (err) {
+      logger.error(`bandcamp search failed for "${keyword}":`, err)
+      return []
+    }
+  }
+
+  /** tralbum trackinfo → Track。urlId 优先单曲页 URL，缺失时回退「页面#trackId」形态。 */
+  private tralbumToTracks(tralbum: BandcampTralbum, pageUrl: string): Track[] {
+    const artistName = decodeBandcampText(tralbum.artist) || 'Unknown'
+    const albumName = decodeBandcampText(tralbum.title)
+    const cover = bandcampArtUrl(tralbum.art_id)
+
+    const tracks: Track[] = []
+    for (const info of tralbum.trackinfo ?? []) {
+      const sourceId = typeof info.id === 'number' && info.id > 0 ? String(info.id) : ''
+      if (!sourceId) continue
+      let urlId: string
+      if (info.title_link) {
+        urlId = new URL(info.title_link, pageUrl).toString()
+      } else {
+        urlId = `${pageUrl}#${sourceId}`
+      }
+      tracks.push({
+        id: nanoid(),
+        title: decodeBandcampText(info.title) || 'Unknown',
+        artist: [artistName],
+        album: albumName,
+        duration: Math.round(info.duration ?? 0),
+        cover,
+        source: 'bandcamp',
+        sourceId,
+        urlId,
+        lyricId: sourceId,
+        picId: sourceId,
+      })
+    }
+    return tracks
+  }
+
+  /** 抓取页面并把全部 trackinfo 映射为 Track（单曲页返回 1 首，专辑页返回全部）。 */
+  private async fetchBandcampTracksFromPage(pageUrl: string): Promise<Track[] | null> {
+    const page = await this.fetchBandcampPage(pageUrl)
+    if (page.kind !== 'ok') return null
+    const tralbum = parseBandcampTralbum(page.html)
+    if (!tralbum) {
+      logger.warn(`bandcamp tralbum missing: ${pageUrl}`)
+      return null
+    }
+    return this.tralbumToTracks(tralbum, pageUrl)
+  }
+
+  /** bandcamp 单曲搜索：autocomplete_elastic 不过滤请求，按 type==='t' 筛选后分页切片。 */
+  private async searchBandcamp(keyword: string, limit = 20, page = 1): Promise<Track[]> {
+    try {
+      const items = await this.bandcampSearchRaw(keyword)
+      const trackItems = items.filter((item) => item.type === 't' && item.id && item.item_url_path)
+      const start = (Math.max(1, page) - 1) * limit
+      const sliced = trackItems.slice(start, start + limit)
+
+      const tracks = sliced.map((item) => {
+        const sourceId = String(item.id)
+        return {
+          id: nanoid(),
+          title: decodeBandcampText(item.name) || 'Unknown',
+          artist: [decodeBandcampText(item.band_name) || 'Unknown'],
+          album: decodeBandcampText(item.album_name),
+          duration: 0, // 搜索结果不含时长，播放时由 howl 实测
+          cover: bandcampArtUrl(item.art_id),
+          source: 'bandcamp',
+          sourceId,
+          urlId: normalizeBandcampPageUrl(item.item_url_path!),
+          lyricId: sourceId,
+          picId: sourceId,
+        } satisfies Track
+      })
+
+      logger.info(`bandcamp search "${keyword}" on page ${page}: ${tracks.length} results`)
+      return tracks
+    } catch (err) {
+      logger.error(`bandcamp search failed for "${keyword}":`, err)
+      return []
+    }
+  }
+
+  /** bandcamp 专辑搜索：type==='a' 结果映射为 Playlist（id 即专辑页 URL）。 */
+  private async searchBandcampAlbums(keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+    try {
+      const items = await this.bandcampSearchRaw(keyword)
+      const albumItems = items.filter((item) => item.type === 'a' && item.item_url_path)
+      const start = (Math.max(1, page) - 1) * limit
+      const sliced = albumItems.slice(start, start + limit)
+
+      return sliced.map((item) => ({
+        id: normalizeBandcampPageUrl(item.item_url_path!),
+        name: decodeBandcampText(item.name) || 'Unknown Album',
+        cover: bandcampArtUrl(item.art_id),
+        trackCount: 0, // 搜索结果不含曲目数，详情页以实际抓取为准
+        source: 'bandcamp' as const,
+        creator: decodeBandcampText(item.band_name),
+      }))
+    } catch (err) {
+      logger.error(`bandcamp album search failed for "${keyword}":`, err)
+      return []
+    }
+  }
+
+  /**
+   * bandcamp 流解析：urlId 支持两种形态——
+   * 1. 单曲页 URL（直接取 trackinfo[0]）
+   * 2. 「专辑页URL#trackId」（抓专辑页后按 track id 定位）
+   * token 时效短，结果不写 streamUrlCache。
+   */
+  private async getBandcampStreamUrlResult(urlId: string): Promise<StreamUrlResult> {
+    const hashIndex = urlId.indexOf('#')
+    const pageUrl = hashIndex >= 0 ? urlId.slice(0, hashIndex) : urlId
+    const wantedTrackId = hashIndex >= 0 ? urlId.slice(hashIndex + 1) : null
+
+    const page = await this.fetchBandcampPage(normalizeBandcampPageUrl(pageUrl))
+    if (page.kind === 'challenge') {
+      return { url: null, reason: 'upstream_failed', detail: 'Bandcamp 反爬拦截' }
+    }
+    if (page.kind === 'unavailable') {
+      return { url: null, reason: 'upstream_failed', detail: 'Bandcamp 页面获取失败' }
+    }
+
+    const tralbum = parseBandcampTralbum(page.html)
+    const trackInfoList = tralbum?.trackinfo ?? []
+    if (trackInfoList.length === 0) {
+      return { url: null, reason: 'upstream_failed', detail: 'Bandcamp 未返回曲目数据' }
+    }
+
+    const info = wantedTrackId
+      ? trackInfoList.find((candidate) => String(candidate.id) === wantedTrackId)
+      : trackInfoList[0]
+    const streamUrl = normalizeBandcampStreamUrl(info?.file?.['mp3-128'])
+    if (!streamUrl) {
+      return { url: null, reason: 'upstream_failed', detail: 'Bandcamp 未返回可用的音频流' }
+    }
+    return { url: streamUrl }
+  }
+
+  /** bandcamp 专辑展开：id 即专辑页 URL，一次抓取注册全部曲目（含真实时长）。 */
+  private async fetchBandcampAlbum(
+    albumId: string,
+    cacheKey: string,
+    maxTracks?: number,
+  ): Promise<{ ids: string[]; total: number }> {
+    try {
+      const tracks = await this.fetchBandcampTracksFromPage(albumId)
+      if (!tracks || tracks.length === 0) {
+        return { ids: [], total: 0 }
+      }
+      if (maxTracks !== undefined && tracks.length > maxTracks) {
+        throw new PlaylistSearchLimitError(tracks.length)
+      }
+
+      for (const t of tracks) this.enrichFromRegistry(t)
+      this.registerTracks(tracks)
+
+      const ids = tracks.map((t) => t.sourceId)
+      this.playlistIndex.set(cacheKey, { source: 'bandcamp', ids })
+
+      logger.info(`bandcamp album ${albumId}: ${ids.length} tracks`)
+      return { ids, total: ids.length }
+    } catch (err) {
+      if (err instanceof PlaylistSearchLimitError) throw err
+      logger.error(`bandcamp album failed: ${albumId}`, err)
+      return { ids: [], total: 0 }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API — Stream URL, Lyric, Cover
   // ---------------------------------------------------------------------------
 
@@ -1398,6 +1745,11 @@ export class MusicProvider {
     bitrate: number = 320,
     cookie?: string,
   ): Promise<StreamUrlResult> {
+    // bandcamp 流 URL 带短时效 token，不读也不写缓存，每次播放实时解析
+    if (source === 'bandcamp') {
+      return this.getBandcampStreamUrlResult(urlId)
+    }
+
     // Skip cache when cookie is provided (VIP URLs are user-specific)
     if (!cookie) {
       const cacheKey = `${source}:${urlId}:${bitrate}`
@@ -1939,6 +2291,22 @@ export class MusicProvider {
     const empty = { lyric: '', tlyric: '', romalrc: '', yrc: '' as string }
     if (source === 'bilibili') return empty
 
+    // bandcamp：歌词是艺人可选填写，部分内嵌在 tralbum trackinfo 里；尽力提取，缺省为空
+    if (source === 'bandcamp') {
+      const cachedMeta = this.trackRegistry.get(`bandcamp:${lyricId}`)
+      const pageUrl = cachedMeta?.urlId
+      if (!pageUrl) return empty
+      const page = await this.fetchBandcampPage(normalizeBandcampPageUrl(pageUrl))
+      if (page.kind !== 'ok') return empty
+      const lyric = parseBandcampTralbum(page.html)?.trackinfo?.[0]?.lyrics
+      if (typeof lyric === 'string' && lyric.trim()) {
+        const result = { ...empty, lyric }
+        this.lyricCache.set(cacheKey, result)
+        return result
+      }
+      return empty
+    }
+
     try {
       let result: { lyric: string; tlyric: string; romalrc: string; yrc: string; wordByWord?: AmllLyricLine[] } = {
         ...empty,
@@ -2025,7 +2393,7 @@ export class MusicProvider {
     if (cached !== undefined) {
       return cached
     }
-    if (source === 'bilibili') return ''
+    if (source === 'bilibili' || source === 'bandcamp') return ''
 
     try {
       if (source === 'kugou') {
@@ -2131,6 +2499,14 @@ export class MusicProvider {
         case 'bilibili':
           track = await this.fetchBilibiliTrackById(sourceId)
           break
+        case 'bandcamp': {
+          // 数字 ID 只能靠注册表（上方未命中即无法定位页面）；URL 形态入参现抓页面
+          if (/^https?:\/\//i.test(sourceId) || /\.bandcamp\.com\//i.test(sourceId)) {
+            const tracks = await this.fetchBandcampTracksFromPage(normalizeBandcampPageUrl(sourceId))
+            track = tracks?.[0] ?? null
+          }
+          break
+        }
         default:
           return null
       }
@@ -2328,6 +2704,13 @@ export class MusicProvider {
     // Netease: use ncmApi.playlist_track_all to bypass Meting's 1000-track limit
     // bilibili 不支持歌单/专辑分页浏览
     if (source === 'bilibili') return { ids: [], total: 0 }
+    // bandcamp 无歌单概念；专辑展开 = 抓专辑页一次注册全部曲目
+    if (source === 'bandcamp') {
+      if (type === 'album') {
+        return this.fetchBandcampAlbum(playlistId, cacheKey, maxTracks)
+      }
+      return { ids: [], total: 0 }
+    }
     if (source === 'netease') {
       if (type === 'album') {
         return this.fetchNeteaseAlbum(playlistId, cacheKey, maxTracks)
@@ -2985,6 +3368,10 @@ export class MusicProvider {
         // bilibili 单曲由 fetchBilibiliTrackById / searchBilibili 专用映射，不走 rawToTrack
         throw new Error('bilibili tracks must be mapped by dedicated helpers')
       }
+      case 'bandcamp': {
+        // bandcamp 单曲由 tralbumToTracks / searchBandcamp 专用映射，不走 rawToTrack
+        throw new Error('bandcamp tracks must be mapped by dedicated helpers')
+      }
       default: {
         // Exhaustive check — if a new MusicSource is added, TypeScript will error here
         const _exhaustive: never = source
@@ -3003,7 +3390,7 @@ export class MusicProvider {
   private async batchResolveCover(tracks: Track[], source: MusicSource): Promise<void> {
     const toResolve = tracks.filter((t) => !t.cover && t.picId)
     if (toResolve.length === 0) return
-    if (source === 'bilibili') return
+    if (source === 'bilibili' || source === 'bandcamp') return
 
     // For platforms that need API calls, limit concurrency
     const needsApiCall = source === 'kugou'

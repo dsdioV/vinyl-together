@@ -139,13 +139,13 @@ export function useHowl(onTrackEnd: () => void) {
 
       const selectedUrl =
         fallbackAttemptedRef.current &&
-        (track.source === 'local' || track.source === 'bilibili') &&
+        (track.source === 'local' || track.source === 'bilibili' || track.source === 'bandcamp') &&
         track.fallbackStreamUrl
           ? track.fallbackStreamUrl
           : initialUrl
-      // local / bilibili 的 streamUrl 可能是服务端相对路径，需解析到 SERVER_URL
+      // local / bilibili / bandcamp(兜底代理) 的 streamUrl 可能是服务端相对路径，需解析到 SERVER_URL
       const streamUrl =
-        track.source === 'local' || track.source === 'bilibili'
+        track.source === 'local' || track.source === 'bilibili' || track.source === 'bandcamp'
           ? (resolveLocalAudioMediaUrl(selectedUrl) ?? selectedUrl)
           : selectedUrl
       // Howler's format array is positional to `src`, not a codec preference
@@ -265,7 +265,7 @@ export function useHowl(onTrackEnd: () => void) {
             return
           }
           if (
-            (track.source === 'local' || track.source === 'bilibili') &&
+            (track.source === 'local' || track.source === 'bilibili' || track.source === 'bandcamp') &&
             track.fallbackStreamUrl &&
             !fallbackAttemptedRef.current
           ) {

@@ -32,6 +32,7 @@ const PROXY_COVER_HOSTS = [
   'i0.hdslb.com', // bilibili
   'i1.hdslb.com', // bilibili
   'i2.hdslb.com', // bilibili
+  'f4.bcbits.com', // bandcamp
 ]
 
 /**
