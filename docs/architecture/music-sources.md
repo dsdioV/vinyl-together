@@ -130,7 +130,7 @@
 
 | 能力            | 实现                                                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 搜索 / 专辑搜索 | Web 端 `bcsearch_public_api/1/autocomplete_elastic`（匿名 POST，单曲/专辑/艺人混合返回，代码按 `type` 字段过滤 t/a）                                           |
+| 搜索 / 专辑搜索 | Web 端 `bcsearch_public_api/1/autocomplete_elastic`（匿名 POST，`search_filter: 't'/'a'` 精确过滤类型；不带 filter 的混合结果对泛关键词可能不含曲目条目）       |
 | 单曲/专辑详情   | 抓 `{artist}.bandcamp.com/track|album/{slug}` 页面，解析 `data-tralbum` JSON 属性（单曲页 = 只含 1 条 trackinfo 的特例，同一解析器）                           |
 | 播放链接        | 播放时实时抓曲目页提取 `trackinfo.file["mp3-128"]`（带时效 token）；**不写 streamUrlCache**（token 短命）                                                      |
 | 封面            | 由 `art_id` 构造 `https://f4.bcbits.com/img/a{art_id}_10.jpg`（**必须带 `a` 前缀**；搜索接口返回的 img 字段是失效旧格式）。CDN 无 CORS 头，AMLL 背景走 cover-proxy |

@@ -1199,14 +1199,17 @@ export class MusicProvider {
         return tracks
       }
 
-      // bandcamp 使用 Web 端搜索接口（单曲/专辑混合返回，按 type 过滤）
+      // bandcamp 使用 Web 端搜索接口（search_filter 按类型过滤）
       if (source === 'bandcamp') {
         const tracks = await this.searchBandcamp(keyword, limit, page)
         this.registerTracks(tracks)
-        this.searchIndex.set(cacheKey, {
-          source,
-          ids: tracks.map((t) => t.sourceId),
-        })
+        // 空结果不写索引：瞬时故障/上游空响应不应让该关键词在 TTL 内持续返回空
+        if (tracks.length > 0) {
+          this.searchIndex.set(cacheKey, {
+            source,
+            ids: tracks.map((t) => t.sourceId),
+          })
+        }
         return tracks
       }
       const meting = new Meting(source)
@@ -1517,8 +1520,11 @@ export class MusicProvider {
     }
   }
 
-  /** Web 端搜索接口（单曲/专辑/艺人混合返回）。 */
-  private async bandcampSearchRaw(keyword: string): Promise<BandcampSearchItem[]> {
+  /**
+   * Web 端搜索接口。search_filter 取 't'（曲目）/'a'（专辑）可精确过滤类型；
+   * 省略时返回混合结果——泛关键词（如 "strawberry"）可能不含任何曲目条目。
+   */
+  private async bandcampSearchRaw(keyword: string, filter: string): Promise<BandcampSearchItem[]> {
     try {
       const response = await withTimeout(
         fetch(BANDCAMP_SEARCH_API, {
@@ -1528,7 +1534,7 @@ export class MusicProvider {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify({ search_text: keyword, search_filter: '', full_page: false }),
+          body: JSON.stringify({ search_text: keyword, search_filter: filter, full_page: false }),
         }),
       )
       if (!response) {
@@ -1593,10 +1599,10 @@ export class MusicProvider {
     return this.tralbumToTracks(tralbum, pageUrl)
   }
 
-  /** bandcamp 单曲搜索：autocomplete_elastic 不过滤请求，按 type==='t' 筛选后分页切片。 */
+  /** bandcamp 单曲搜索：search_filter='t' 直接返回曲目类型结果，再分页切片。 */
   private async searchBandcamp(keyword: string, limit = 20, page = 1): Promise<Track[]> {
     try {
-      const items = await this.bandcampSearchRaw(keyword)
+      const items = await this.bandcampSearchRaw(keyword, 't')
       const trackItems = items.filter((item) => item.type === 't' && item.id && item.item_url_path)
       const start = (Math.max(1, page) - 1) * limit
       const sliced = trackItems.slice(start, start + limit)
@@ -1626,10 +1632,10 @@ export class MusicProvider {
     }
   }
 
-  /** bandcamp 专辑搜索：type==='a' 结果映射为 Playlist（id 即专辑页 URL）。 */
+  /** bandcamp 专辑搜索：search_filter='a' 返回专辑类型结果（id 即专辑页 URL）。 */
   private async searchBandcampAlbums(keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
     try {
-      const items = await this.bandcampSearchRaw(keyword)
+      const items = await this.bandcampSearchRaw(keyword, 'a')
       const albumItems = items.filter((item) => item.type === 'a' && item.item_url_path)
       const start = (Math.max(1, page) - 1) * limit
       const sliced = albumItems.slice(start, start + limit)

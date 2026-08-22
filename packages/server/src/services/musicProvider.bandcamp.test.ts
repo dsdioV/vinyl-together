@@ -107,8 +107,38 @@ describe('MusicProvider bandcamp source', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toContain('bcsearch_public_api/1/autocomplete_elastic')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual({ search_text: 'yorushika', search_filter: '', full_page: false })
+    expect(JSON.parse(String(init.body))).toEqual({ search_text: 'yorushika', search_filter: 't', full_page: false })
     expect((init.headers as Record<string, string>)['User-Agent']).not.toContain('Mozilla')
+  })
+
+  it('does not cache empty search results (transient failures must not poison the keyword)', async () => {
+    // 上游返回空（如瞬时故障）时不应写入 searchIndex
+    fetchMock.mockResolvedValueOnce(jsonResponse({ auto: { results: [] } }))
+    const tracks = await provider.search('bandcamp', 'strawberry', 20, 1)
+    expect(tracks).toEqual([])
+
+    const internals = provider as unknown as { searchIndex: LRUCache<string, unknown> }
+    expect(internals.searchIndex.get('bandcamp:strawberry:20:1')).toBeUndefined()
+
+    // 有结果时正常写索引
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        auto: {
+          results: [
+            {
+              type: 't',
+              id: 4006227418,
+              name: 'Bootleg',
+              band_name: 'HITORI.',
+              item_url_path: TRACK_PAGE_URL,
+              art_id: 271744234,
+            },
+          ],
+        },
+      }),
+    )
+    await provider.search('bandcamp', 'strawberry', 20, 1)
+    expect(internals.searchIndex.get('bandcamp:strawberry:20:1')).toBeDefined()
   })
 
   it('searches albums and maps them to playlists keyed by page URL', async () => {

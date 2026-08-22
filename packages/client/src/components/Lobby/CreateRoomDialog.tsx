@@ -44,9 +44,9 @@ export function CreateRoomDialog({
   const [password, setPassword] = useState('')
   const [persistent, setPersistent] = useState(false)
   const [persistentTtlHours, setPersistentTtlHours] = useState(24)
-  // 默认歌单存档：存在时默认勾选自动填充（日常建房场景几乎每次都要）
+  // 默认歌单存档：默认不勾选——存档可能很大，建房即全量发送容易卡顿，需要时手动开启
   const [archiveAvailable, setArchiveAvailable] = useState(false)
-  const [autoFillDefaultQueue, setAutoFillDefaultQueue] = useState(true)
+  const [autoFillDefaultQueue, setAutoFillDefaultQueue] = useState(false)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
@@ -56,7 +56,7 @@ export function CreateRoomDialog({
       setPersistent(false)
       setPersistentTtlHours(24)
       setArchiveAvailable(readLocalSnapshot() !== null)
-      setAutoFillDefaultQueue(true)
+      setAutoFillDefaultQueue(false)
     }
   }, [open, defaultNickname])
 
