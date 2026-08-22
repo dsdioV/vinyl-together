@@ -1,4 +1,4 @@
-import { Music } from 'lucide-react'
+import { Loader2, Music } from 'lucide-react'
 import { motion } from 'motion/react'
 import type { RoomListItem } from '@music-together/shared'
 import { RoomCard } from './RoomCard'
@@ -7,10 +7,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 interface RoomListSectionProps {
   rooms: RoomListItem[]
   isLoading: boolean
+  /** 未连接时骨架屏会永远转下去，改为展示真实的「正在连接」状态 */
+  isConnected?: boolean
   onRoomClick: (room: RoomListItem) => void
 }
 
-export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSectionProps) {
+export function RoomListSection({ rooms, isLoading, isConnected = true, onRoomClick }: RoomListSectionProps) {
   return (
     <>
       <div className="mb-4">
@@ -23,20 +25,34 @@ export function RoomListSection({ rooms, isLoading, onRoomClick }: RoomListSecti
       </div>
 
       {isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
-              <div className="space-y-2">
-                <Skeleton className="h-5 w-2/3" />
-                <Skeleton className="h-3 w-1/2" />
+        isConnected ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
+                <div className="space-y-2">
+                  <Skeleton className="h-5 w-2/3" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-3 w-12" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <Skeleton className="h-3 w-12" />
-                <Skeleton className="h-3 w-16" />
-              </div>
+            ))}
+          </div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border bg-card/50 px-8 py-16 text-center"
+          >
+            <Loader2 className="h-10 w-10 animate-spin text-muted-foreground/25" />
+            <div>
+              <p className="text-base font-medium text-foreground/60">正在连接服务器…</p>
+              <p className="mt-1 text-sm text-muted-foreground">连接成功后将自动加载房间列表</p>
             </div>
-          ))}
-        </div>
+          </motion.div>
+        )
       ) : rooms.length === 0 ? (
         <motion.div
           initial={{ opacity: 0 }}

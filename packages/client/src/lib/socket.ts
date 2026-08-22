@@ -11,7 +11,12 @@ export function getSocket(): TypedSocket {
     socket = io(SERVER_URL, {
       autoConnect: false,
       withCredentials: true,
-      transports: ['websocket'],
+      // 轮询先行、再升级 WebSocket（socket.io 经典策略）。不要改成 ws 优先：
+      // 存在「ws 能打开但随即被掐断」的网络环境（代理/VPN 等），此时
+      // tryAllTransports 的打开期回退不会触发，ws 优先会导致无限重连；
+      // 升级探测失败则会自动留在 polling 上，连接始终可用。
+      transports: ['polling', 'websocket'],
+      tryAllTransports: true,
     }) as TypedSocket
   }
   return socket

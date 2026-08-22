@@ -24,7 +24,7 @@ import { toast } from 'sonner'
 
 export default function HomePage() {
   const navigate = useNavigate()
-  const { socket } = useSocketContext()
+  const { socket, isConnected } = useSocketContext()
   const { rooms, isLoading, createRoom, joinRoom } = useLobby()
   const hasUpdate = useVersionCheck()
 
@@ -53,6 +53,13 @@ export default function HomePage() {
 
   const setRoom = useRoomStore((s) => s.setRoom)
   const savedNickname = storage.getNickname()
+
+  /** 未连接时直接拦截建房/进房操作，避免 emit 石沉大海后只报笼统的「操作超时」 */
+  const requireConnection = () => {
+    if (isConnected) return true
+    toast.error('尚未连接到服务器，请稍候再试')
+    return false
+  }
 
   // Safety timeout: reset actionLoading after 15s to prevent stuck button
   useEffect(() => {
@@ -166,6 +173,7 @@ export default function HomePage() {
     customRoomId?: string,
     autoFillDefaultQueue?: boolean,
   ) => {
+    if (!requireConnection()) return
     await unlockAudio()
     storage.setNickname(nickname)
     createAutoFillRef.current = autoFillDefaultQueue ?? null
@@ -175,6 +183,7 @@ export default function HomePage() {
 
   const handleRoomClick = async (room: RoomListItem) => {
     if (actionLoading) return
+    if (!requireConnection()) return
     if (!savedNickname) {
       pendingJoinRef.current = { type: 'room', room }
       setNicknameDialogOpen(true)
@@ -194,6 +203,7 @@ export default function HomePage() {
 
   const handlePasswordSubmit = (password: string) => {
     if (!passwordDialog.room) return
+    if (!requireConnection()) return
     if (!savedNickname) return
     setActionLoading(true)
     setPasswordError(null)
@@ -206,6 +216,7 @@ export default function HomePage() {
       toast.error('请输入房间号')
       return
     }
+    if (!requireConnection()) return
     if (!savedNickname) {
       pendingJoinRef.current = { type: 'direct', roomId: directRoomId.trim() }
       setNicknameDialogOpen(true)
@@ -224,6 +235,7 @@ export default function HomePage() {
       const pending = pendingJoinRef.current
       pendingJoinRef.current = null
       if (!pending) return
+      if (!requireConnection()) return
 
       await unlockAudio()
 
@@ -279,7 +291,12 @@ export default function HomePage() {
 
           <Separator className="mb-8" />
 
-          <RoomListSection rooms={rooms} isLoading={isLoading} onRoomClick={handleRoomClick} />
+          <RoomListSection
+            rooms={rooms}
+            isLoading={isLoading}
+            isConnected={isConnected}
+            onRoomClick={handleRoomClick}
+          />
         </div>
       </main>
 

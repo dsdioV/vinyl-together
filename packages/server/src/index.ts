@@ -99,8 +99,10 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string,
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  // 只使用 WebSocket 传输, 跳过 HTTP polling -> WebSocket 的升级过程
-  transports: ['websocket'],
+  // 同时允许 WebSocket 与 HTTP long-polling：个别浏览器/网络组合下 WSS 握手会
+  // 静默挂起、甚至建立后立即被掐断（不报错、客户端无法自愈）。polling 走普通
+  // HTTPS 是兜底通道；客户端轮询先行、升级 ws 成功后即为纯 ws 通信。
+  transports: ['websocket', 'polling'],
 })
 
 attachSocketIdentity(io)
