@@ -26,7 +26,19 @@ const SOURCES: { id: MusicSource; label: string }[] = [
   { id: 'tencent', label: 'QQ' },
   { id: 'kugou', label: '酷狗' },
   { id: 'bilibili', label: 'Bilibili' },
+  { id: 'bandcamp', label: 'Bandcamp' },
 ]
+
+/** 不支持歌单搜索的平台（无歌单概念） */
+const PLAYLIST_UNSUPPORTED: ReadonlySet<MusicSource> = new Set(['bilibili', 'bandcamp'])
+/** 不支持专辑搜索的平台 */
+const ALBUM_UNSUPPORTED: ReadonlySet<MusicSource> = new Set(['bilibili'])
+
+function supportsSearchType(id: MusicSource, type: 'song' | 'album' | 'playlist'): boolean {
+  if (type === 'album') return !ALBUM_UNSUPPORTED.has(id)
+  if (type === 'playlist') return !PLAYLIST_UNSUPPORTED.has(id)
+  return true
+}
 
 type PlaylistDetailContext = {
   playlist: Playlist
@@ -344,15 +356,15 @@ export function DefaultPlaylistSection() {
               <TabsTrigger value="song" className="flex-1 text-xs sm:text-sm">
                 单曲
               </TabsTrigger>
-              {source !== 'bilibili' && (
-                <>
-                  <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
-                    专辑
-                  </TabsTrigger>
-                  <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
-                    歌单
-                  </TabsTrigger>
-                </>
+              {supportsSearchType(source, 'album') && (
+                <TabsTrigger value="album" className="flex-1 text-xs sm:text-sm">
+                  专辑
+                </TabsTrigger>
+              )}
+              {supportsSearchType(source, 'playlist') && (
+                <TabsTrigger value="playlist" className="flex-1 text-xs sm:text-sm">
+                  歌单
+                </TabsTrigger>
               )}
             </TabsList>
           </Tabs>
@@ -380,7 +392,8 @@ export function DefaultPlaylistSection() {
                     onClick={() => {
                       setSource(s.id)
                       resetState()
-                      if (s.id === 'bilibili') setSearchType('song')
+                      // 切到不支持当前搜索类型的平台时回落到单曲
+                      if (!supportsSearchType(s.id, searchType)) setSearchType('song')
                     }}
                   >
                     {s.label}
@@ -428,7 +441,13 @@ export function DefaultPlaylistSection() {
             {showIdInput && (
               <div className="flex gap-2">
                 <Input
-                  placeholder={searchType === 'song' ? '输入歌曲 ID 或链接' : '输入歌单 ID 或链接'}
+                  placeholder={
+                    searchType === 'song'
+                      ? '输入歌曲 ID 或链接'
+                      : searchType === 'album'
+                        ? '输入专辑链接或编号'
+                        : '输入歌单 ID 或链接'
+                  }
                   value={idInput}
                   onChange={(e) => setIdInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleIdLookup()}
