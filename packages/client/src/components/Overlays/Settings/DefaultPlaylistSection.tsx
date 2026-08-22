@@ -16,6 +16,7 @@ import { motion } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { PlaylistDetail } from './PlaylistDetail'
+import { DefaultPlaylistArchivePanel } from './DefaultPlaylistArchivePanel'
 import { TrackListItem } from '@/components/TrackListItem'
 import { fetchDefaultQueueTracks } from '@/lib/defaultQueue'
 import { emitInChunks } from '@/lib/batchQueueAdd'
@@ -294,6 +295,11 @@ export function DefaultPlaylistSection() {
         主队列为空时自动从中随机抽取歌曲播放。房主和管理员可以自由添加/移除歌曲。
       </p>
       <Separator className="mt-2 mb-4" />
+
+      {/* 存档：把默认列表存进浏览器，一键恢复 / JSON 文件导入导出 */}
+      <DefaultPlaylistArchivePanel />
+
+      <Separator className="mt-4 mb-4" />
 
       {selectedPlaylist ? (
         <PlaylistDetail

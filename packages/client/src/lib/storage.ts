@@ -217,6 +217,10 @@ export const storage = {
   // QQ 音乐浏览器中继（默认关闭）
   getQqRelayEnabled: () => safeGet('qqRelayEnabled') === 'true',
   setQqRelayEnabled: (v: boolean) => safeSet('qqRelayEnabled', String(v)),
+
+  // 默认歌单浏览器存档（结构与校验由 lib/defaultQueueArchive.ts 负责，这里只存原始 JSON）
+  getDefaultQueueSnapshot: (): unknown | null => safeGetJSON('dq-snapshot'),
+  setDefaultQueueSnapshot: (value: unknown) => safeSetJSON('dq-snapshot', value),
 }
 
 /** Shape stored in localStorage for auth cookies */

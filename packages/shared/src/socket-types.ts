@@ -182,6 +182,7 @@ export interface ClientToServerEvents {
   // Default queue
   [EVENTS.DEFAULT_QUEUE_ADD]: (data: { track: QueueTrackInput }) => void
   [EVENTS.DEFAULT_QUEUE_ADD_BATCH]: (data: { tracks: QueueTrackInput[] }) => void
+  [EVENTS.DEFAULT_QUEUE_ADD_REFS]: (data: { refs: DefaultQueueTrackRef[] }) => void
   [EVENTS.DEFAULT_QUEUE_REMOVE]: (data: { trackId: string }) => void
 
   // Room-local audio

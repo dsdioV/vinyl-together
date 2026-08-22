@@ -12,11 +12,20 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
+import { readLocalSnapshot } from '@/lib/defaultQueueArchive'
 
 interface CreateRoomDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreateRoom: (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number, customRoomId?: string) => void
+  onCreateRoom: (
+    nickname: string,
+    roomName?: string,
+    password?: string,
+    persistent?: boolean,
+    persistentTtlHours?: number,
+    customRoomId?: string,
+    autoFillDefaultQueue?: boolean,
+  ) => void
   defaultNickname: string
   isLoading: boolean
 }
@@ -35,6 +44,9 @@ export function CreateRoomDialog({
   const [password, setPassword] = useState('')
   const [persistent, setPersistent] = useState(false)
   const [persistentTtlHours, setPersistentTtlHours] = useState(24)
+  // 默认歌单存档：存在时默认勾选自动填充（日常建房场景几乎每次都要）
+  const [archiveAvailable, setArchiveAvailable] = useState(false)
+  const [autoFillDefaultQueue, setAutoFillDefaultQueue] = useState(true)
 
   // Sync nickname from defaultNickname when the dialog opens
   useEffect(() => {
@@ -43,6 +55,8 @@ export function CreateRoomDialog({
       setCustomRoomId('')
       setPersistent(false)
       setPersistentTtlHours(24)
+      setArchiveAvailable(readLocalSnapshot() !== null)
+      setAutoFillDefaultQueue(true)
     }
   }, [open, defaultNickname])
 
@@ -58,6 +72,7 @@ export function CreateRoomDialog({
       persistent,
       persistent ? persistentTtlHours : undefined,
       customRoomId.trim().toUpperCase() || undefined,
+      archiveAvailable && autoFillDefaultQueue ? true : undefined,
     )
   }
 
@@ -163,6 +178,18 @@ export function CreateRoomDialog({
                   />
                   <span className="text-xs text-muted-foreground">小时后</span>
                 </div>
+              </div>
+            )}
+
+            {archiveAvailable && (
+              <div className="flex items-center gap-2">
+                <Switch id="auto-fill-default-queue" checked={autoFillDefaultQueue} onCheckedChange={setAutoFillDefaultQueue} />
+                <Label
+                  htmlFor="auto-fill-default-queue"
+                  className="flex cursor-pointer items-center gap-1.5 text-sm text-muted-foreground"
+                >
+                  使用先前创建过的默认歌单
+                </Label>
               </div>
             )}
 

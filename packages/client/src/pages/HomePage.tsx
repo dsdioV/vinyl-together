@@ -10,6 +10,7 @@ import { useLobby } from '@/hooks/useLobby'
 import { unlockAudio } from '@/lib/audioUnlock'
 import { ACTION_LOADING_TIMEOUT_MS } from '@/lib/constants'
 import { storage } from '@/lib/storage'
+import { setPendingSnapshotRestore } from '@/lib/pendingSnapshotRestore'
 import { useSocketContext } from '@/providers/SocketProvider'
 import { useRoomStore } from '@/stores/roomStore'
 import { useChatStore } from '@/stores/chatStore'
@@ -47,6 +48,8 @@ export default function HomePage() {
   const directRoomIdRef = useRef(directRoomId)
   directRoomIdRef.current = directRoomId
   const lastJoinedRoomIdRef = useRef('')
+  /** 建房时勾选的「自动恢复默认歌单存档」，等 ROOM_CREATED 成功后转为 pending（失败则丢弃） */
+  const createAutoFillRef = useRef<boolean | null>(null)
 
   const setRoom = useRoomStore((s) => s.setRoom)
   const savedNickname = storage.getNickname()
@@ -78,6 +81,11 @@ export default function HomePage() {
       // currentUser will be auto-derived when onState fires and calls setRoom
       setActionLoading(false)
       setCreateDialogOpen(false)
+      // 创建成功，转交「自动填充存档」意图给 RoomPage 在进房后执行
+      if (createAutoFillRef.current) {
+        setPendingSnapshotRestore(true)
+        createAutoFillRef.current = null
+      }
       // Navigation is handled by onState which fires right after onCreated
     }
 
@@ -103,6 +111,8 @@ export default function HomePage() {
 
     const onError = (error: { code: string; message: string }) => {
       setActionLoading(false)
+      // 建房失败时丢弃未生效的自动填充意图，避免下次进房误触发
+      createAutoFillRef.current = null
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
         // If password dialog is already open, show error
         if (passwordDialogRef.current.open) {
@@ -147,9 +157,18 @@ export default function HomePage() {
     }
   }, [socket, navigate, setRoom])
 
-  const handleCreateRoom = async (nickname: string, roomName?: string, password?: string, persistent?: boolean, persistentTtlHours?: number, customRoomId?: string) => {
+  const handleCreateRoom = async (
+    nickname: string,
+    roomName?: string,
+    password?: string,
+    persistent?: boolean,
+    persistentTtlHours?: number,
+    customRoomId?: string,
+    autoFillDefaultQueue?: boolean,
+  ) => {
     await unlockAudio()
     storage.setNickname(nickname)
+    createAutoFillRef.current = autoFillDefaultQueue ?? null
     setActionLoading(true)
     createRoom(nickname, roomName, password, persistent, persistentTtlHours, customRoomId)
   }

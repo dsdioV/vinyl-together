@@ -87,6 +87,7 @@ export const EVENTS = {
   QUEUE_UNLIKE: 'queue:unlike',
   QUEUE_LIKES_UPDATED: 'queue:likes_updated',
   DEFAULT_QUEUE_ADD_BATCH: 'default_queue:add_batch',
+  DEFAULT_QUEUE_ADD_REFS: 'default_queue:add_refs',
   DEFAULT_QUEUE_REMOVE: 'default_queue:remove',
   DEFAULT_QUEUE_UPDATED: 'default_queue:updated',
   DEFAULT_QUEUE_DELTA: 'default_queue:delta',

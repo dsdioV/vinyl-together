@@ -29,6 +29,9 @@ import { AbilityProvider } from '@/providers/AbilityProvider'
 import { useClockSync } from '@/hooks/useClockSync'
 import { useMusicRelay } from '@/hooks/useMusicRelay'
 import { useLocalAudioFileQueue } from '@/hooks/useLocalAudioFileQueue'
+import { useSnapshotRestore } from '@/hooks/useSnapshotRestore'
+import { consumePendingSnapshotRestore } from '@/lib/pendingSnapshotRestore'
+import { readLocalSnapshot } from '@/lib/defaultQueueArchive'
 import { storage } from '@/lib/storage'
 
 /** Invisible component that runs NTP clock-sync only while in a room. */
@@ -93,6 +96,26 @@ export default function RoomPage() {
   const joiningRef = useRef(false)
   const isLeavingRef = useRef(false)
   const passwordRef = useRef<string | undefined>(undefined)
+  /** 建房时勾选的存档自动填充只在首次进房执行一次（防 StrictMode 双执行与重渲染重复触发） */
+  const snapshotRestoreConsumedRef = useRef(false)
+  const restoreSnapshot = useSnapshotRestore()
+
+  // 建房弹窗勾选「自动恢复存档」→ ROOM_CREATED 后进入本页：以 owner/admin 身份自动填充默认播放列表
+  useEffect(() => {
+    if (snapshotRestoreConsumedRef.current) return
+    if (!room || !currentUser || !roomId || room.id !== roomId) return
+    if (currentUser.role !== 'owner' && currentUser.role !== 'admin') return
+    // 房间已有默认列表内容时不自动追加，避免意外污染
+    if (room.defaultQueue.length > 0) return
+    snapshotRestoreConsumedRef.current = true
+    if (!consumePendingSnapshotRestore()) return
+    const snapshot = readLocalSnapshot()
+    if (!snapshot) {
+      toast.info('本地没有默认歌单存档，已跳过自动填充')
+      return
+    }
+    void restoreSnapshot(socket, snapshot.tracks, room.defaultQueue)
+  }, [room, currentUser, roomId, socket, restoreSnapshot])
 
   // --- Pre-check: fetch room existence & password requirement ---
   useEffect(() => {

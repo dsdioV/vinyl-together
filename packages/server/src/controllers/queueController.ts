@@ -7,12 +7,14 @@ import {
   queueRemoveSchema,
   queueReorderSchema,
   defaultQueueAddSchema,
+  defaultQueueAddRefsSchema,
+  defaultQueueImportRefSchema,
   defaultQueueRemoveSchema,
   queueLikeSchema,
   queueUnlikeSchema,
   LIMITS,
 } from '@music-together/shared'
-import type { DefaultQueueDelta, QueueTrackInput, Track } from '@music-together/shared'
+import type { DefaultQueueDelta, DefaultQueueTrackRef, QueueTrackInput, Track } from '@music-together/shared'
 import type { TypedServer, TypedSocket } from '../middleware/types.js'
 import { createWithPermission } from '../middleware/withControl.js'
 import { createWithRoom } from '../middleware/withRoom.js'
@@ -389,6 +391,91 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
 
       logger.info(`Default queue batch add: ${tracks.length} tracks`, { roomId: ctx.roomId })
+    }),
+  )
+
+  socket.on(
+    EVENTS.DEFAULT_QUEUE_ADD_REFS,
+    withPermission('add', 'DefaultQueue', async (ctx, raw) => {
+      if (!(await checkSocketRateLimit(ctx.socket))) return
+      const rawRefs: unknown[] = Array.isArray(raw?.refs) ? raw.refs : []
+
+      if (rawRefs.length === 0) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '歌曲列表为空' })
+        return
+      }
+      if (rawRefs.length > LIMITS.QUEUE_BATCH_MAX_SIZE) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.INVALID_DATA,
+          message: `单次最多添加 ${LIMITS.QUEUE_BATCH_MAX_SIZE} 首歌曲`,
+        })
+        return
+      }
+
+      const remainingCapacity = LIMITS.DEFAULT_QUEUE_MAX_SIZE - ctx.room.defaultQueue.length
+      if (remainingCapacity <= 0) {
+        socket.emit(EVENTS.ROOM_ERROR, {
+          code: ERROR_CODE.QUEUE_FULL,
+          message: '默认播放列表已满',
+        })
+        return
+      }
+
+      // Per-ref validation: skip individual invalid refs instead of rejecting the batch
+      let skipped = 0
+      const validRefs: DefaultQueueTrackRef[] = []
+      for (const ref of rawRefs) {
+        const check = defaultQueueImportRefSchema.safeParse(ref)
+        if (check.success) validRefs.push(check.data)
+        else skipped++
+      }
+      if (validRefs.length === 0) {
+        socket.emit(EVENTS.ROOM_ERROR, { code: ERROR_CODE.INVALID_DATA, message: '无效的歌曲数据' })
+        return
+      }
+      if (skipped > 0) {
+        logger.warn(`DEFAULT_QUEUE_ADD_REFS: ${skipped}/${rawRefs.length} refs skipped due to validation`, {
+          roomId: ctx.roomId,
+        })
+      }
+
+      // 幂等导入：与现有条目按 id 与 source:sourceId 双重判重（批内同样生效）。
+      // ref.id 沿用存档中的稳定 ID，重复导入同一份存档时整批 no-op。
+      const existingIds = new Set(ctx.room.defaultQueue.map((ref) => ref.id))
+      const existingKeys = new Set(ctx.room.defaultQueue.map((ref) => `${ref.source}:${ref.sourceId}`))
+      const accepted: DefaultQueueTrackRef[] = []
+      let duplicates = 0
+      for (const ref of validRefs) {
+        if (existingIds.has(ref.id) || existingKeys.has(`${ref.source}:${ref.sourceId}`)) {
+          duplicates++
+          continue
+        }
+        if (accepted.length >= remainingCapacity) break
+        existingIds.add(ref.id)
+        existingKeys.add(`${ref.source}:${ref.sourceId}`)
+        accepted.push(ref)
+      }
+      if (accepted.length === 0) {
+        logger.info(`DEFAULT_QUEUE_ADD_REFS: all ${validRefs.length} refs duplicated, nothing to add`, {
+          roomId: ctx.roomId,
+        })
+        return
+      }
+
+      ctx.room.defaultQueue.push(...accepted)
+      broadcastDefaultQueueDelta(ctx.roomId, { type: 'add', tracks: accepted })
+
+      const msg = chatService.createSystemMessage(
+        ctx.roomId,
+        duplicates > 0
+          ? `${ctx.user.nickname} 恢复了 ${accepted.length} 首歌到默认播放列表（跳过 ${duplicates} 首重复）`
+          : `${ctx.user.nickname} 恢复了 ${accepted.length} 首歌到默认播放列表`,
+      )
+      io.to(ctx.roomId).emit(EVENTS.CHAT_MESSAGE, msg)
+
+      logger.info(`Default queue add refs: ${accepted.length} refs (${duplicates} duplicates)`, {
+        roomId: ctx.roomId,
+      })
     }),
   )
 

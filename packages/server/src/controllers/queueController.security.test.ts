@@ -347,3 +347,93 @@ describe('queue clear default queue fallback', () => {
     expect(mocks.playFromDefaultQueue).toHaveBeenCalledWith(expect.anything(), fixture.room.id)
   })
 })
+
+describe('DEFAULT_QUEUE_ADD_REFS (archive restore)', () => {
+  it('does not let a member import refs', async () => {
+    const fixture = mount('member')
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: [makeRef('import-1')] })
+
+    expect(fixture.room.defaultQueue).toEqual([])
+    expect(fixture.ioEmit).not.toHaveBeenCalled()
+    expectNoPermission(fixture.socketEmit)
+  })
+
+  it.each(['admin', 'owner'] as const)('%s can import refs and broadcasts an add delta', async (role) => {
+    const seed = makeRef('seed')
+    const fixture = mount(role, { defaultQueue: [seed] })
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: [makeRef('import-1'), makeRef('import-2')] })
+
+    expect(fixture.room.defaultQueue).toEqual([seed, makeRef('import-1'), makeRef('import-2')])
+    expect(fixture.ioEmit).toHaveBeenCalledWith(EVENTS.DEFAULT_QUEUE_DELTA, {
+      type: 'add',
+      tracks: [makeRef('import-1'), makeRef('import-2')],
+    })
+    expect(mocks.createSystemMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('恢复了 2 首歌'),
+    )
+  })
+
+  it('skips duplicates by id and by source:sourceId, and re-importing is a no-op', async () => {
+    const seed = makeRef('seed')
+    const fixture = mount('owner', { defaultQueue: [seed] })
+
+    // duplicate id + duplicate source:sourceId + one fresh ref
+    const fresh = makeRef('fresh')
+    // 与 seed 同 id（id 判重）与同 source:sourceId（键判重）的两种重复
+    const dupId = { ...makeRef('dup-id'), id: seed.id }
+    const dupKey = { ...makeRef('dup-key'), sourceId: seed.sourceId }
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, {
+      refs: [seed, dupId, dupKey, fresh],
+    })
+    expect(fixture.room.defaultQueue).toEqual([seed, fresh])
+
+    const afterFirstImport = [...fixture.room.defaultQueue]
+    mocks.createSystemMessage.mockClear()
+    const ioEmitCalls = fixture.ioEmit.mock.calls.length
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: [makeRef('fresh')] })
+
+    expect(fixture.room.defaultQueue).toEqual(afterFirstImport)
+    expect(fixture.ioEmit.mock.calls.length).toBe(ioEmitCalls)
+    expect(mocks.createSystemMessage).not.toHaveBeenCalled()
+  })
+
+  it('skips invalid refs and rejects when nothing valid remains', async () => {
+    const fixture = mount('owner')
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, {
+      refs: [
+        makeRef('ok'),
+        { ...makeRef('bad-source'), source: 'local' }, // local assets cannot be restored across rooms
+        { ...makeRef('no-title'), title: '' },
+        'garbage',
+      ],
+    })
+    expect(fixture.room.defaultQueue).toEqual([makeRef('ok')])
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: ['garbage', { source: 'netease' }] })
+    expect(fixture.socketEmit).toHaveBeenCalledWith(
+      EVENTS.ROOM_ERROR,
+      expect.objectContaining({ code: ERROR_CODE.INVALID_DATA }),
+    )
+  })
+
+  it('truncates at the remaining default queue capacity', async () => {
+    const fillCount = LIMITS.DEFAULT_QUEUE_MAX_SIZE - 1
+    const filled = Array.from({ length: fillCount }, (_, i) => makeRef(`fill-${i}`))
+    const fixture = mount('owner', { defaultQueue: filled })
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: [makeRef('fits'), makeRef('overflow')] })
+
+    expect(fixture.room.defaultQueue).toHaveLength(LIMITS.DEFAULT_QUEUE_MAX_SIZE)
+    expect(fixture.room.defaultQueue.at(-1)).toEqual(makeRef('fits'))
+    expect(mocks.createSystemMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('恢复了 1 首歌'),
+    )
+  })
+})

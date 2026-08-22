@@ -162,6 +162,23 @@ export const defaultQueueAddBatchSchema = z.object({
 
 export const defaultQueueRemoveSchema = z.object({ trackId: z.string().max(200) })
 
+/**
+ * 默认播放列表按轻量引用批量追加（跨房间存档恢复）。
+ * 仅接受在线音源引用：本地资产随房间销毁，无法跨房间恢复，客户端导出时应剔除。
+ * 元数据（封面/时长等）由服务端在播放时经 resolveDefaultQueueRef 懒补全。
+ */
+export const defaultQueueImportRefSchema = z.object({
+  id: z.string().min(1).max(200),
+  source: z.enum(['netease', 'tencent', 'kugou', 'bilibili', 'bandcamp']),
+  sourceId: z.string().min(1).max(200),
+  title: z.string().min(1).max(500),
+  artist: z.array(z.string().max(200)).max(20),
+})
+
+export const defaultQueueAddRefsSchema = z.object({
+  refs: z.array(defaultQueueImportRefSchema).min(1).max(LIMITS.QUEUE_BATCH_MAX_SIZE),
+})
+
 /** 默认播放列表批量元数据补全查询（REST：ids 逗号分隔，服务端按批大小上限截断） */
 export const defaultQueueTracksQuerySchema = z.object({
   roomId: z.string().min(1).max(200),
