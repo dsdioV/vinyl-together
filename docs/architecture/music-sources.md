@@ -42,6 +42,16 @@
 - 失败分类：`104003/104013` → 无 cookie 报 `login_required`，有 cookie 报 `vip_or_copyright`；其余为 `upstream_failed`；超时单独分类。
 - 权限拒绝（104003/104013）与 media_mid 无关，跳过详情恢复，直接进入中继/分类，避免多余请求。
 
+#### QQ VIP 标识的判定（`Track.vip`）
+
+`vip` 只影响搜索/歌单里的「VIP」角标与失败提示文案，不决定能否播放。判定必须以**单曲目录属性**为准，不能依赖 `pay` 段：
+
+- **不能用的字段**：`pay_month`（月度会员）、`pay_down`（付费下载）、`price_track`（单曲售价）只描述购买/下载权利。大量可免费完整播放的歌同样带这些值（例：《烟火》`pay_month=1, pay_down=1, price_track=200`），用它做 OR 判断会把免费歌误标为 VIP（实测 1582 首样本误报 462 首）。
+- **能用但不完整**：`pay_play=1` 语义正确（= 播放需要权限），但它随请求地区变化。香港服务器会把它连同整个 `pay` 段置 0，导致真正的 VIP 歌漏标（实测漏报 550/833）。
+- **采用**：`action.icons` 位掩码的 bit1（值 `2`，客户端 VIP/付费角标位）。它随目录属性下发、不随请求地区降级。中国大陆与香港两种视图下，bit1 对照 `pay_play` 标注均误报 0、漏报 0（1582 首样本）；另一样本以匿名 vkey 播放权限为准仅 2 例分歧。
+- 实现见 `musicProvider.ts` 的 `tencentSongNeedsVip()`：`icons & 2` 为主判据，`pay_play === 1` 仅在响应缺 `action` 时兜底。搜索与单曲详情两条映射路径共用该函数，避免此前两处 OR 链不一致。
+- 注意 `registerTracks` 的合并策略是 `existing.vip || meta.vip`（只增不减），Registry TTL 内旧值不会自动纠正；改判定规则后需等 TTL（2h）或重启进程才完全生效。
+
 ### 酷狗（kugou）
 
 | 能力                          | 实现                                                                     |

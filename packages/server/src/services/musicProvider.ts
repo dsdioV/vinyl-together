@@ -121,15 +121,25 @@ interface TencentSearchSong {
     size_320mp3?: number
     size_flac?: number
   }
-  pay?: {
-    pay_down?: number
-    pay_month?: number
-    pay_play?: number
-    price_track?: number
-  }
-  action?: {
-    msgpay?: number
-  }
+  pay?: TencentPayInfo
+  action?: TencentActionInfo
+}
+
+/**
+ * QQ 音乐的 pay 段。注意：这些字段描述的是「当前请求地区/账号的购买与下载权利」，
+ * 并不等价于「播放是否需要 VIP」，且海外 IP（香港服务器）会整体返回 0。
+ */
+interface TencentPayInfo {
+  pay_down?: number
+  pay_month?: number
+  pay_play?: number
+  price_track?: number
+}
+
+/** QQ 音乐的 action 段。icons 是客户端角标位掩码（bit1 = VIP/付费角标）。 */
+interface TencentActionInfo {
+  icons?: number
+  msgpay?: number
 }
 
 /** bilibili 搜索响应（x/web-interface/search/type，search_type=video） */
@@ -432,6 +442,30 @@ export function neteaseLevelsForBitrate(bitrate: number): string[] {
 interface TencentFileType {
   code: string
   ext: string
+}
+
+/**
+ * QQ 音乐 `action.icons` 位掩码中的「VIP / 付费」角标位（1 << 1）。
+ *
+ * 为什么不能用 pay 段判断：
+ * - `pay_month` / `pay_down` / `price_track` 描述的是月度会员、付费下载与单曲售价，
+ *   大量可免费完整播放的歌同样带这些值（如《烟火》pay_month=1、pay_down=1、price_track=200），
+ *   用它做 OR 判断会把免费歌误标为 VIP（实测 1582 首样本中误报 462 首）。
+ * - `pay_play` 语义正确（=1 表示播放需要权限），但它跟随请求地区变化：香港服务器（生产环境）
+ *   会把它连同整个 pay 段一起置 0，导致《烟花易冷》这类真正的 VIP 歌漏标（漏报 550/833）。
+ * - `icons` 是客户端角标位掩码，随歌曲目录属性下发、不随请求地区降级。在中国大陆与香港两种
+ *   视图下，bit1 与 `pay_play` 所代表的真实 VIP 状态一致（1582 首样本中误报 0、漏报 0，
+ *   另一独立样本中以匿名 vkey 播放权限为准仅 2 例分歧）。
+ *
+ * 因此以 bit1 为主判据，并保留 `pay_play === 1` 作为兜底（个别通道不返回 action 时）。
+ */
+const TENCENT_VIP_ICON_BIT = 1 << 1
+
+/** 按 QQ 音乐的 action/pay 段判断单曲是否需要 VIP 才能播放。 */
+function tencentSongNeedsVip(song: { pay?: TencentPayInfo; action?: TencentActionInfo }): boolean {
+  const icons = song.action?.icons
+  if (typeof icons === 'number' && (icons & TENCENT_VIP_ICON_BIT) !== 0) return true
+  return song.pay?.pay_play === 1
 }
 
 /**
@@ -797,12 +831,8 @@ export class MusicProvider {
       lyricId: song.mid,
       picId: song.album?.mid || '',
       mediaMid: song.file?.media_mid || '',
-      // VIP 判断: pay_month=1 月度会员, pay_down=1 付费下载, pay_play=1 需要 VIP, msgpay>0 VIP 标志
-      vip:
-        song.pay?.pay_month === 1 ||
-        song.pay?.pay_down === 1 ||
-        song.pay?.pay_play === 1 ||
-        (song.action?.msgpay ?? 0) > 0,
+      // VIP 判断以 action.icons 角标位为准，pay 段只在缺失 action 时兜底（见 tencentSongNeedsVip）
+      vip: tencentSongNeedsVip(song),
     }))
   }
 
@@ -1633,7 +1663,11 @@ export class MusicProvider {
   }
 
   /** bandcamp 专辑搜索：search_filter='a' 返回专辑类型结果（id 即专辑页 URL）。 */
-  private async searchBandcampAlbums(keyword: string, limit = 20, page = 1): Promise<import('@music-together/shared').Playlist[]> {
+  private async searchBandcampAlbums(
+    keyword: string,
+    limit = 20,
+    page = 1,
+  ): Promise<import('@music-together/shared').Playlist[]> {
     try {
       const items = await this.bandcampSearchRaw(keyword, 'a')
       const albumItems = items.filter((item) => item.type === 'a' && item.item_url_path)
@@ -3335,8 +3369,8 @@ export class MusicProvider {
           lyricId: String(t.mid),
           picId: String(t.album?.mid || ''),
           mediaMid: String(t.file?.media_mid || ''),
-          // pay.pay_play=1 表示需要 VIP, pay.pay_month=1 表示月度VIP, pay.price_track>0 表示付费单曲
-          vip: t.pay?.pay_play === 1 || t.pay?.pay_month === 1 || (t.pay?.price_track ?? 0) > 0,
+          // VIP 判断以 action.icons 角标位为准，pay 段只在缺失 action 时兜底（见 tencentSongNeedsVip）
+          vip: tencentSongNeedsVip(t),
         }
       }
 

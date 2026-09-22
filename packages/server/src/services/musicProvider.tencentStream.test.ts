@@ -76,7 +76,7 @@ function searchSong(mid: string, mediaMid: string, extra: Record<string, unknown
     album: { id: 1, mid: 'album-1', name: '专辑', title: '专辑', pmid: 'album-pmid' },
     file: { media_mid: mediaMid },
     pay: { pay_play: 0, pay_month: 0, pay_down: 0, price_track: 0 },
-    action: { msgpay: 0 },
+    action: { icons: 135752, msgpay: 0 },
     ...extra,
   }
 }
@@ -444,6 +444,150 @@ describe('MusicProvider tencent search fallback', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     const [thirdUrl] = fetchMock.mock.calls[2] as [string]
     expect(thirdUrl).toContain('client_search_cp')
+  })
+})
+
+describe('MusicProvider tencent VIP classification', () => {
+  let provider: MusicProvider
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    provider = new MusicProvider()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** 桌面通道被风控，签名通道返回空，迫使 vip 判定落到 legacy 通道的响应上。 */
+  const blockedDesktop = () =>
+    okResponse({ code: 0, 'music.search.SearchCgiService.DoSearchForQQMusicDesktop': { code: 2001 } })
+  const emptySigned = () => okResponse({ code: 0, req: { code: 0, data: { body: { song: { list: [] } } } } })
+  const legacyWith = (song: Record<string, unknown>) => okResponse({ code: 0, data: { song: { list: [song] } } })
+
+  it('does not flag a free song whose pay段 carries membership/download fields', async () => {
+    // 真实线上样本《烟火》002mpQ3s0aIV0w：pay 段有 month/down/price，但可免费完整播放
+    fetchMock
+      .mockResolvedValueOnce(blockedDesktop())
+      .mockResolvedValueOnce(emptySigned())
+      .mockResolvedValueOnce(
+        legacyWith(
+          searchSong('002mpQ3s0aIV0w', '004Nkk3W2uNKVb', {
+            pay: { pay_play: 0, pay_month: 1, pay_down: 1, price_track: 200 },
+            action: { icons: 8535932, msgpay: 6 },
+          }),
+        ),
+      )
+
+    const tracks = await provider.search('tencent', '烟火', 1, 1)
+
+    expect(tracks[0].vip).toBe(false)
+  })
+
+  it('flags a VIP song even when the HK server receives a zeroed pay段', async () => {
+    // 真实线上样本《烟花易冷》004emQMs09Z1lz：香港 IP 下 pay 段全 0，仅 icons 角标位保留
+    fetchMock
+      .mockResolvedValueOnce(blockedDesktop())
+      .mockResolvedValueOnce(emptySigned())
+      .mockResolvedValueOnce(
+        legacyWith(
+          searchSong('004emQMs09Z1lz', '004O8FM52iGQnX', {
+            pay: { pay_play: 0, pay_month: 0, pay_down: 0, price_track: 0 },
+            action: { icons: 9060350, msgpay: 0 },
+          }),
+        ),
+      )
+
+    const tracks = await provider.search('tencent', '烟花易冷', 1, 1)
+
+    expect(tracks[0].vip).toBe(true)
+  })
+
+  it('flags a VIP song from the icons badge when the desktop channel serves it', async () => {
+    fetchMock.mockResolvedValue(
+      okResponse({
+        code: 0,
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          code: 0,
+          data: {
+            body: {
+              song: {
+                list: [
+                  searchSong('MIDVIP', 'MEDVIP', {
+                    pay: { pay_play: 1, pay_month: 1, pay_down: 1, price_track: 200 },
+                    action: { icons: 13942782, msgpay: 6 },
+                  }),
+                ],
+              },
+            },
+          },
+        },
+      }),
+    )
+
+    const tracks = await provider.search('tencent', '烟花易冷', 1, 1)
+
+    expect(tracks[0].vip).toBe(true)
+  })
+
+  it('still flags a VIP song via pay_play when the action 段 is absent', async () => {
+    fetchMock
+      .mockResolvedValueOnce(blockedDesktop())
+      .mockResolvedValueOnce(emptySigned())
+      .mockResolvedValueOnce(
+        legacyWith(
+          searchSong('MIDNOPAYICON', 'MEDNOPAYICON', {
+            pay: { pay_play: 1, pay_month: 0, pay_down: 0, price_track: 0 },
+            action: undefined,
+          }),
+        ),
+      )
+
+    const tracks = await provider.search('tencent', '测试', 1, 1)
+
+    expect(tracks[0].vip).toBe(true)
+  })
+
+  /** UniformRuleCtrl 详情响应（粘贴单曲链接时走这条路径）。 */
+  const trackInfo = (song: Record<string, unknown>) =>
+    okResponse({
+      code: 0,
+      'music.trackInfo.UniformRuleCtrl': { code: 0, data: { tracks: [song] } },
+    })
+
+  it('classifies the pasted free song correctly on the detail path', async () => {
+    fetchMock.mockResolvedValueOnce(
+      trackInfo(
+        searchSong('002mpQ3s0aIV0w', '004Nkk3W2uNKVb', {
+          pay: { pay_play: 0, pay_month: 1, pay_down: 1, price_track: 200 },
+          action: { icons: 8535932, msgpay: 6 },
+        }),
+      ),
+    )
+
+    await expect(provider.getTrackById('tencent', '002mpQ3s0aIV0w')).resolves.toMatchObject({
+      sourceId: '002mpQ3s0aIV0w',
+      vip: false,
+    })
+  })
+
+  it('classifies the pasted VIP song correctly on the detail path', async () => {
+    fetchMock.mockResolvedValueOnce(
+      trackInfo(
+        searchSong('004emQMs09Z1lz', '004O8FM52iGQnX', {
+          pay: { pay_play: 1, pay_month: 1, pay_down: 1, price_track: 200 },
+          action: { icons: 12992510, msgpay: 6 },
+        }),
+      ),
+    )
+
+    await expect(provider.getTrackById('tencent', '004emQMs09Z1lz')).resolves.toMatchObject({
+      sourceId: '004emQMs09Z1lz',
+      vip: true,
+    })
   })
 })
 
