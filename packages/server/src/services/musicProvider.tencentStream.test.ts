@@ -466,7 +466,8 @@ describe('MusicProvider tencent VIP classification', () => {
   const blockedDesktop = () =>
     okResponse({ code: 0, 'music.search.SearchCgiService.DoSearchForQQMusicDesktop': { code: 2001 } })
   const emptySigned = () => okResponse({ code: 0, req: { code: 0, data: { body: { song: { list: [] } } } } })
-  const legacyWith = (song: Record<string, unknown>) => okResponse({ code: 0, data: { song: { list: [song] } } })
+  const legacyWith = (song: Record<string, unknown> | Record<string, unknown>[]) =>
+    okResponse({ code: 0, data: { song: { list: Array.isArray(song) ? song : [song] } } })
 
   it('does not flag a free song whose pay段 carries membership/download fields', async () => {
     // 真实线上样本《烟火》002mpQ3s0aIV0w：pay 段有 month/down/price，但可免费完整播放
@@ -533,22 +534,31 @@ describe('MusicProvider tencent VIP classification', () => {
     expect(tracks[0].vip).toBe(true)
   })
 
-  it('still flags a VIP song via pay_play when the action 段 is absent', async () => {
+  it('falls back to pay_play when the action 段 is absent', async () => {
+    // 只有 pay_play=1（icons 缺失）才应为 true；同一批里放一首 icons 存在但未置位、
+    // 且 pay_play=0 的歌，两者必须得出相反结果——这才真正验证"兜底"而非"icons"分支。
     fetchMock
       .mockResolvedValueOnce(blockedDesktop())
       .mockResolvedValueOnce(emptySigned())
       .mockResolvedValueOnce(
-        legacyWith(
-          searchSong('MIDNOPAYICON', 'MEDNOPAYICON', {
+        legacyWith([
+          searchSong('MIDNOACTION', 'MEDNOACTION', {
             pay: { pay_play: 1, pay_month: 0, pay_down: 0, price_track: 0 },
             action: undefined,
           }),
-        ),
+          searchSong('MIDICONCLEAR', 'MEDICONCLEAR', {
+            pay: { pay_play: 0, pay_month: 1, pay_down: 1, price_track: 200 },
+            action: { icons: 135752, msgpay: 6 },
+          }),
+        ]),
       )
 
-    const tracks = await provider.search('tencent', '测试', 1, 1)
+    const tracks = await provider.search('tencent', '测试', 1, 2)
 
-    expect(tracks[0].vip).toBe(true)
+    const noAction = tracks.find((t) => t.sourceId === 'MIDNOACTION')
+    const iconClear = tracks.find((t) => t.sourceId === 'MIDICONCLEAR')
+    expect(noAction?.vip).toBe(true)
+    expect(iconClear?.vip).toBe(false)
   })
 
   /** UniformRuleCtrl 详情响应（粘贴单曲链接时走这条路径）。 */
@@ -588,6 +598,47 @@ describe('MusicProvider tencent VIP classification', () => {
       sourceId: '004emQMs09Z1lz',
       vip: true,
     })
+  })
+
+  it('flags the mainline VIP badge bit from the mainland desktop icons value', async () => {
+    // 境内桌面通道对该曲返回 icons=13942782（bit1 置位）
+    fetchMock.mockResolvedValue(
+      okResponse({
+        code: 0,
+        'music.search.SearchCgiService.DoSearchForQQMusicDesktop': {
+          code: 0,
+          data: {
+            body: { song: { list: [searchSong('MIDB1', 'MEDB1', { action: { icons: 13942782, msgpay: 6 } })] } },
+          },
+        },
+      }),
+    )
+
+    const tracks = await provider.search('tencent', '烟花易冷', 1, 1)
+
+    expect(tracks[0].vip).toBe(true)
+  })
+
+  it('documents the Hong Kong blind spot: bit24-only icons stay un-flagged', async () => {
+    // 已知边界（见 tencentSongNeedsVip 注释）：香港视图把一类真 VIP 与一类真免费歌
+    // 都改写成 icons=0x1080000（仅 bit24），两者字段完全一致、不可区分。
+    // 这里选定保守策略——不引入 bit24，宁可漏报该 VIP 类也不重新引入"免费歌标 VIP"。
+    // 本用例锁住该决策：若有人加回 bit24，它会失败，迫使重新评估这个取舍。
+    fetchMock
+      .mockResolvedValueOnce(blockedDesktop())
+      .mockResolvedValueOnce(emptySigned())
+      .mockResolvedValueOnce(
+        legacyWith(
+          searchSong('MIDHKBLIND', 'MEDHKBLIND', {
+            pay: { pay_play: 0, pay_month: 0, pay_down: 0, price_track: 0 },
+            action: { icons: 17301504, msgpay: 0 },
+          }),
+        ),
+      )
+
+    const tracks = await provider.search('tencent', '测试', 1, 1)
+
+    expect(tracks[0].vip).toBe(false)
   })
 })
 

@@ -450,14 +450,23 @@ interface TencentFileType {
  * 为什么不能用 pay 段判断：
  * - `pay_month` / `pay_down` / `price_track` 描述的是月度会员、付费下载与单曲售价，
  *   大量可免费完整播放的歌同样带这些值（如《烟火》pay_month=1、pay_down=1、price_track=200），
- *   用它做 OR 判断会把免费歌误标为 VIP（实测 1582 首样本中误报 462 首）。
+ *   用它做 OR 判断会把免费歌误标为 VIP（5682 首样本中误报 1603 首，精确率仅 0.64）。
  * - `pay_play` 语义正确（=1 表示播放需要权限），但它跟随请求地区变化：香港服务器（生产环境）
- *   会把它连同整个 pay 段一起置 0，导致《烟花易冷》这类真正的 VIP 歌漏标（漏报 550/833）。
- * - `icons` 是客户端角标位掩码，随歌曲目录属性下发、不随请求地区降级。在中国大陆与香港两种
- *   视图下，bit1 与 `pay_play` 所代表的真实 VIP 状态一致（1582 首样本中误报 0、漏报 0，
- *   另一独立样本中以匿名 vkey 播放权限为准仅 2 例分歧）。
+ *   会把它连同整个 pay 段一起置 0。
  *
- * 因此以 bit1 为主判据，并保留 `pay_play === 1` 作为兜底（个别通道不返回 action 时）。
+ * 采用 bit1 的原因：它是客户端角标位、随歌曲目录属性下发。在 5682 首境内样本上
+ * `bit1` 对照 `pay_play` 只有 1 例误报、11 例漏报；香港视图 + 境内标注的 5587 首联合样本上
+ * 误报 1、漏报 10（对照旧规则误报 647、漏报 1874）。
+ *
+ * 已知边界（2026-09 实测，勿轻易"优化"掉）：存在一类 VIP 歌，境内 `icons = 0x1400000`
+ * （bit22|bit24，bit1 未置位），到香港视图会被改写成 `0x1080000`（bit19|bit24）——与一类
+ * **真正免费**的歌（境内 `0x1000000`，仅 bit24）在香港视图中**退化成完全相同的值**，
+ * 两者 entitlement 相关字段（icons/msgpay/msgid/alert/switch/pay/size_try/status）逐一相同，
+ * 已用匿名 vkey 播放权限交叉验证过：前者 BLOCK（真 VIP）、后者 PLAY（真免费）。
+ * 也就是说香港视图下这两类**不可区分**，任何规则只能二选一：漏报这类 VIP，或把它对应的
+ * 免费歌误标 VIP。这里选择保守策略——不引入 `bit24`，避免重新引入用户报告过的"免费歌被标 VIP"
+ * 缺陷；代价是香港视图漏报这类 VIP（约占 VIP 的 0.4%），由播放时的失败提示兜底。
+ * 境内（本地开发）不受影响：这类歌 `pay_play=1`，兜底分支会捕获。
  */
 const TENCENT_VIP_ICON_BIT = 1 << 1
 
@@ -3354,12 +3363,22 @@ export class MusicProvider {
       }
 
       case 'tencent': {
-        // Tencent sometimes wraps data in musicData
-        const t = s.musicData || s
+        // Tencent sometimes wraps data in musicData. The raw payload is untyped
+        // (`s` is `any`), so narrow it back to the QQ shapes the helper expects.
+        const t = (s.musicData || s) as {
+          name?: string
+          mid?: string
+          singer?: Array<{ name?: string }>
+          album?: { title?: string; name?: string; mid?: string }
+          interval?: number
+          file?: { media_mid?: string }
+          pay?: TencentPayInfo
+          action?: TencentActionInfo
+        }
         return {
           id: nanoid(),
           title: t.name || 'Unknown',
-          artist: (t.singer || []).map((a: Record<string, unknown>) => a.name),
+          artist: (t.singer || []).map((a) => a.name).filter((n): n is string => Boolean(n)),
           album: (t.album?.title || t.album?.name || '').trim(),
           duration: t.interval || 0, // already in seconds
           cover: '', // resolved via pic()
