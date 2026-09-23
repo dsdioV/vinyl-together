@@ -511,6 +511,82 @@ export function neteaseLevelsForBitrate(bitrate: number): string[] {
   return ['standard']
 }
 
+/**
+ * 网易云「声明客户端 IP」恢复通道默认使用的大陆 IP。
+ *
+ * 背景（2026-09 生产实测，香港内核无法直连播放）：网易云按**请求来源 IP** 判权。
+ * 香港 IP 下 `song_url_v1` 对几乎所有歌曲返回 `entry.code=404`（实测样本 10 首仅 1 首成功），
+ * 而 `@neteasecloudmusicapienhanced/api` 官方支持的 `realIP` 参数会把它写成真实的
+ * `X-Real-IP` / `X-Forwarded-For` 请求头（`util/request.js:204-210`），让上游按大陆 IP 判权。
+ * 同一香港内核、同一 cookie，仅把客户端 IP 声明为大陆地址后：10/10 成功、每首 ≈200-350ms、
+ * 返回的 url 在香港实测 `Range` 拉流 HTTP 206。
+ *
+ * 为什么不是 `randomCNIP` / `ENABLE_RANDOM_CN_IP`：那两个开关只在 `server.js` 的 HTTP 路由层
+ * 被消费（`server.js:310-321` 读 `global.cnIp`），嵌入式调用（本项目）的入口 `main.js` 直接
+ * 调 `util/request.js`，后者只认 `options.realIP || options.ip`。实测两者出站请求里
+ * **完全没有** `X-Real-IP` 头，返回 404 —— 与不加参数完全一致。
+ *
+ * 反向对照（证明是「大陆 IP 身份」而非「多带了一个头」在起作用）：
+ * `realIP='8.8.8.8'`（境外）与 `realIP=<香港本机出口>` 都正确发出请求头，但依然 404。
+ */
+export const NETEASE_REAL_IP_FALLBACK = '116.25.146.177'
+
+/**
+ * 解灰（unblock）通道的独立超时预算。
+ *
+ * `song_url_match` / `song_url_v1({unblock:'true'})` 走的是第三方解灰服务
+ * （bikonoo / byfuns / msls / qijieya / unm），这些模块**自身没有任何超时**：
+ * 上游挂住时 promise 永不 settle。生产实测单个 unblock 调用可无限挂起，
+ * 原有 `API_TIMEOUT_MS`(15s) × 3 次串行 = ≈46,500 ms 单曲耗时，
+ * 期间 `playerService` 的按房间播放锁一直被持有 → 房间卡死。
+ *
+ * 因此解灰通道单独给一个远小的预算：解灰是「锦上添花」的兜底，海外拿不到就应快速放弃，
+ * 而不是拖住房间。取值依据：大陆解灰成功时的典型耗时 < 3s，3s 足够覆盖正常情况，
+ * 同时把单曲失败路径的确定性上界压到秒级。
+ */
+export const NETEASE_UNBLOCK_TIMEOUT_MS = 3_000
+
+/** 解灰通道（song_url_match + 两次 unblock song_url_v1）共享的最坏总预算。 */
+export const NETEASE_UNBLOCK_TOTAL_BUDGET_MS = 6_000
+
+/**
+ * 单曲网易云解析的**总**时间预算（含匿名 cookie、声明 IP 恢复、无 IP 兜底、解灰三条通道）。
+ *
+ * 只给每步设上限还不够：通道数 × 单步上限会叠乘（实测 3 次 unblock × 15s ≈ 46,500 ms）。
+ * 因此所有慢步骤共享同一个 deadline，预算耗尽立即放弃并如实分类，单曲耗时因此有确定上界。
+ * 取值依据：正常工作耗时实测 ≈200-350ms，8s 对正常路径是数量级余量；
+ * 同时显著小于上游播放锁的 12s 预算，不再拖住房房间。
+ */
+export const NETEASE_TOTAL_BUDGET_MS = 8_000
+
+/**
+ * 匿名 cookie（register_anonimous）的独立上限。
+ * 它只是 VIP/entitlement 的锦上添花（缺省用磁盘 anonymous_token 也能播免费曲），
+ * 香港实测成功仅 ≈250-350ms，因此给一个小的上限快速失败，避免它吃掉总预算。
+ */
+export const NETEASE_ANON_COOKIE_TIMEOUT_MS = 3_000
+
+/**
+ * 递增式共享时间预算：多个串行慢 I/O 共享一个总预算，避免「次数 × 单次上限」叠乘。
+ * 每次调用扣减已用时间，预算耗尽立即返回 0，调用方据此跳过剩余步骤。
+ */
+class TimeBudget {
+  private deadline: number
+
+  constructor(totalMs: number) {
+    this.deadline = Date.now() + totalMs
+  }
+
+  /** 剩余毫秒数；已耗尽返回 0。 */
+  remainingMs(): number {
+    return Math.max(0, this.deadline - Date.now())
+  }
+
+  isExhausted(): boolean {
+    return this.remainingMs() <= 0
+  }
+}
+
 /** QQ 音乐文件类型：前缀 + 扩展名，文件名形如 M800<media_mid>.mp3。 */
 interface TencentFileType {
   code: string
@@ -1979,7 +2055,10 @@ export class MusicProvider {
 
     this.neteaseAnonymousCookiePromise = (async () => {
       try {
-        const res = await withTimeout((ncmApi as any).register_anonimous({ timestamp: Date.now() }))
+        const res = await withTimeout(
+          (ncmApi as any).register_anonimous({ timestamp: Date.now() }),
+          NETEASE_ANON_COOKIE_TIMEOUT_MS,
+        )
         if (!res) {
           logger.warn('Netease register_anonimous timed out')
           return null
@@ -2007,6 +2086,7 @@ export class MusicProvider {
 
   private async getNeteaseStreamUrlResult(urlId: string, bitrate: number, cookie?: string): Promise<StreamUrlResult> {
     await ensureNeteaseApiReady()
+    const budget = new TimeBudget(NETEASE_TOTAL_BUDGET_MS)
     const levels = neteaseLevelsForBitrate(bitrate)
     let usedAnonymousCookie = false
     let activeCookie = cookie?.trim() || ''
@@ -2022,48 +2102,86 @@ export class MusicProvider {
     let lastEntry: Record<string, any> | undefined
     let sawTimeout = false
 
-    for (const level of levels) {
-      try {
-        const params: Record<string, unknown> = {
-          id: urlId,
-          level,
-          timestamp: Date.now(),
+    /**
+     * 按给定客户端 IP 声明跑一轮 song_url_v1 音质降级。
+     * realIP 会写成真实的 X-Real-IP/X-Forwarded-For 请求头，让网易云按该 IP 判权。
+     * 返回的 level 保持既有语义（实际命中的音质档位），不因走了哪条通道而变化。
+     */
+    const tryLevels = async (realIP?: string): Promise<{ url: string; level: string } | null> => {
+      for (const level of levels) {
+        if (budget.isExhausted()) {
+          logger.warn(`Netease budget exhausted before level=${level}: ${urlId}`)
+          break
         }
-        if (activeCookie) params.cookie = activeCookie
-
-        const res = await withTimeout((ncmApi as any).song_url_v1(params))
-        if (!res) {
-          sawTimeout = true
-          logger.warn(`Netease song_url_v1 timeout: ${urlId} level=${level}`)
-          continue
-        }
-
-        const body = (res as any).body
-        const entry = body?.data?.[0] as Record<string, any> | undefined
-        lastEntry = entry
-        const url = normalizeStreamUrl(entry?.url ? String(entry.url) : null)
-        if (url) {
-          if (!cookie) {
-            this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, url)
+        try {
+          const params: Record<string, unknown> = {
+            id: urlId,
+            level,
+            timestamp: Date.now(),
           }
-          logger.info(`Netease song_url_v1 ok: ${urlId} level=${level} anon=${usedAnonymousCookie}`)
-          return { url, usedAnonymousCookie, level }
-        }
+          if (activeCookie) params.cookie = activeCookie
+          if (realIP) params.realIP = realIP
 
-        logger.warn(`Netease song_url_v1 empty url: ${urlId} level=${level}`, {
-          code: body?.code,
-          fee: entry?.fee,
-          songCode: entry?.code,
-          freeTrial: Boolean(entry?.freeTrialInfo),
-        })
-      } catch (err) {
-        logger.error(`Netease song_url_v1 failed for ${urlId} level=${level}`, err)
+          const res = await withTimeout((ncmApi as any).song_url_v1(params), budget.remainingMs())
+          if (!res) {
+            sawTimeout = true
+            logger.warn(`Netease song_url_v1 timeout: ${urlId} level=${level} realIP=${realIP ?? '-'}`)
+            continue
+          }
+
+          const body = (res as any).body
+          const entry = body?.data?.[0] as Record<string, any> | undefined
+          lastEntry = entry
+          const url = normalizeStreamUrl(entry?.url ? String(entry.url) : null)
+          if (url) {
+            logger.info(
+              `Netease song_url_v1 ok: ${urlId} level=${level} anon=${usedAnonymousCookie} realIP=${realIP ?? '-'}`,
+            )
+            return { url, level }
+          }
+
+          logger.warn(`Netease song_url_v1 empty url: ${urlId} level=${level} realIP=${realIP ?? '-'}`, {
+            code: body?.code,
+            fee: entry?.fee,
+            songCode: entry?.code,
+            freeTrial: Boolean(entry?.freeTrialInfo),
+          })
+        } catch (err) {
+          logger.error(`Netease song_url_v1 failed for ${urlId} level=${level}`, err)
+        }
+      }
+      return null
+    }
+
+    // -----------------------------------------------------------------------
+    // 通道 1：声明中国大陆客户端 IP。香港/海外内核的主要恢复通道（实测 10/10）。
+    // -----------------------------------------------------------------------
+    const pinned = await tryLevels(NETEASE_REAL_IP_FALLBACK)
+    if (pinned) {
+      if (!cookie) {
+        this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, pinned.url)
+      }
+      return { url: pinned.url, usedAnonymousCookie, level: pinned.level }
+    }
+
+    // -----------------------------------------------------------------------
+    // 通道 2：不带 IP 声明。大陆 IP 直接可用时这是最干净的路径，
+    // 也让「海外全站拒绝」之外的场景保留原有行为与原分类语义。
+    // 带用户 cookie 时不重复：user-scoped 请求已经由完整凭据判权，再补一轮无 IP 无益。
+    // -----------------------------------------------------------------------
+    if (!cookie) {
+      const direct = await tryLevels()
+      if (direct) {
+        this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, direct.url)
+        return { url: direct.url, usedAnonymousCookie, level: direct.level }
       }
     }
 
-    // Production IPs are often blocked by plain song_url_v1 (songCode 404) even for
-    // free tracks. Enhanced's song_url_match can still recover a playable URL.
-    const matched = await this.getNeteaseMatchedStreamUrl(urlId, activeCookie || undefined)
+    // -----------------------------------------------------------------------
+    // 通道 3：解灰兜底（song_url_match + unblock song_url_v1）。
+    // 第三方解灰服务自身无超时，必须靠独立的小额预算硬性截断，否则单曲可挂到 46s。
+    // -----------------------------------------------------------------------
+    const matched = await this.getNeteaseMatchedStreamUrl(urlId, activeCookie || undefined, budget)
     if (matched.url) {
       if (!cookie) {
         this.streamUrlCache.set(`netease:${urlId}:${bitrate}`, matched.url)
@@ -2102,7 +2220,12 @@ export class MusicProvider {
   private async getNeteaseMatchedStreamUrl(
     urlId: string,
     cookie?: string,
+    totalBudget?: TimeBudget,
   ): Promise<{ url: string | null; level?: string }> {
+    // 解灰通道自身再加一层硬预算，同时受单曲总预算约束。
+    const budget = new TimeBudget(
+      Math.min(NETEASE_UNBLOCK_TOTAL_BUDGET_MS, totalBudget?.remainingMs() ?? NETEASE_UNBLOCK_TOTAL_BUDGET_MS),
+    )
     try {
       const params: Record<string, unknown> = {
         id: urlId,
@@ -2111,8 +2234,11 @@ export class MusicProvider {
       if (cookie) params.cookie = cookie
 
       // Preferred Enhanced endpoint for unlock/match recovery.
-      if (typeof (ncmApi as any).song_url_match === 'function') {
-        const res = await withTimeout((ncmApi as any).song_url_match(params))
+      if (typeof (ncmApi as any).song_url_match === 'function' && !budget.isExhausted()) {
+        const res = await withTimeout(
+          (ncmApi as any).song_url_match(params),
+          Math.min(NETEASE_UNBLOCK_TIMEOUT_MS, budget.remainingMs()),
+        )
         const body = (res as any)?.body
         const fromDataField = typeof body?.data === 'string' ? body.data : null
         const fromArray = Array.isArray(body?.data) ? body.data[0]?.url : null
@@ -2121,7 +2247,12 @@ export class MusicProvider {
       }
 
       // Fallback: song_url_v1 with unblock=true (uses Enhanced unblockmusic-utils).
+      // 实测第三方解灰在这些音源上长期挂起：每个 level 只给剩余预算，耗尽即放弃。
       for (const level of ['exhigh', 'standard'] as const) {
+        if (budget.isExhausted()) {
+          logger.warn(`Netease unblock budget exhausted: ${urlId} level=${level}`)
+          break
+        }
         const res = await withTimeout(
           (ncmApi as any).song_url_v1({
             id: urlId,
@@ -2130,6 +2261,7 @@ export class MusicProvider {
             timestamp: Date.now(),
             ...(cookie ? { cookie } : {}),
           }),
+          Math.min(NETEASE_UNBLOCK_TIMEOUT_MS, budget.remainingMs()),
         )
         const entry = (res as any)?.body?.data?.[0]
         const url = normalizeStreamUrl(entry?.url ? String(entry.url) : null)
