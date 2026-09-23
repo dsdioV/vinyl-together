@@ -2395,8 +2395,23 @@ export class MusicProvider {
       const callback = `__vinylQqRelay_${customAlphabet(RELAY_CALLBACK_ALPHABET, 12)()}`
       const url = `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&callback=${callback}&data=${encodeURIComponent(JSON.stringify(legacyPayload))}`
       const data = await this.qqRelayRequester(url)
-      if (data === null || data === undefined) return null
+      if (data === null || data === undefined) {
+        logger.warn(`Tencent relay returned no data: ${songMid} media=${mediaMid} files=${filenames.join(',')}`)
+        return null
+      }
       const resolved = await this.resolveTencentVkeyAttempt(Promise.resolve(data as Record<string, any>))
+      // 中继「回传成功」但拿不到 purl 是最难排查的情形：请求本身没报错，却没有任何
+      // 可用链接。把 QQ 返回的档位/结果码打出来，才能区分「凭证无权」与「档位不匹配」。
+      if (!resolved.url) {
+        const relData = (data as any)?.req?.data ?? (data as any)?.req_0?.data
+        const codes = Array.isArray(relData?.midurlinfo)
+          ? relData.midurlinfo.map((e: any) => `${String(e?.filename ?? '?')}:${Number(e?.result ?? 0)}`).join(' ')
+          : 'no midurlinfo'
+        logger.warn(
+          `Tencent relay returned no usable purl: ${songMid} media=${mediaMid} relayedUin=${relData?.uin ? 'present' : 'absent'} results=[${codes}]`,
+        )
+        return null
+      }
       return resolved.url
     } catch (err) {
       logger.error(`Tencent relay failed for ${songMid}:`, err)
