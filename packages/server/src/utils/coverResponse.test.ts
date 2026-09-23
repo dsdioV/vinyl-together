@@ -16,6 +16,19 @@ describe('readCoverResponse', () => {
     })
   })
 
+  it('accepts the non-standard image/jpg spelling some CDNs send', async () => {
+    // 实测网易云 p*.music.126.net 把 JPEG 报成 `image/jpg`；不放行会整类封面 415。
+    const response = new Response(new Uint8Array([1, 2, 3]), {
+      headers: { 'Content-Type': 'image/jpg' },
+    })
+
+    await expect(readCoverResponse(response, 100)).resolves.toEqual({
+      ok: true,
+      buffer: Buffer.from([1, 2, 3]),
+      contentType: 'image/jpg',
+    })
+  })
+
   it('rejects non-raster content without reading it as an image', async () => {
     const response = new Response('<svg></svg>', {
       headers: { 'Content-Type': 'image/svg+xml' },

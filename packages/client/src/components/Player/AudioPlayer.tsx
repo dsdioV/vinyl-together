@@ -1,7 +1,6 @@
 import { useContainerPortrait } from '@/hooks/useContainerPortrait'
 import { useCoverWidth } from '@/hooks/useCoverWidth'
 import { useVote } from '@/hooks/useVote'
-import { SERVER_URL } from '@/lib/config'
 import { cn, getTrackCoverUrl } from '@/lib/utils'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -22,34 +21,6 @@ const LYRIC_MASK_STYLE = {
   WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%)',
 } as const
 
-/**
- * 需要通过服务端代理的封面域名列表
- * 这些 CDN 不允许跨域请求，AMLL 的 WebGL 纹理加载会被 CORS 拦截
- */
-const PROXY_COVER_HOSTS = [
-  'y.gtimg.cn', // QQ 音乐
-  'imgessl.kugou.com', // 酷狗
-  'i0.hdslb.com', // bilibili
-  'i1.hdslb.com', // bilibili
-  'i2.hdslb.com', // bilibili
-  'f4.bcbits.com', // bandcamp
-]
-
-/**
- * 如果封面 URL 属于需要代理的域名，则返回服务端代理 URL；否则原样返回
- */
-function getProxiedCoverUrl(coverUrl: string): string {
-  try {
-    const { hostname } = new URL(coverUrl)
-    if (PROXY_COVER_HOSTS.includes(hostname)) {
-      return `${SERVER_URL}/api/music/cover-proxy?url=${encodeURIComponent(coverUrl)}`
-    }
-  } catch {
-    // URL 解析失败，原样返回
-  }
-  return coverUrl
-}
-
 interface AudioPlayerProps {
   onSeek: (time: number) => void
   onOpenChat: () => void
@@ -67,10 +38,10 @@ export function AudioPlayer({ onSeek, onOpenChat, onOpenQueue, onOpenHistory, ch
   const pureBlackBackground = useSettingsStore((s) => s.pureBlackBackground)
   const { ref: playerRef, isPortrait } = useContainerPortrait()
 
-  // 封面 URL 代理：解决 QQ 音乐 / 酷狗等 CDN 的 CORS 限制
+  // 封面 URL 代理：由 getTrackCoverUrl 统一改为同源代理（见 lib/utils.ts），
+  // 这里直接复用其结果，避免再维护一份域名白名单。
   const proxiedCover = useMemo(() => {
-    const coverUrl = currentTrack ? getTrackCoverUrl(currentTrack) : undefined
-    return coverUrl ? getProxiedCoverUrl(coverUrl) : undefined
+    return currentTrack ? getTrackCoverUrl(currentTrack) : undefined
   }, [currentTrack])
 
   // Mobile: toggle between cover view and lyric view

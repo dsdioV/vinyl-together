@@ -41,3 +41,17 @@ export function sanitizeTrackCoverUrl(raw: string, source: MusicSource): string 
 export function sanitizeCoverProxyUrl(raw: string): string {
   return sanitizeCoverUrl(raw, ALL_TRACK_COVER_HOSTS)
 }
+
+/**
+ * Build the same-origin cover-proxy URL for an absolute third-party cover URL.
+ *
+ * The browser must load covers from our own origin rather than the第三方 CDN:
+ * Firefox 的「增强型跟踪保护」(ETP) 会把第三方 CDN 当作跟踪器拦截（封面空白），
+ * 且 bilibili 封面 CDN 有防盗链（非 bilibili Referer 返回 403）。同源请求不受影响。
+ *
+ * `serverUrl` is the client's resolved server origin (trailing slash tolerated).
+ */
+export function buildProxiedCoverUrl(coverUrl: string, serverUrl: string): string {
+  const base = serverUrl.replace(/\/+$/, '')
+  return `${base}/api/music/cover-proxy?url=${encodeURIComponent(coverUrl)}`
+}

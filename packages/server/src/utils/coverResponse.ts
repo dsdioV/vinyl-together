@@ -1,5 +1,8 @@
 const ALLOWED_COVER_CONTENT_TYPES = new Set([
   'image/jpeg',
+  // 部分 CDN（实测网易云 p*.music.126.net）把 JPEG 报成 `image/jpg`，
+  // 这是非标准写法但内容与 jpeg 等价；不放行会整类封面 415。
+  'image/jpg',
   'image/png',
   'image/webp',
   'image/gif',
@@ -21,10 +24,7 @@ async function cancelBody(response: Response): Promise<void> {
 }
 
 /** Read a cover response without ever buffering more than the configured cap. */
-export async function readCoverResponse(
-  response: Response,
-  maxBytes = MAX_COVER_BYTES,
-): Promise<CoverResponseResult> {
+export async function readCoverResponse(response: Response, maxBytes = MAX_COVER_BYTES): Promise<CoverResponseResult> {
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
   if (!ALLOWED_COVER_CONTENT_TYPES.has(contentType)) {
     await cancelBody(response)

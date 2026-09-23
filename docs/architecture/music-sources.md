@@ -204,8 +204,7 @@
 - **cid 主来源是 `x/player/pagelist`，不是 `x/web-interface/view`**：`view` 对海外 IP（实测香港服务器）返回 **HTTP 412 反爬 HTML**，旧实现直接 `res.json()` 会抛 `Unexpected token '<'`，导致 `无法获取 bilibili 视频 cid` 而整首歌不可播；`pagelist` 在同一 IP 下实测 200 且含 cid。所有 bilibili Web 接口的 JSON 解析统一先判 `res.ok` / `content-type`，非 JSON 一律降级为 `null`，不得抛异常、不得阻断播放链接解析。
 - `view` 不可用时只降级为标题/封面/时长缺失：入参是 bvid 就用入参作 `sourceId`，av 号则归一化为 `avN`，**播放链接仍能解析**。播放时若注册表没有 cid（冷启动直查、仅凭 `urlId` 播放），会再走一次 `pagelist` 兜底。
 - 浏览器媒体请求无法携带 bilibili 的 Referer，CDN 会 403，因此音频统一走服务端代理；主 CDN 在部分网络（如香港）403 时由代理自动切换 backupUrl。
-- 封面（hdslb.com）不支持跨域，AMLL 背景图会经 `/api/music/cover-proxy` 加载。
-- bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。
+- 封面（hdslb.com）不支持跨域，AMLL 背景图会经 `/api/music/cover-proxy` 加载。- bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。
 
 ### bandcamp
 
@@ -225,3 +224,31 @@
 - **音频下发：直连优先 + 代理兜底**：`streamUrl` 直接给 `t4.bcbits.com` 直链（无 Referer 校验，大陆实测可达，省服务器带宽）；同时下发 `fallbackStreamUrl = /api/music/bandcamp/stream?id=...`，客户端直连失败时自动切换，代理每次进入重新解析 token 自愈过期。
 - bandcamp 不参与 netease ↔ tencent 自动换源（`RoomAutoFallbackEvent` Exclude），不支持歌单搜索（前端隐藏歌单页签）。
 - 搜索结果**不含时长**（列表显示 `--:--`），专辑详情展开后有真实时长；播放开始后进度条以 howl 实测时长为准。
+
+## 7. 封面下发：一律同源代理
+
+**所有第三方封面都经 `/api/music/cover-proxy` 同源下发**（客户端 `getTrackCoverUrl` →
+`buildProxiedCoverUrl`，URL 拼装在 shared 内并被单测覆盖）。本地音频封面是服务端签发的
+相对路径，本身同源，不走代理。
+
+为什么必须代理，而不是让浏览器直连 CDN：
+
+1. **Firefox 的「增强型跟踪保护」(ETP) 会把第三方 CDN 当跟踪器拦截**，表现为封面空白、
+   控制台报 `NS_ERROR_TRACKING_URI`。同源请求不受影响。Chrome 及 Firefox 隐私窗口
+   （ETP 更严或更宽）表现可能不同，容易误判为「某些封面坏了」。
+2. **bilibili 封面 CDN 有防盗链**：非 bilibili Referer 直连会 403。
+3. 顺带统一了上游白名单、内容类型与体积上限（`sanitizeCoverProxyUrl` /
+   `readCoverResponse`）。
+
+要点：
+
+- 允许的封面域名由 `packages/shared/src/coverUrl.ts` 的 `TRACK_COVER_HOSTS` 决定
+  （netease `p1..p4.music.126.net`、tencent `y.gtimg.cn`、kugou `imge/imgessl.kugou.com`、
+  bilibili `i0..i2.hdslb.com`、bandcamp `f4.bcbits.com`）。代理只接受这些域名，
+  不是开放图片代理。
+- **内容类型必须放行 `image/jpg`**：实测网易云 `p*.music.126.net` 用该非标准写法上报
+  JPEG；只认 `image/jpeg` 会让网易云封面整类 **415**（已在生产复现并修复）。
+- 代理响应带 `Cache-Control: public, max-age=86400`，24 小时缓存；上限 5 MiB、按流式读取
+  截断，避免超大图打满内存。
+- 客户端 `AudioPlayer` 曾自带一份 `PROXY_COVER_HOSTS` 白名单，已删除——两份列表必然漂移，
+  现在只有一处。

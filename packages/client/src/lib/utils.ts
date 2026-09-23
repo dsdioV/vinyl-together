@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import type { QueueTrackInput, Track } from '@music-together/shared'
+import { buildProxiedCoverUrl, type QueueTrackInput, type Track } from '@music-together/shared'
 import { SERVER_URL } from '@/lib/config'
 
 export function cn(...inputs: ClassValue[]) {
@@ -69,13 +69,22 @@ export function resolveLocalAudioMediaUrl(value: string | null | undefined): str
   }
 }
 
-/** Covers in authoritative local tracks are server-generated and may be relative. */
+/**
+ * Resolve a track's cover URL for browser display.
+ *
+ * Third-party cover CDNs are fetched through the server's `/api/music/cover-proxy`
+ * so the image loads from **our own origin**. Two reasons:
+ *
+ * 1. Firefox 的「增强型跟踪保护」(ETP) 会把第三方 CDN 当跟踪器拦截，导致封面空白；
+ *    同源请求不受影响。
+ * 2. bilibili 封面 CDN 有防盗链（浏览器直连会因非 bilibili Referer 返回 403）。
+ *
+ * 托管权与内容类型/大小限制由服务端代理集中校验（`sanitizeCoverProxyUrl` /
+ * `readCoverResponse`）；URL 拼装逻辑在 `@music-together/shared` 内并被单测覆盖。
+ */
 export function getTrackCoverUrl(track: Pick<Track, 'source' | 'cover'>): string | undefined {
   if (!track.cover) return undefined
+  // Local（以及任何服务端生成的相对路径）已由服务端签名分发，同源，无需代理。
   if (track.source === 'local') return resolveLocalAudioMediaUrl(track.cover)
-  // bilibili 封面 CDN 有防盗链（浏览器直连会因非 bilibili Referer 返回 403），统一走服务端代理
-  if (track.source === 'bilibili') {
-    return `${SERVER_URL}/api/music/cover-proxy?url=${encodeURIComponent(track.cover)}`
-  }
-  return track.cover
+  return buildProxiedCoverUrl(track.cover, SERVER_URL)
 }
