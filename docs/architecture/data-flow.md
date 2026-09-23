@@ -246,6 +246,15 @@ Host（房主）**自适应频率**上报当前播放位置到服务端：新曲
 - 三个平台（netease / tencent / kugou）统一使用同一 bitrate 参数，Meting 内部处理各平台差异
 - `musicProvider.streamUrlCache` 的 key 包含 bitrate，不同音质自动隔离缓存
 
+**房间锁硬性预算（`ROOM_PLAY_LOCK_BUDGET_MS = 12_000`）**：
+
+`withPlayMutex` 按 roomId 串行整个「解析播放链接」临界区。上游可能极慢（实测香港网易云曾达 **46,500 ms**，原因是第三方解灰 promise 永不 settle），若无限等待，房间内切歌/投票全部排队，用户观感即「房间卡死、只能换房间」。
+
+- 预算**按锁临界区发放**：临界区真正开始执行时创建 deadline，结束清理（不在排队时创建，否则排队等待会先吃掉预算）。临界区内所有慢 I/O 共用同一预算，**杜绝「主解析 + 音质降级 + 换源搜索 + 换源后二次解析」逐层各设超时造成的叠乘**。
+- 超时统一走既有失败路径：`reason='timeout'` → `TIMEOUT` 分类 → 移除/跳过该曲 → 广播 `ROOM_ERROR`，房间零额外等待即可继续切歌（自愈，无需用户换房间）。
+- 12 s 严格小于 `musicProvider` 的 `API_TIMEOUT_MS`（15 s）与投票窗口 `VOTE_TIMEOUT_MS`（30 s）。健康请求远低于此（B站失败实测 87 ms、网易云缓存命中毫秒级），不会误杀。
+- 策略选择：**保证锁内有确定上界**，而非把解析移出锁——移出会把竞态面从 1 处扩到 4 处（`currentTrack` / `playState` / queue 回写 / 换源 replacement），且上游 promise 无法真正取消（需改 `musicProvider` 签名），收益不确定。
+
 本地音频在上传完成后按当时的 `room.audioQuality` 处理，之后修改房间音质不会回溯已有资产：
 
 - 128 / 192 / 320 档输出 MP3；如果输入本身不高于目标档位则直接复用 MP3
