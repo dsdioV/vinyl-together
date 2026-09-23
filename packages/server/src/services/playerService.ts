@@ -54,7 +54,19 @@ function markAutoFallback(roomId: string, trackId: string, ms: number): void {
 
 function withPlayMutex<T>(roomId: string, fn: () => Promise<T>): Promise<T> {
   const prev = playMutexes.get(roomId) ?? Promise.resolve()
-  const next = prev.then(fn, fn)
+  // The queued critical section inherits the previous section's promise, so the
+  // budget must be created when THIS section actually starts running, not while
+  // it is waiting for the lock (otherwise a 12s queue wait would consume the
+  // whole budget before any upstream work begins).
+  const run = async (): Promise<T> => {
+    roomLockBudgets.set(roomId, createTimeoutBudget(ROOM_PLAY_LOCK_BUDGET_MS))
+    try {
+      return await fn()
+    } finally {
+      roomLockBudgets.delete(roomId)
+    }
+  }
+  const next = prev.then(run, run)
   playMutexes.set(roomId, next)
   // Cleanup entry when chain settles to avoid unbounded growth
   const cleanup = () => {
@@ -90,6 +102,87 @@ function scheduled(ps: PlayState, roomId: string, scheduleTime?: number): Schedu
 }
 
 // ---------------------------------------------------------------------------
+// Hard time budget for the in-lock stream-resolution path
+// ---------------------------------------------------------------------------
+
+/**
+ * 房间播放锁内所有慢 I/O 共享的硬性总超时预算（毫秒）。
+ *
+ * 为什么需要它：`_playTrackInRoom` 全程持有按 roomId 串行的 play mutex，
+ * 而解析上游可能极慢——生产容器实测网易云单曲解析 ≈46,500 ms。锁内慢 I/O 会把
+ * 该房间的切歌 / 投票 / 接续播放全部排队，用户观感就是「房间卡死、只能换房间」。
+ *
+ * 为什么需要一个**跨调用共享**的预算（而不是给每次 `getStreamUrlResult` 各设一个
+ * 超时）：一次播放尝试最多会串起 1 次主解析 + 3 次音质降级 + 1 次换源搜索 +
+ * 1 次换源后解析，而 `_executePlayNext` / `playPrevTrackInRoom` 在一次锁内还会再
+ * 重试 2~3 个候选曲目；`pickFromDefaultQueue` 另有最多 5 次条目补全。若每层各等
+ * 一次，锁持有时长仍会叠乘到上百秒。因此这里按「锁临界区」发一个预算，临界区内
+ * 所有等待都从同一个预算扣时间。
+ *
+ * 为什么是 12s：
+ * - 它严格小于 musicProvider 单次上游请求上限 15s（API_TIMEOUT_MS），且小于投票
+ *   窗口 30s（VOTE_TIMING.VOTE_TIMEOUT_MS），投票触发的切歌不会先在锁里耗光投票时效。
+ * - 正常解析远低于该值（B 站失败实测 87ms、网易云命中缓存为毫秒级），不会误杀健康请求。
+ * - 由此得到可直接断言的不变量：**房间播放锁的单次持有时长上界 ≈ 12s**，与上游有
+ *   多慢无关（加固前实测 46.5s，理论上界 >100s）。
+ */
+export const ROOM_PLAY_LOCK_BUDGET_MS = 12_000
+
+interface TimeoutBudget {
+  /** 预算剩余毫秒数；0 表示已耗尽。 */
+  remainingMs: () => number
+}
+
+/**
+ * 一次锁临界区内允许的慢 I/O 总预算。
+ * 由 `withPlayMutex` 在临界区开始时建立、结束时清理；临界区外的调用方按需临时创建。
+ */
+const roomLockBudgets = new Map<string, TimeoutBudget>()
+
+/** 创建一个从当前时刻开始计时的共享预算。 */
+function createTimeoutBudget(totalMs: number): TimeoutBudget {
+  const deadline = Date.now() + totalMs
+  return { remainingMs: () => Math.max(0, deadline - Date.now()) }
+}
+
+/** 取当前锁临界区的共享预算；临界区外调用（如直接 playFromDefaultQueue）退回临时预算。 */
+function getLockBudget(roomId: string): TimeoutBudget {
+  return roomLockBudgets.get(roomId) ?? createTimeoutBudget(ROOM_PLAY_LOCK_BUDGET_MS)
+}
+
+/**
+ * 在共享预算内等待 `work`：预算耗尽即放弃等待。返回 `{ ok: false }` 表示超时，
+ * 调用方**绝不能**把 `null` 当成超时——很多被包裹的调用（如默认列表条目补全）
+ * 合法地会返回 `null`。
+ *
+ * 败下阵来的 promise 仍在后台运行（fetch 无法取消），但它的返回值永远不会被
+ * 采纳——调用方只接受这里返回的结果，因此不会出现「超时之后慢响应又回来改写
+ * 房间状态」的竞态。
+ */
+async function raceBudget<T>(budget: TimeoutBudget, work: Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> {
+  const remaining = budget.remainingMs()
+  if (remaining <= 0) return { ok: false }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<{ ok: false }>((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false }), remaining)
+  })
+  try {
+    return await Promise.race([work.then((value) => ({ ok: true, value }) as const), expired])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+/** 预算耗尽时的统一失败结果：按 `timeout` 分类，走既有失败路径。 */
+function timeoutStreamResult(): {
+  url: null
+  reason: import('./musicProvider.js').StreamUrlFailureReason
+  detail: string
+} {
+  return { url: null, reason: 'timeout', detail: '播放链接解析超出房间超时预算' }
+}
+
+// ---------------------------------------------------------------------------
 // Audio quality fallback
 // ---------------------------------------------------------------------------
 
@@ -104,24 +197,40 @@ const BITRATE_FALLBACKS: Record<AudioQuality, AudioQuality[]> = {
 /**
  * Try to get a stream URL at the requested bitrate. If it fails, try each
  * lower tier in order until one succeeds or all options are exhausted.
+ *
+ * 每一级重试都从**同一个** `budget` 里扣时间：逐级重试共享总预算，而不是
+ * 每级各等一次（否则最坏情况会叠乘成 N × 单次上限）。
  */
 async function resolveStreamUrl(
   source: MusicSource,
   urlId: string,
   bitrate: AudioQuality,
-  cookie?: string,
+  cookie: string | undefined,
+  budget: TimeoutBudget,
 ): Promise<{
   url: string | null
   reason?: import('./musicProvider.js').StreamUrlFailureReason
   detail?: string
   backupUrl?: string
 }> {
-  const primary = await musicProvider.getStreamUrlResult(source, urlId, bitrate, cookie)
+  const primaryOutcome = await raceBudget(budget, musicProvider.getStreamUrlResult(source, urlId, bitrate, cookie))
+  if (!primaryOutcome.ok) {
+    logger.warn(`Stream resolve budget exhausted before ${source}/${urlId} responded`, { urlId })
+    return timeoutStreamResult()
+  }
+  const primary = primaryOutcome.value
   if (primary.url) return primary
+
+  // 「需要登录 / VIP 版权受限」是比「超时」更可操作的结论；逐级重试超时不应该
+  // 把它覆盖成 timeout，否则用户会收到误导性的提示。
+  const definitiveVerdict = primary.reason === 'login_required' || primary.reason === 'vip_or_copyright'
 
   // Fallback to lower bitrates
   for (const fallback of BITRATE_FALLBACKS[bitrate]) {
-    const fallbackResult = await musicProvider.getStreamUrlResult(source, urlId, fallback, cookie)
+    if (budget.remainingMs() <= 0) break
+    const fallbackOutcome = await raceBudget(budget, musicProvider.getStreamUrlResult(source, urlId, fallback, cookie))
+    if (!fallbackOutcome.ok) break
+    const fallbackResult = fallbackOutcome.value
     if (fallbackResult.url) {
       logger.info(`Bitrate fallback: ${bitrate} -> ${fallback} for ${source}/${urlId}`)
       return fallbackResult
@@ -133,6 +242,9 @@ async function resolveStreamUrl(
     }
   }
 
+  if (!primary.url && budget.remainingMs() <= 0 && !definitiveVerdict) {
+    return timeoutStreamResult()
+  }
   return primary
 }
 
@@ -211,6 +323,11 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
   const room = roomRepo.get(roomId)
   if (!room) return false
 
+  // 整个「解析播放链接」阶段（含逐级音质重试、自动换源搜索、换源后的二次解析、
+  // 封面补全）共享本锁临界区的同一个硬性预算：无论上游多慢，本函数在预算耗尽后
+  // 必定返回，房间锁的单次持有时长因此有确定上界，而不是「上游有多慢就锁多久」。
+  const resolveBudget = getLockBudget(roomId)
+
   let resolved = { ...track }
 
   // Local URLs are short-lived signed URLs. Resolve a fresh canonical Track
@@ -240,7 +357,13 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
     try {
       // Get cookie from the room's pool for this platform (enables VIP access)
       const cookie = authService.getAnyCookie(onlineSource, roomId)
-      const streamResult = await resolveStreamUrl(onlineSource, resolved.urlId, room.audioQuality, cookie ?? undefined)
+      const streamResult = await resolveStreamUrl(
+        onlineSource,
+        resolved.urlId,
+        room.audioQuality,
+        cookie ?? undefined,
+        resolveBudget,
+      )
       const url = streamResult.url
 
       if (!url) {
@@ -281,7 +404,15 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
             })
 
             try {
-              const best = await trackFallbackService.findBestAlternativeTrack(resolved, toSource)
+              // 换源搜索同样消耗共享预算：否则一个慢搜索就能把房间锁再拖长 15s。
+              const fallbackSearch = await raceBudget(
+                resolveBudget,
+                trackFallbackService.findBestAlternativeTrack(resolved, toSource),
+              )
+              if (!fallbackSearch.ok) {
+                logger.warn(`Auto fallback search skipped/exhausted for "${resolved.title}"`, { roomId })
+              }
+              const best = fallbackSearch.ok ? fallbackSearch.value : null
               if (best && best.track.source !== 'local') {
                 const cookie2 = authService.getAnyCookie(best.track.source, roomId)
                 const streamResult2 = await resolveStreamUrl(
@@ -289,6 +420,7 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
                   best.track.urlId,
                   room.audioQuality,
                   cookie2 ?? undefined,
+                  resolveBudget,
                 )
                 const url2 = streamResult2.url
                 if (url2) {
@@ -394,11 +526,12 @@ async function _playTrackInRoom(io: TypedServer, roomId: string, track: Track): 
     }
   }
 
-  // Fetch cover if missing
+  // Fetch cover if missing. Cover 只是展示信息：它过去会和流解析一样无限期占住
+  // 房间锁（上游封面接口同样可能挂死），现在共用锁预算，超时就放弃封面。
   if (resolved.source !== 'local' && !resolved.cover && resolved.picId) {
     try {
-      const cover = await musicProvider.getCover(resolved.source, resolved.picId)
-      if (cover) resolved.cover = cover
+      const coverOutcome = await raceBudget(resolveBudget, musicProvider.getCover(resolved.source, resolved.picId))
+      if (coverOutcome.ok && coverOutcome.value) resolved.cover = coverOutcome.value
     } catch {
       // Non-critical, leave cover empty
     }
@@ -737,15 +870,30 @@ const DEFAULT_QUEUE_PICK_MAX_ATTEMPTS = 5
 /**
  * 主队列为空且默认播放列表非空时，随机抽一条引用、补全为完整 Track 后加入主队列并广播。
  * 补全失败（平台下架/本地资产消失）的条目会被移除并广播通知，避免后续每次兜底都卡在该条目上。
+ *
+ * 该函数可能在持有房间播放锁时被调用（`_executePlayNext` 的接续播放），因此
+ * `DEFAULT_QUEUE_PICK_MAX_ATTEMPTS` 次补全共享一个硬预算——否则一个慢的上游
+ * 详情接口会让「最多 5 次尝试」变成 5 × 单次上限，重新把房间锁拉长。
  */
 async function pickFromDefaultQueue(io: TypedServer, roomId: string): Promise<Track | null> {
+  const pickBudget = getLockBudget(roomId)
   for (let attempt = 0; attempt < DEFAULT_QUEUE_PICK_MAX_ATTEMPTS; attempt++) {
+    if (pickBudget.remainingMs() <= 0) {
+      logger.warn(`Default queue pick budget exhausted for room ${roomId}`, { roomId })
+      return null
+    }
     const room = roomRepo.get(roomId)
     if (!room || room.defaultQueue.length === 0) return null
     const index = Math.floor(Math.random() * room.defaultQueue.length)
     const ref = room.defaultQueue[index]!
-    const resolved = await resolveDefaultQueueRef(roomId, ref)
-    if (resolved) {
+    const pickOutcome = await raceBudget(pickBudget, resolveDefaultQueueRef(roomId, ref))
+    if (!pickOutcome.ok) {
+      // 超时只代表上游太慢，不代表这条引用失效：不能删除它，也不能继续循环。
+      logger.warn(`Default queue ref resolution timed out, aborting pick: ${ref.source}/${ref.sourceId}`, { roomId })
+      return null
+    }
+    if (pickOutcome.value) {
+      const resolved = pickOutcome.value
       const added = queueService.addTrack(roomId, resolved)
       if (!added) return null
       io.to(roomId).emit(EVENTS.QUEUE_UPDATED, {
@@ -856,6 +1004,7 @@ export function cleanupRoom(roomId: string): void {
   nextAdvancing.delete(roomId)
   conductorRejectCount.delete(roomId)
   playMutexes.delete(roomId)
+  roomLockBudgets.delete(roomId)
 }
 
 /**
