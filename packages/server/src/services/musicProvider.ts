@@ -161,7 +161,23 @@ interface BilibiliSearchResponse {
   }
 }
 
-/** bilibili view 接口响应（x/web-interface/view） */
+/**
+ * bilibili pagelist 响应（x/player/pagelist）。
+ * 该接口在香港等海外 IP 下仍返回 200 且含 cid，是 cid 的主来源；
+ * 而 x/web-interface/view 在同样网络下会返回 412 反爬 HTML。
+ */
+interface BilibiliPageListItem {
+  cid?: number
+  page?: number
+  part?: string
+}
+
+interface BilibiliPageListResponse {
+  code: number
+  data?: BilibiliPageListItem[]
+}
+
+/** bilibili view 接口响应（x/web-interface/view，海外 IP 可能 412） */
 interface BilibiliViewData {
   bvid?: string
   aid?: number
@@ -228,13 +244,70 @@ function bilibiliDurationToSeconds(duration: string | number | undefined): numbe
   return 0
 }
 
-/** bvid / av 号 → view / playurl 查询参数。 */
+/** bvid / av 号 → view / pagelist / playurl 查询参数。 */
 function bilibiliIdParams(input: string): URLSearchParams {
   const trimmed = input.trim()
   if (/^(?:av)?\d+$/i.test(trimmed)) {
     return new URLSearchParams({ aid: trimmed.replace(/^av/i, '') })
   }
   return new URLSearchParams({ bvid: trimmed })
+}
+
+/** 无 view 元数据时从入参推导 sourceId：纯数字/av 号统一成 `avN`，其余原样。 */
+function bilibiliSourceIdFallback(input: string): string {
+  const trimmed = input.trim()
+  if (/^(?:av)?\d+$/i.test(trimmed)) return `av${trimmed.replace(/^av/i, '')}`
+  return trimmed
+}
+
+/**
+ * 请求 bilibili Web 接口并安全解析 JSON。
+ *
+ * bilibili 的反爬会对海外 IP（实测香港服务器）返回 **HTTP 412 + HTML 验证码页**，
+ * 此时 `res.json()` 会抛 `SyntaxError: Unexpected token '<'`。原来的实现让这个异常
+ * 冒泡，直接导致 `无法获取 bilibili 视频 cid` 而整首歌不可播，因此这里统一：
+ * 先判 `res.ok` 与 `content-type`，任何失败（含 JSON 解析异常）都降级为 `null`，
+ * 由调用方决定 fallback，绝不抛异常。
+ */
+async function fetchBilibiliJson<T>(
+  url: string,
+  label: string,
+  headers: Record<string, string> = {},
+): Promise<T | null> {
+  let settled = false
+  // 先把请求包成"永不 reject"的 promise：超时后上游仍可能 reject（连接重置等），
+  // 不兜住会产生未处理的 promise rejection。
+  const request = (async () => {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': BILIBILI_UA,
+        Accept: 'application/json, text/plain, */*',
+        Referer: 'https://www.bilibili.com/',
+        ...headers,
+      },
+    })
+    if (!res.ok) {
+      logger.warn(`bilibili ${label} http ${res.status}: ${url}`)
+      return null
+    }
+    const contentType = res.headers?.get?.('content-type') ?? ''
+    if (contentType && !contentType.includes('json')) {
+      logger.warn(`bilibili ${label} non-JSON content-type (${contentType}): ${url}`)
+      return null
+    }
+    return (await res.json()) as T
+  })()
+    .catch((err: unknown) => {
+      logger.warn(`bilibili ${label} failed: ${url} ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    })
+    .finally(() => {
+      settled = true
+    })
+
+  const response = await withTimeout(request)
+  if (!settled) logger.warn(`bilibili ${label} timeout: ${url}`)
+  return response
 }
 
 // ---------------------------------------------------------------------------
@@ -1359,21 +1432,21 @@ export class MusicProvider {
         dynamic_offset: '0',
       })
 
-      const response = await withTimeout(
-        fetch(`https://api.bilibili.com/x/web-interface/search/type?${params.toString()}`, {
-          headers: {
-            'User-Agent': BILIBILI_UA,
-            Accept: 'application/json, text/plain, */*',
-            Origin: 'https://search.bilibili.com',
-            Referer: 'https://search.bilibili.com/',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            Cookie: cookie,
-          },
-        }).then((res) => res.json() as Promise<BilibiliSearchResponse>),
+      const response = await fetchBilibiliJson<BilibiliSearchResponse>(
+        `https://api.bilibili.com/x/web-interface/search/type?${params.toString()}`,
+        'search',
+        {
+          'User-Agent': BILIBILI_UA,
+          Accept: 'application/json, text/plain, */*',
+          Origin: 'https://search.bilibili.com',
+          Referer: 'https://search.bilibili.com/',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          Cookie: cookie,
+        },
       )
 
       if (!response) {
-        logger.warn(`bilibili search timeout for "${keyword}"`)
+        logger.warn(`bilibili search failed: ${keyword} (no JSON response)`)
         return []
       }
       const result = response.data?.result
@@ -1410,47 +1483,69 @@ export class MusicProvider {
     }
   }
 
-  /** bilibili view 接口：解析 bvid/av 号对应的视频信息（含 cid）。 */
-  private async fetchBilibiliView(input: string): Promise<BilibiliViewData | null> {
-    try {
-      const response = await withTimeout(
-        fetch(`https://api.bilibili.com/x/web-interface/view?${bilibiliIdParams(input).toString()}`, {
-          headers: {
-            'User-Agent': BILIBILI_UA,
-            Referer: 'https://www.bilibili.com/',
-          },
-        }).then((res) => res.json() as Promise<BilibiliViewResponse>),
-      )
-      if (!response || response.code !== 0 || !response.data) {
-        logger.warn(`bilibili view failed: ${input} code=${response?.code}`)
-        return null
-      }
-      return response.data
-    } catch (err) {
-      logger.error(`bilibili view failed: ${input}`, err)
+  /**
+   * bilibili pagelist 接口：**cid 的主来源**。
+   *
+   * `x/player/pagelist` 在海外 IP（实测香港服务器）下返回 200 且含 cid，
+   * 而 `x/web-interface/view` 在同样网络下会 412（反爬 HTML）。cid 拿不到
+   * 就完全不可播，因此 cid 必须优先走这里；单 P 视频取第一个分 P，
+   * 多 P 视频取 page=1（与浏览器默认播放行为一致）。
+   */
+  private async fetchBilibiliPageListCid(input: string): Promise<number | null> {
+    const response = await fetchBilibiliJson<BilibiliPageListResponse>(
+      `https://api.bilibili.com/x/player/pagelist?${bilibiliIdParams(input).toString()}`,
+      'pagelist',
+    )
+    if (!response || response.code !== 0 || !Array.isArray(response.data)) {
+      logger.warn(`bilibili pagelist failed: ${input} code=${response?.code}`)
       return null
     }
+    const first = response.data.find((item) => typeof item.cid === 'number' && item.cid > 0)
+    if (!first?.cid) {
+      logger.warn(`bilibili pagelist returned no cid: ${input}`)
+      return null
+    }
+    return first.cid
   }
 
-  /** 按 bvid/av 号获取单曲（用于 ID/BV 直查）。 */
-  private async fetchBilibiliTrackById(input: string): Promise<Track | null> {
-    const view = await this.fetchBilibiliView(input)
-    if (!view) return null
+  /**
+   * bilibili view 接口：解析 bvid/av 号对应的视频元数据（标题/封面/时长/UP 主）。
+   * 仅作**可选的元数据来源**——海外 IP 下这个接口可能返回 412 HTML，
+   * 此时返回 null 让调用方用入参兜底，绝不抛异常、绝不阻断播放链接解析。
+   */
+  private async fetchBilibiliView(input: string): Promise<BilibiliViewData | null> {
+    const response = await fetchBilibiliJson<BilibiliViewResponse>(
+      `https://api.bilibili.com/x/web-interface/view?${bilibiliIdParams(input).toString()}`,
+      'view',
+    )
+    if (!response || response.code !== 0 || !response.data) {
+      logger.warn(`bilibili view unavailable (metadata degraded): ${input} code=${response?.code ?? 'n/a'}`)
+      return null
+    }
+    return response.data
+  }
 
-    const sourceId = view.bvid?.trim() || (view.aid ? `av${view.aid}` : '')
+  /**
+   * 按 bvid/av 号获取单曲（用于 ID/BV 直查）。
+   * view 只用于补充标题/封面/时长，缺失时仍返回可播放的 Track（cid 走 pagelist）。
+   */
+  private async fetchBilibiliTrackById(input: string): Promise<Track | null> {
+    const [cid, view] = await Promise.all([this.fetchBilibiliPageListCid(input), this.fetchBilibiliView(input)])
+
+    const sourceId = view?.bvid?.trim() || (view?.aid ? `av${view.aid}` : '') || bilibiliSourceIdFallback(input)
     if (!sourceId) return null
 
     return {
       id: nanoid(),
-      title: cleanBilibiliHtml(view.title || 'Unknown'),
-      artist: view.owner?.name?.trim() ? [view.owner.name.trim()] : ['Unknown'],
+      title: cleanBilibiliHtml(view?.title || 'Unknown'),
+      artist: view?.owner?.name?.trim() ? [view.owner.name.trim()] : ['Unknown'],
       album: '',
-      duration: bilibiliDurationToSeconds(view.duration),
-      cover: normalizeBilibiliCover(view.pic),
+      duration: bilibiliDurationToSeconds(view?.duration),
+      cover: normalizeBilibiliCover(view?.pic),
       source: 'bilibili',
       sourceId,
       urlId: sourceId,
-      bilibiliCid: typeof view.cid === 'number' && view.cid > 0 ? view.cid : undefined,
+      bilibiliCid: cid ?? (typeof view?.cid === 'number' && view.cid > 0 ? view.cid : undefined),
       lyricId: sourceId,
       picId: sourceId,
     }
@@ -1462,8 +1557,9 @@ export class MusicProvider {
       const cached = this.trackRegistry.get(`bilibili:${urlId}`)
       let cid = cached?.bilibiliCid
       if (!cid) {
-        const view = await this.fetchBilibiliView(urlId)
-        cid = view?.cid
+        // 注册表未命中（如冷启动直查、仅凭 urlId 播放）→ 走 pagelist 兜底拿 cid。
+        // 不能依赖 view：香港等海外 IP 下 view 会 412，导致完全不可播。
+        cid = (await this.fetchBilibiliPageListCid(urlId)) ?? undefined
       }
       if (!cid) {
         return { url: null, reason: 'upstream_failed', detail: '无法获取 bilibili 视频 cid' }
@@ -1473,13 +1569,9 @@ export class MusicProvider {
       params.set('cid', String(cid))
       params.set('fnval', '16')
 
-      const response = await withTimeout(
-        fetch(`https://api.bilibili.com/x/player/playurl?${params.toString()}`, {
-          headers: {
-            'User-Agent': BILIBILI_UA,
-            Referer: 'https://www.bilibili.com/',
-          },
-        }).then((res) => res.json() as Promise<BilibiliPlayUrlResponse>),
+      const response = await fetchBilibiliJson<BilibiliPlayUrlResponse>(
+        `https://api.bilibili.com/x/player/playurl?${params.toString()}`,
+        'playurl',
       )
 
       if (!response || response.code !== 0 || !response.data) {

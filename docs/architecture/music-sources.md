@@ -124,7 +124,8 @@
 
 | 能力            | 实现                                                                                                                                                                             |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 搜索 / 单曲详情 | 官方 Web 接口（`x/web-interface/search/type`、`x/web-interface/view`），无需登录                                                                                                 |
+| 搜索            | 官方 Web 接口 `x/web-interface/search/type`（`search_type=video`），无需登录，但需 buvid 指纹 cookie                                                                             |
+| 单曲详情        | `x/player/pagelist` 取 cid（主来源）+ `x/web-interface/view` 取标题/封面/时长/UP 主（可选元数据，失败即降级）                                                                     |                                                                                                 |
 | 播放链接        | `x/player/playurl?fnval=16` 的 DASH 音频流，按房间音质选档；音频经服务端代理 `/api/music/bilibili/stream` 拉流（带 bilibili Referer、支持 Range，主 CDN 403 时自动切 backupUrl） |
 | 歌词 / 封面     | 歌词留空；封面来自 hdslb.com 并统一为 https                                                                                                                                      |
 
@@ -133,6 +134,8 @@
 - 搜索必须先请求 `x/frontend/finger/spi` 拿 `buvid3/buvid4`，并携带 `origin/referer: search.bilibili.com`，否则接口返回风控错误。该指纹 cookie 进程内缓存，不涉及任何账号。实现参考 [MusicFree 插件 bilibili.js](https://github.com/qwerwhr/musicfree-plugins/blob/main/bilibili.js)。
 - 搜索标题带 `<em>` 高亮标签，服务端统一清洗；时长可能为 `MM:SS` 字符串。
 - `Track` 用 `bvid` 作为 `sourceId/urlId`，`bilibiliCid` 保留分 P cid；输入 av 号时经 view 接口解析后统一为 bvid。
+- **cid 主来源是 `x/player/pagelist`，不是 `x/web-interface/view`**：`view` 对海外 IP（实测香港服务器）返回 **HTTP 412 反爬 HTML**，旧实现直接 `res.json()` 会抛 `Unexpected token '<'`，导致 `无法获取 bilibili 视频 cid` 而整首歌不可播；`pagelist` 在同一 IP 下实测 200 且含 cid。所有 bilibili Web 接口的 JSON 解析统一先判 `res.ok` / `content-type`，非 JSON 一律降级为 `null`，不得抛异常、不得阻断播放链接解析。
+- `view` 不可用时只降级为标题/封面/时长缺失：入参是 bvid 就用入参作 `sourceId`，av 号则归一化为 `avN`，**播放链接仍能解析**。播放时若注册表没有 cid（冷启动直查、仅凭 `urlId` 播放），会再走一次 `pagelist` 兜底。
 - 浏览器媒体请求无法携带 bilibili 的 Referer，CDN 会 403，因此音频统一走服务端代理；主 CDN 在部分网络（如香港）403 时由代理自动切换 backupUrl。
 - 封面（hdslb.com）不支持跨域，AMLL 背景图会经 `/api/music/cover-proxy` 加载。
 - bilibili 不参与 netease ↔ tencent 自动换源，也不支持专辑/歌单搜索（前端在 B 站页签下隐藏专辑/歌单入口）。
