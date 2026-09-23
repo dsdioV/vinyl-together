@@ -4,7 +4,7 @@ import type { KrcInfo } from '@s4p/kugou-lrc'
 import { LIMITS, type MusicSource, type Track } from '@music-together/shared'
 import { createHash } from 'node:crypto'
 import { LRUCache } from 'lru-cache'
-import { nanoid } from 'nanoid'
+import { customAlphabet, nanoid } from 'nanoid'
 import pLimit from 'p-limit'
 import ncmApi from '@neteasecloudmusicapienhanced/api'
 import * as kugouAuth from './kugouAuthService.js'
@@ -421,6 +421,17 @@ const TENCENT_STREAM_FALLBACK_DOMAIN = 'https://isure.stream.qqmusic.qq.com/'
 const PLAYLIST_FETCH_HARD_MAX_TRACKS = 100_000
 /** Leave headroom beyond one maximum-size playlist so unrelated tracks remain cached. */
 const TRACK_REGISTRY_MAX_TRACKS = 16_384
+
+/**
+ * 中继 JSONP 回调名后缀使用的字符集。
+ *
+ * 必须**同时**满足两个约束，否则中继请求会被客户端直接拒绝：
+ * 1. 是合法的 JS 标识符字符 —— 回调名会被注入为 `<script>` 里的函数声明，
+ *    因此 `-` 之类字符非法（`nanoid()` 默认字母表含 `-`，实测约 15% 的 10 字符
+ *    ID 会命中，导致这些中继请求以 `invalid callback` 失败）；
+ * 2. 满足客户端白名单 `^[A-Za-z0-9_]+$`（`useMusicRelay.ts`）。
+ */
+const RELAY_CALLBACK_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 class PlaylistPaginationError extends Error {
   constructor(source: MusicSource, playlistId: string, page: number) {
@@ -2381,7 +2392,7 @@ export class MusicProvider {
           },
         },
       }
-      const callback = `__vinylQqRelay_${nanoid(10)}`
+      const callback = `__vinylQqRelay_${customAlphabet(RELAY_CALLBACK_ALPHABET, 12)()}`
       const url = `https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&callback=${callback}&data=${encodeURIComponent(JSON.stringify(legacyPayload))}`
       const data = await this.qqRelayRequester(url)
       if (data === null || data === undefined) return null

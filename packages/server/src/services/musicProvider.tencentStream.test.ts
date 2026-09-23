@@ -314,6 +314,33 @@ describe('MusicProvider tencent stream resolution', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
+  it('emits a relay callback name that is a valid JS identifier and passes the client whitelist', async () => {
+    // 生产事故回归：中继回调名曾用 `nanoid()`，其默认字母表含 `-`（实测约 15% 的
+    // 10 字符 ID 会命中）。回调名要被注入为 <script> 里的函数声明（`-` 非法），
+    // 且客户端白名单是 ^[A-Za-z0-9_]+$，因此这类请求全被拒为 invalid callback。
+    fetchMock.mockResolvedValue(okResponse(allDenied()))
+    const seen: string[] = []
+    const relay = vi.fn(async (url: string) => {
+      const callback = new URL(url).searchParams.get('callback') ?? ''
+      seen.push(callback)
+      return vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=5&vkey=R' }])
+    })
+    provider.setQqRelayRequester(relay)
+
+    // 多次调用，确保随机后缀每次都合法（旧实现约 15% 概率产出 '-'）
+    for (let i = 0; i < 40; i++) {
+      await provider.getStreamUrlResult('tencent', `MID${i}`, 320)
+    }
+
+    expect(seen.length).toBe(40)
+    for (const cb of seen) {
+      expect(cb).toMatch(/^__vinylQqRelay_[A-Za-z0-9_]+$/) // 客户端白名单
+      expect(cb).not.toContain('-')
+      // 必须是合法 JS 标识符（能被注入为函数声明）
+      expect(() => new Function(`${cb} = function () {}`)).not.toThrow()
+    }
+  })
+
   it('keeps the original classification when the relay also fails', async () => {
     fetchMock.mockResolvedValue(okResponse(allDenied()))
     const relay = vi.fn(async () => allDenied())
