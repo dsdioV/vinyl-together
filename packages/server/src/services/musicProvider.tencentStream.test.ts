@@ -326,6 +326,48 @@ describe('MusicProvider tencent stream resolution', () => {
     expect(relay).toHaveBeenCalledTimes(1)
   })
 
+  it('still tries the relay when every direct channel times out', async () => {
+    // 生产事故回归：直连「超时」曾导致提前 return，中继永远没机会运行。
+    // 超时恰恰是服务器 IP 被风控/不可达的典型表现，必须继续尝试中继。
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementation(() => new Promise(() => {})) // 永不 resolve
+      const relay = vi.fn(async () =>
+        vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=5&vkey=RELAY_TIMEOUT' }]),
+      )
+      provider.setQqRelayRequester(relay)
+
+      const pending = provider.getStreamUrlResult('tencent', 'MID1', 320)
+      // 三个直连通道各等满 15s
+      await vi.advanceTimersByTimeAsync(15_000 * 3)
+      const result = await pending
+
+      expect(relay).toHaveBeenCalledTimes(1)
+      expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M500MID1.mp3?guid=5&vkey=RELAY_TIMEOUT')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the timeout classification when the relay also cannot help', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementation(() => new Promise(() => {}))
+      const relay = vi.fn(async () => null)
+      provider.setQqRelayRequester(relay)
+
+      const pending = provider.getStreamUrlResult('tencent', 'MID1', 320)
+      await vi.advanceTimersByTimeAsync(15_000 * 3)
+      const result = await pending
+
+      expect(relay).toHaveBeenCalledTimes(1)
+      expect(result.url).toBeNull()
+      expect(result.reason).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not use the relay when a direct channel succeeds', async () => {
     fetchMock.mockResolvedValue(
       okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=7&vkey=DIRECT' }])),

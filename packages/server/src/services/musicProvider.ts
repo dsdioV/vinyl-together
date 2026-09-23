@@ -2306,11 +2306,14 @@ export class MusicProvider {
       if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, first.url)
       return first
     }
-    if (first.reason === 'timeout') return first
+
+    // 直连「超时」不再是提前返回的理由：超时通常正是需要中继的场景（服务器 IP 被
+    // 风控/不可达），过早返回会让中继永远没有机会。分类在最后统一决定。
+    const timedOut = first.reason === 'timeout'
 
     // 权限拒绝（104003/104013）与 media_mid 无关，跳过详情恢复。
     const denied = first.upstreamCode === 104003 || first.upstreamCode === 104013
-    if (!denied) {
+    if (!denied && !timedOut) {
       // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
       const detailMediaMid = await this.fetchTencentMediaMid(urlId)
       if (detailMediaMid && detailMediaMid !== registryMediaMid) {
@@ -2319,7 +2322,6 @@ export class MusicProvider {
           if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, retry.url)
           return retry
         }
-        if (retry.reason === 'timeout') return retry
         if (retry.upstreamCode) first.upstreamCode = retry.upstreamCode
       }
     }
@@ -2330,6 +2332,11 @@ export class MusicProvider {
       if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, relayed)
       logger.info(`Tencent vkey ok (relay): ${urlId}`)
       return { url: relayed }
+    }
+    // 直连仅以「超时」告负且中继也没救回来时，保留超时分类（比 upstream_failed
+    // 更贴近事实：上游根本没答复，不是明确拒绝）。
+    if (timedOut) {
+      return { url: null, reason: 'timeout', detail: 'QQ 音乐播放链接请求超时' }
     }
     return this.classifyTencentStreamFailure(first.upstreamCode, cookie)
   }

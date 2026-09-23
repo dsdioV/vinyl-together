@@ -212,7 +212,7 @@ src/
 │   ├── identityService.ts      #   HMAC 签名身份 token（mt_identity cookie：uid + iat/exp/ver）
 │   ├── rejoinTicketService.ts  #   断线重连令牌（短时有效，凭票免全套校验重入房间）
 │   ├── kugouShortCodeService.ts #  酷狗 `#短码` / `#hash=` 链接解析（mixsong 页面）
-│   ├── musicRelayService.ts    #   QQ 浏览器中继（白名单 URL 前缀、10s 超时、最多轮询 3 个客户端、断线清理）
+│   ├── musicRelayService.ts    #   QQ 浏览器中继（白名单 URL 前缀、10s 超时、最多轮询 3 个客户端、按身份跨重连关联、静默失败显式化）
 │   ├── trackFallbackService.ts #   netease ↔ tencent 自动换源（标题/歌手归一化 + Jaccard 打分）
 │   └── voteService.ts          #   投票状态管理
 │
