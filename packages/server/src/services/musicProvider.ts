@@ -1449,10 +1449,13 @@ export class MusicProvider {
       if (source === 'tencent') {
         const tracks = await this.searchTencent(keyword, limit, page)
         // Update search index (cacheKey already defined above)
-        this.searchIndex.set(cacheKey, {
-          source,
-          ids: tracks.map((t) => t.sourceId),
-        })
+        // 空结果不写索引：瞬时故障/上游空响应不应让该关键词在 TTL 内持续返回空
+        if (tracks.length > 0) {
+          this.searchIndex.set(cacheKey, {
+            source,
+            ids: tracks.map((t) => t.sourceId),
+          })
+        }
         return tracks
       }
 
@@ -1461,10 +1464,13 @@ export class MusicProvider {
       if (source === 'bilibili') {
         const tracks = await this.searchBilibili(keyword, limit, page)
         this.registerTracks(tracks)
-        this.searchIndex.set(cacheKey, {
-          source,
-          ids: tracks.map((t) => t.sourceId),
-        })
+        // 空结果不写索引：瞬时故障/上游空响应不应让该关键词在 TTL 内持续返回空
+        if (tracks.length > 0) {
+          this.searchIndex.set(cacheKey, {
+            source,
+            ids: tracks.map((t) => t.sourceId),
+          })
+        }
         return tracks
       }
 
@@ -1510,10 +1516,13 @@ export class MusicProvider {
 
       // Register into Layer 1 and index into Layer 2
       this.registerTracks(tracks)
-      this.searchIndex.set(cacheKey, {
-        source,
-        ids: tracks.map((t) => t.sourceId),
-      })
+      // 空结果不写索引：瞬时故障/上游空响应不应让该关键词在 TTL 内持续返回空
+      if (tracks.length > 0) {
+        this.searchIndex.set(cacheKey, {
+          source,
+          ids: tracks.map((t) => t.sourceId),
+        })
+      }
 
       logger.info(`Search "${keyword}" on ${source}: ${tracks.length} results`)
       return tracks
