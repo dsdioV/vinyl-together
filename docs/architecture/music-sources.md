@@ -180,11 +180,17 @@
 
 **但这不能推出「只有会员能播」**：用户在同一台上海家宽机器上实测，**免费时长 + 本机（大陆）IP 可以播放该曲**。因此上表里 08:00/08:04 直连的失败，是**香港出口 IP** 导致的，而不是「免费时长没有权限」。会员之所以在香港能过，是因为会员档位可以越过该地区限制。
 
-> **未解之谜（值得优先查）**：用户在**大陆本机**用免费时长能播该曲，但**同期的中继**（也是大陆出口 + 已登录浏览器）
-> 对同一首却失败，而对另外两首成功。一个尚未排除的技术差异是——**中继走的是另一套 QQ 接口**：
-> 直连用 `music.vkey.GetVkey` / `UrlGetVkey`（POST JSON），中继用旧版 `vkey.GetVkeyServer` / `CgiGetVkey`
-> （GET + `format=json&callback=`，且 payload 里 `uin` 写死 `'0'`、`loginflag: 1`、`platform: '20'`）。
-> 两套接口的放行策略可能不同。**下一步应确认中继那套接口能否拿到与直连同等的档位。**
+> **已排除的假设**：曾怀疑中继因走旧版接口（`vkey.GetVkeyServer`/`CgiGetVkey`）而拿不到同等档位。
+> 匿名对照实测：现代 `UrlGetVkey` 与旧版 `CgiGetVkey` 对同一首歌**返回完全相同的各档 result 码**。
+> **接口不是变量。**
+
+> **真正的变量是「谁在应答中继」**：中继成败取决于**应答请求的那个浏览器是否登录了 QQ 音乐**，
+> 而不只是「有人开着中继」。匿名应答时**免费歌照样成功**（不需要 cookie），
+> **VIP 歌则过不去** —— 这正好解释「同一时段中继救回两首免费歌、却救不回这首 VIP 曲」。
+> 由于服务端看不到浏览器 cookie，**当前无法感知应答者是否已登录**。
+
+> **注意**：会员状态下中继**不会被触发**（直连即成功即 `return`）。生产实测 18 小时内
+> 50 首 QQ 歌全部直连成功、中继零调用。因此中继只在**非会员**（免费时长）场景才有意义。
 
 > 未验证的缺口：QQ 客户端的「免费听歌时长」如何映射到接口返回（是否体现在 `vip_login_base` 的某个字段），**未测**。
 
@@ -193,11 +199,15 @@
 `tryTencentRelay` 在「中继回传成功但拿不到可用 purl」时会输出：
 
 ```
-Tencent relay returned no usable purl: <songMid> media=<mediaMid> relayedUin=present|absent results=[M800…mp3:104003 …]
+Tencent relay returned no usable purl: <songMid> media=<mediaMid> relayedUin=… purlUin=present|absent results=[M800…mp3:104003 …]
 ```
 
-- `relayedUin=present|absent` 判断中继浏览器**有没有携带登录态**（只输出 present/absent，**不记录任何 uin 值**）。
-- `results=[...]` 给出每个档位的 `result` 码，用于区分「凭证无权」与「档位不匹配」。
+- `purlUin=present|absent` —— **判断中继是否携带登录态的可靠指标**：真实身份出现在
+  purl 里的 `uin=` 参数中。只输出 present/absent，**不记录任何 uin 值**。
+- `relayedUin=…` —— 响应 `data.uin` 字段，**只反映请求参数回显**（中继发的是 `uin:'0'`），
+  **不代表** cookie 身份，不要据此判断。
+- `results=[...]` —— 每个档位的 `result` 码。**四档全 `104003` 是匿名应答的强特征**
+  （匿名请求对任何档位都拿不到），是当前最实用的判据。
 - 另有 `Tencent relay returned no data: …`（中继返回空）、`Tencent relay skipped: no idle client with relay enabled`。
 
 设置与隐私：

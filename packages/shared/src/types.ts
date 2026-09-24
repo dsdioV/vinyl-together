@@ -93,6 +93,8 @@ export interface DefaultQueueTrackRef {
   sourceId: string
   title: string
   artist: string[]
+  /** QQ 音乐媒体文件 ID（与 sourceId 可能不同，播放链接恢复所需） */
+  mediaMid?: string
   /** Room-local asset identifier; present only for local tracks. */
   assetId?: string
 }

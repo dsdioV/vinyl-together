@@ -72,6 +72,26 @@ describe('parseSnapshotFile', () => {
     expect(reparsed.tracks).toEqual(parsed.tracks)
   })
 
+  it('roundtrips QQ mediaMid through JSON and rejects injected values', () => {
+    const qqRef = {
+      ...ref('qq'),
+      source: 'tencent' as const,
+      sourceId: 'song-mid',
+      mediaMid: '0040R1kU05kBkq',
+    }
+    const text = snapshotToJsonString({ savedAt: 1700000000000, tracks: [qqRef] })
+    const parsed = parseSnapshotFile(text)
+
+    expect(parsed.tracks).toEqual([qqRef])
+    expect(parsed.tracks[0]?.mediaMid).toBe('0040R1kU05kBkq')
+
+    for (const mediaMid of ['../evil', 'MID?injected=1', 'MID-MEDIA', ' '.repeat(3)]) {
+      const unsafe = parseSnapshotFile(JSON.stringify({ tracks: [{ ...qqRef, mediaMid }] }))
+      expect(unsafe.tracks).toHaveLength(0)
+      expect(unsafe.skippedInvalid).toBe(1)
+    }
+  })
+
   it('rejects malformed input', () => {
     expect(() => parseSnapshotFile('not json')).toThrow('JSON 格式错误')
     expect(() => parseSnapshotFile(JSON.stringify({ kind: 'other' }))).toThrow('不是默认歌单存档文件')

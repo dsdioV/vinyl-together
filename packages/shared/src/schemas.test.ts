@@ -5,6 +5,7 @@ import type { QueueTrackInput } from './socket-types.js'
 import {
   defaultQueueAddBatchSchema,
   defaultQueueAddSchema,
+  defaultQueueAddRefsSchema,
   defaultQueueTracksQuerySchema,
   localAudioAssetDeleteSchema,
   localAudioAssetUpdateSchema,
@@ -162,6 +163,49 @@ describe('local audio queue input schemas', () => {
   it('keeps mediaMid so QQ stream URLs can be resolved later', () => {
     const parsed = queueAddSchema.parse({ track: { ...externalTrack, mediaMid: 'REALMEDIA' } })
     expect(parsed.track).toMatchObject({ mediaMid: 'REALMEDIA' })
+  })
+
+  it('rejects unsafe mediaMid values from online track inputs', () => {
+    for (const mediaMid of [
+      '',
+      ' ',
+      'REAL-MEDIA',
+      'REAL_MEDIA',
+      'REAL/MEDIA',
+      'REAL.MEDIA',
+      'https://attacker.invalid',
+      'REAL?injected=1',
+      'REAL\0injected',
+      'x'.repeat(201),
+    ]) {
+      expect(queueAddSchema.safeParse({ track: { ...externalTrack, mediaMid } }).success).toBe(false)
+      expect(
+        defaultQueueAddRefsSchema.safeParse({
+          refs: [
+            {
+              id: 'ref-1',
+              source: 'tencent',
+              sourceId: 'song-mid',
+              title: 'Song',
+              artist: ['Artist'],
+              mediaMid,
+            },
+          ],
+        }).success,
+      ).toBe(false)
+    }
+  })
+
+  it('round-trips valid QQ mediaMid through a default queue reference', () => {
+    const ref = {
+      id: 'ref-1',
+      source: 'tencent' as const,
+      sourceId: 'song-mid',
+      title: 'Song',
+      artist: ['Artist'],
+      mediaMid: '0040R1kU05kBkq',
+    }
+    expect(defaultQueueAddRefsSchema.parse({ refs: [ref] }).refs).toEqual([ref])
   })
 
   it('accepts bilibili tracks and keeps the cid for stream resolution', () => {

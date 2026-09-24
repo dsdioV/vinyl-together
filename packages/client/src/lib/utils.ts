@@ -31,6 +31,7 @@ export function toQueueTrackInput(track: Track): QueueTrackInput {
     source: track.source,
     sourceId: track.sourceId,
     urlId: track.urlId,
+    ...(track.mediaMid ? { mediaMid: track.mediaMid } : {}),
     bilibiliCid: track.bilibiliCid,
     lyricId: track.lyricId,
     picId: track.picId,

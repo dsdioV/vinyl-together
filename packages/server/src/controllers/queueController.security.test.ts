@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   autoPlayIfEmpty: vi.fn(),
   stopPlaybackSafe: vi.fn(),
   playFromDefaultQueue: vi.fn(),
+  registerRefMediaMids: vi.fn(),
 }))
 
 vi.mock('../middleware/socketRateLimiter.js', () => ({
@@ -24,6 +25,10 @@ vi.mock('../services/playerService.js', () => ({
   autoPlayIfEmpty: mocks.autoPlayIfEmpty,
   stopPlaybackSafe: mocks.stopPlaybackSafe,
   playFromDefaultQueue: mocks.playFromDefaultQueue,
+}))
+
+vi.mock('../services/musicProvider.js', () => ({
+  musicProvider: { registerRefMediaMids: mocks.registerRefMediaMids },
 }))
 
 import { registerQueueController } from './queueController.js'
@@ -370,10 +375,7 @@ describe('DEFAULT_QUEUE_ADD_REFS (archive restore)', () => {
       type: 'add',
       tracks: [makeRef('import-1'), makeRef('import-2')],
     })
-    expect(mocks.createSystemMessage).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.stringContaining('恢复了 2 首歌'),
-    )
+    expect(mocks.createSystemMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('恢复了 2 首歌'))
   })
 
   it('skips duplicates by id and by source:sourceId, and re-importing is a no-op', async () => {
@@ -400,6 +402,21 @@ describe('DEFAULT_QUEUE_ADD_REFS (archive restore)', () => {
     expect(fixture.room.defaultQueue).toEqual(afterFirstImport)
     expect(fixture.ioEmit.mock.calls.length).toBe(ioEmitCalls)
     expect(mocks.createSystemMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps mediaMid on a QQ ref and registers it for later playback', async () => {
+    const fixture = mount('owner')
+    const qqRef: DefaultQueueTrackRef = {
+      ...makeRef('qq'),
+      source: 'tencent',
+      sourceId: '000DZCM71nvLRC',
+      mediaMid: '0040R1kU05kBkq',
+    }
+
+    await fixture.dispatch(EVENTS.DEFAULT_QUEUE_ADD_REFS, { refs: [qqRef] })
+
+    expect(fixture.room.defaultQueue).toEqual([qqRef])
+    expect(mocks.registerRefMediaMids).toHaveBeenCalledWith([qqRef])
   })
 
   it('skips invalid refs and rejects when nothing valid remains', async () => {
@@ -431,9 +448,6 @@ describe('DEFAULT_QUEUE_ADD_REFS (archive restore)', () => {
 
     expect(fixture.room.defaultQueue).toHaveLength(LIMITS.DEFAULT_QUEUE_MAX_SIZE)
     expect(fixture.room.defaultQueue.at(-1)).toEqual(makeRef('fits'))
-    expect(mocks.createSystemMessage).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.stringContaining('恢复了 1 首歌'),
-    )
+    expect(mocks.createSystemMessage).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('恢复了 1 首歌'))
   })
 })

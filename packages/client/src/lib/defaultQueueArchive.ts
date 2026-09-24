@@ -1,3 +1,4 @@
+import { qqMediaMidSchema } from '@music-together/shared'
 import type { DefaultQueueTrackRef } from '@music-together/shared'
 import { EVENTS, LIMITS } from '@music-together/shared'
 import type { Socket } from 'socket.io-client'
@@ -37,17 +38,23 @@ function normalizeRef(raw: unknown): DefaultQueueTrackRef | null {
   if (!Array.isArray(r.artist)) return null
   const artist = r.artist.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
   if (artist.length === 0) return null
+  const mediaMidResult = qqMediaMidSchema.safeParse(r.mediaMid)
+  if (r.mediaMid !== undefined && !mediaMidResult.success) return null
   return {
     id: r.id.trim(),
     source: r.source as DefaultQueueTrackRef['source'],
     sourceId: r.sourceId.trim(),
     title: r.title.trim(),
     artist,
+    ...(mediaMidResult.success ? { mediaMid: mediaMidResult.data } : {}),
   }
 }
 
 /** 按 id 与 source:sourceId 双重去重（保持首次出现顺序） */
-export function dedupeRefs(refs: readonly DefaultQueueTrackRef[]): { unique: DefaultQueueTrackRef[]; duplicates: number } {
+export function dedupeRefs(refs: readonly DefaultQueueTrackRef[]): {
+  unique: DefaultQueueTrackRef[]
+  duplicates: number
+} {
   const seenIds = new Set<string>()
   const seenKeys = new Set<string>()
   const unique: DefaultQueueTrackRef[] = []
@@ -66,9 +73,11 @@ export function dedupeRefs(refs: readonly DefaultQueueTrackRef[]): { unique: Def
 }
 
 /** 由房间默认队列构建存档条目：剔除本地音频引用并去重 */
-export function buildSnapshotFromRoomRefs(
-  refs: readonly DefaultQueueTrackRef[],
-): { tracks: DefaultQueueTrackRef[]; skippedLocal: number; duplicates: number } {
+export function buildSnapshotFromRoomRefs(refs: readonly DefaultQueueTrackRef[]): {
+  tracks: DefaultQueueTrackRef[]
+  skippedLocal: number
+  duplicates: number
+} {
   const online = refs.filter((ref) => ONLINE_SOURCES.has(ref.source))
   const skippedLocal = refs.length - online.length
   const { unique, duplicates } = dedupeRefs(online)
@@ -100,7 +109,10 @@ export function readLocalSnapshot(): DefaultQueueSnapshot | null {
   }
 }
 
-export function writeLocalSnapshot(tracks: readonly DefaultQueueTrackRef[], savedAt = Date.now()): DefaultQueueSnapshot {
+export function writeLocalSnapshot(
+  tracks: readonly DefaultQueueTrackRef[],
+  savedAt = Date.now(),
+): DefaultQueueSnapshot {
   const snapshot: DefaultQueueSnapshot = { savedAt, tracks: tracks.slice(0, SNAPSHOT_MAX_TRACKS) }
   storage.setDefaultQueueSnapshot({ kind: SNAPSHOT_KIND, version: SNAPSHOT_VERSION, ...snapshot })
   return snapshot

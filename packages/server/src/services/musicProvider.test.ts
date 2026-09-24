@@ -36,7 +36,17 @@ type ProviderInternals = {
   fetchKugouTrackById(id: string): Promise<Track | null>
   batchResolveCover(tracks: Track[], source: MusicSource): Promise<void>
   registerTracks(tracks: Track[]): void
-  playlistIndex: { keys(): IterableIterator<string> }
+  playlistIndex: {
+    keys(): IterableIterator<string>
+    get(key: string): unknown
+    set(key: string, value: { source: MusicSource; ids: string[] }): void
+  }
+  getPlaylistCacheKey(
+    source: MusicSource,
+    type: 'playlist' | 'album',
+    playlistId: string,
+    cookie?: string | null,
+  ): string
 }
 
 function track(source: MusicSource, sourceId: string): Track {
@@ -255,14 +265,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
       .mockResolvedValueOnce({ body: { songs: finalChunk } })
     vi.spyOn(internals, 'batchResolveCover').mockResolvedValue()
 
-    const result = await provider.searchPlaylistTracks(
-      'netease',
-      'acceptance-playlist',
-      'needle',
-      1,
-      50,
-      1000,
-    )
+    const result = await provider.searchPlaylistTracks('netease', 'acceptance-playlist', 'needle', 1, 50, 1000)
 
     expect(ncmApiMock.playlist_track_all).toHaveBeenCalledTimes(2)
     expect(ncmApiMock.playlist_track_all).toHaveBeenNthCalledWith(
@@ -295,8 +298,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
       LIMITS.PLAYLIST_SEARCH_PAGE_SIZE,
     )
 
-    const lastPageOffset =
-      (LIMITS.PLAYLIST_SEARCH_PAGE_MAX - 1) * LIMITS.PLAYLIST_SEARCH_PAGE_SIZE
+    const lastPageOffset = (LIMITS.PLAYLIST_SEARCH_PAGE_MAX - 1) * LIMITS.PLAYLIST_SEARCH_PAGE_SIZE
     expect(result.tracks).toHaveLength(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS - lastPageOffset)
     expect(result.tracks[0]?.sourceId).toBe(String(lastPageOffset))
     expect(result.tracks.at(-1)?.sourceId).toBe(String(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS - 1))
@@ -316,13 +318,7 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     vi.spyOn(provider, 'fetchFullPlaylist').mockResolvedValue({ ids, total: tracks.length })
     vi.spyOn(internals, 'batchResolveCover').mockResolvedValue()
 
-    const result = await provider.getPlaylistPage(
-      'netease',
-      'playlist-id',
-      1000,
-      0,
-      LIMITS.PLAYLIST_SEARCH_MAX_TRACKS,
-    )
+    const result = await provider.getPlaylistPage('netease', 'playlist-id', 1000, 0, LIMITS.PLAYLIST_SEARCH_MAX_TRACKS)
 
     expect(result.tracks).toHaveLength(1000)
     expect(result.tracks[0]?.sourceId).toBe('0')
@@ -452,18 +448,8 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     })
 
     const anonymous = await provider.fetchFullPlaylist('netease', 'private-playlist')
-    const alpha = await provider.fetchFullPlaylist(
-      'netease',
-      'private-playlist',
-      undefined,
-      'MUSIC_U=alpha-secret',
-    )
-    const beta = await provider.fetchFullPlaylist(
-      'netease',
-      'private-playlist',
-      undefined,
-      'MUSIC_U=beta-secret',
-    )
+    const alpha = await provider.fetchFullPlaylist('netease', 'private-playlist', undefined, 'MUSIC_U=alpha-secret')
+    const beta = await provider.fetchFullPlaylist('netease', 'private-playlist', undefined, 'MUSIC_U=beta-secret')
     const alphaCached = await provider.fetchFullPlaylist(
       'netease',
       'private-playlist',
@@ -483,6 +469,35 @@ describe('MusicProvider.searchPlaylistTracks', () => {
     expect(cacheKeys.join('\n')).not.toContain('beta-secret')
     expect(cacheKeys.filter((key) => key.endsWith(':auth:anonymous'))).toHaveLength(1)
     expect(cacheKeys.filter((key) => /:auth:[a-f0-9]{64}$/.test(key))).toHaveLength(2)
+  })
+
+  it('refetches a playlist when a QQ registry entry was seeded from a ref only', async () => {
+    const provider = new MusicProvider()
+    const internals = provider as unknown as ProviderInternals & {
+      registerRefMediaMids: (refs: unknown[]) => void
+      hydrateFromRegistry: (source: MusicSource, ids: string[]) => Track[] | null
+    }
+    internals.registerRefMediaMids([
+      { id: 'ref-1', source: 'tencent', sourceId: 'qq-1', title: 'Snapshot', artist: [], mediaMid: 'RESTOREDMEDIA' },
+    ])
+    const cacheKey = internals.getPlaylistCacheKey('tencent', 'playlist', 'playlist-id', undefined)
+    internals.playlistIndex.set(cacheKey, { source: 'tencent', ids: ['qq-1'] })
+    tencentPlaylistTracksMock.mockResolvedValue({ songs: [tencentSong(1)], total: 1 })
+
+    const result = await provider.fetchFullPlaylist('tencent', 'playlist-id')
+    const hydrated = internals.hydrateFromRegistry('tencent', result.ids)
+
+    expect(result.ids).toEqual(['qq-1'])
+    expect(tencentPlaylistTracksMock).toHaveBeenCalledTimes(1)
+    expect(hydrated).toEqual([
+      expect.objectContaining({
+        sourceId: 'qq-1',
+        title: 'Song 1',
+        artist: ['Artist'],
+        duration: 120,
+        mediaMid: 'RESTOREDMEDIA',
+      }),
+    ])
   })
 
   it('continues Tencent pagination when total is under-reported', async () => {
@@ -541,12 +556,10 @@ describe('MusicProvider.searchPlaylistTracks', () => {
 
   it('caps abnormal ordinary Tencent pagination at 100000 tracks', async () => {
     const provider = new MusicProvider()
-    tencentPlaylistTracksMock.mockImplementation(
-      (_playlistId: string, page: number, pageSize: number) => ({
-        songs: Array.from({ length: pageSize }, (_, index) => tencentSong((page - 1) * pageSize + index)),
-        total: 0,
-      }),
-    )
+    tencentPlaylistTracksMock.mockImplementation((_playlistId: string, page: number, pageSize: number) => ({
+      songs: Array.from({ length: pageSize }, (_, index) => tencentSong((page - 1) * pageSize + index)),
+      total: 0,
+    }))
 
     const result = await provider.fetchFullPlaylist('tencent', 'unbounded-playlist')
 
@@ -578,38 +591,30 @@ describe('MusicProvider.searchPlaylistTracks', () => {
 
   it('rejects Tencent search as soon as the 10001st track is discovered', async () => {
     const provider = new MusicProvider()
-    tencentPlaylistTracksMock.mockImplementation(
-      (_playlistId: string, page: number, pageSize: number) => ({
-        songs: Array.from({ length: pageSize }, (_, index) => tencentSong((page - 1) * pageSize + index)),
-        total: 0,
-      }),
-    )
+    tencentPlaylistTracksMock.mockImplementation((_playlistId: string, page: number, pageSize: number) => ({
+      songs: Array.from({ length: pageSize }, (_, index) => tencentSong((page - 1) * pageSize + index)),
+      total: 0,
+    }))
 
     await expect(provider.searchPlaylistTracks('tencent', 'oversized', 'song')).rejects.toMatchObject({
       code: 'PLAYLIST_TRACK_LIMIT_EXCEEDED',
       actualTracks: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1,
     })
-    expect(tencentPlaylistTracksMock).toHaveBeenCalledTimes(
-      Math.floor(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS / 100) + 1,
-    )
+    expect(tencentPlaylistTracksMock).toHaveBeenCalledTimes(Math.floor(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS / 100) + 1)
   })
 
   it('rejects Kugou search as soon as the 10001st track is discovered', async () => {
     const provider = new MusicProvider()
-    kugouPlaylistTracksMock.mockImplementation(
-      (_playlistId: string, page: number, pageSize: number) => ({
-        songs: Array.from({ length: pageSize }, (_, index) => kugouSong((page - 1) * pageSize + index)),
-        total: 0,
-      }),
-    )
+    kugouPlaylistTracksMock.mockImplementation((_playlistId: string, page: number, pageSize: number) => ({
+      songs: Array.from({ length: pageSize }, (_, index) => kugouSong((page - 1) * pageSize + index)),
+      total: 0,
+    }))
 
     await expect(provider.searchPlaylistTracks('kugou', 'oversized', 'song')).rejects.toMatchObject({
       code: 'PLAYLIST_TRACK_LIMIT_EXCEEDED',
       actualTracks: LIMITS.PLAYLIST_SEARCH_MAX_TRACKS + 1,
     })
-    expect(kugouPlaylistTracksMock).toHaveBeenCalledTimes(
-      Math.floor(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS / 300) + 1,
-    )
+    expect(kugouPlaylistTracksMock).toHaveBeenCalledTimes(Math.floor(LIMITS.PLAYLIST_SEARCH_MAX_TRACKS / 300) + 1)
   })
 
   it('rejects a known oversized playlist before fetching it', async () => {

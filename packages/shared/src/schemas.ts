@@ -64,6 +64,17 @@ export const roomAutoFallbackSchema = z.object({
 
 const trackIdSchema = z.string().min(1).max(200)
 
+/**
+ * QQ 音乐 mediaMid 会直接拼入 vkey 请求的 filename，因此客户端提交值必须
+ * 严格限制为 QQ mid 的字母数字形态；任何路径、查询参数、分隔符或空白字符
+ * 都不能被透传到上游请求。
+ */
+export const qqMediaMidSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9]+$/, '无效的 QQ 音乐 mediaMid')
+
 export const playerPlaySchema = z.union([
   z.strictObject({ trackId: trackIdSchema.optional() }),
   // Backward compatibility for already-open clients. Only the ID survives;
@@ -104,7 +115,7 @@ const clientTrackSchema = z
     source: z.enum(['netease', 'tencent', 'kugou', 'bilibili', 'bandcamp']),
     sourceId: z.string().max(200),
     urlId: z.string().max(200),
-    mediaMid: z.string().max(200).optional(),
+    mediaMid: qqMediaMidSchema.optional(),
     bilibiliCid: z.number().int().positive().optional(),
     lyricId: z.string().max(200).optional(),
     picId: z.string().max(200).optional(),
@@ -173,6 +184,7 @@ export const defaultQueueImportRefSchema = z.object({
   sourceId: z.string().min(1).max(200),
   title: z.string().min(1).max(500),
   artist: z.array(z.string().max(200)).max(20),
+  mediaMid: qqMediaMidSchema.optional(),
 })
 
 export const defaultQueueAddRefsSchema = z.object({

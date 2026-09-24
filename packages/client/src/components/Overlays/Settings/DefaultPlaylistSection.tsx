@@ -138,6 +138,7 @@ export function DefaultPlaylistSection() {
           source: ref.source,
           sourceId: ref.sourceId,
           urlId: ref.sourceId,
+          ...(ref.mediaMid ? { mediaMid: ref.mediaMid } : {}),
           ...(ref.assetId ? { assetId: ref.assetId } : {}),
         } satisfies Track
       }),

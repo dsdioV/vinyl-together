@@ -25,6 +25,7 @@ import * as queueService from '../services/queueService.js'
 import { localAudioService } from '../services/localAudioService.js'
 import { roomRepo } from '../repositories/roomRepository.js'
 import { toDefaultQueueRef } from '../utils/defaultQueueRef.js'
+import { musicProvider } from '../services/musicProvider.js'
 import { logger } from '../utils/logger.js'
 
 export function registerQueueController(io: TypedServer, socket: TypedSocket) {
@@ -463,6 +464,9 @@ export function registerQueueController(io: TypedServer, socket: TypedSocket) {
       }
 
       ctx.room.defaultQueue.push(...accepted)
+      // 存档恢复发生在容器启动/registry 清空之后。把引用携带的可信（schema 已校验）
+      // mediaMid 写回注册表，让随后解析默认列表条目时无需再次依赖进程内缓存。
+      musicProvider.registerRefMediaMids(accepted)
       broadcastDefaultQueueDelta(ctx.roomId, { type: 'add', tracks: accepted })
 
       const msg = chatService.createSystemMessage(

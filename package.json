@@ -1,6 +1,6 @@
 {
   "name": "vinyl-together",
-  "version": "1.12.9",
+  "version": "1.12.10",
   "private": true,
   "description": "Online music listening together platform",
   "scripts": {

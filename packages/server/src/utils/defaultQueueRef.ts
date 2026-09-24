@@ -11,6 +11,7 @@ export function toDefaultQueueRef(track: Track): DefaultQueueTrackRef {
     sourceId: track.sourceId,
     title: track.title,
     artist: track.artist,
+    ...(track.mediaMid ? { mediaMid: track.mediaMid } : {}),
     ...(track.assetId ? { assetId: track.assetId } : {}),
   }
 }
@@ -31,7 +32,10 @@ export async function resolveDefaultQueueRef(roomId: string, ref: DefaultQueueTr
   const cookie = authService.getAnyCookie(ref.source, roomId)
   const track = await musicProvider.getTrackById(ref.source, ref.sourceId, cookie ?? undefined)
   if (!track) return null
-  return { ...track, id: ref.id }
+  // 引用里的 QQ mediaMid 是跨重启播放所需的持久化元数据。服务端补全的 Track
+  // 缺少该值时以引用补位；两者都有时保持服务端（非空优先）值，避免旧引用覆盖新详情。
+  const resolved = ref.mediaMid && !track.mediaMid ? { ...track, mediaMid: ref.mediaMid } : track
+  return { ...resolved, id: ref.id }
 }
 
 /** 并发受限的批量补全（默认 chunk 并发 5），返回完整 Track 与缺失 ID 列表。 */

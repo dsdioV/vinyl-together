@@ -105,7 +105,26 @@ describe('MusicProvider tencent stream resolution', () => {
     vi.unstubAllGlobals()
   })
 
+  function registerTencentMediaMid(sourceId: string, mediaMid: string): void {
+    const internals = provider as unknown as { registerTracks: (tracks: unknown[]) => void }
+    internals.registerTracks([
+      {
+        id: `test-${sourceId}`,
+        title: 'Title',
+        artist: ['Artist'],
+        album: '',
+        duration: 0,
+        cover: '',
+        source: 'tencent',
+        sourceId,
+        urlId: sourceId,
+        mediaMid,
+      },
+    ])
+  }
+
   it('resolves a free song anonymously via the plain vkey endpoint (fallback CDN)', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(
       okResponse(
         vkeyResponse([
@@ -132,6 +151,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('uses the room cookie uin and forwards it with the request', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(
       okResponse(
         vkeyResponse(
@@ -156,6 +176,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('falls back to the signed musics.fcg channel when plain musicu.fcg is IP-blocked', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock
       .mockResolvedValueOnce(okResponse({ code: 500001 }))
       .mockResolvedValueOnce(
@@ -171,6 +192,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('falls back to the legacy vkey channel when plain and signed are blocked', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock
       .mockResolvedValueOnce(okResponse({ code: 500001 }))
       .mockResolvedValueOnce(okResponse({ code: 500001 }))
@@ -190,6 +212,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('classifies permission denials as login_required without a cookie', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(okResponse(allDenied()))
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
@@ -201,6 +224,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('classifies permission denials as vip_or_copyright when a cookie is present', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(okResponse(allDenied()))
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320, 'uin=123456; qm_keyst=abc')
@@ -210,42 +234,146 @@ describe('MusicProvider tencent stream resolution', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
-  it('recovers the real media_mid from track info and retries once', async () => {
-    fetchMock
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      .mockResolvedValueOnce(
-        okResponse({
+  it('recovers media_mid before vkey and caches the recovered value', async () => {
+    fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body)
+      if (body['music.trackInfo.UniformRuleCtrl']) {
+        return okResponse({
           code: 0,
           'music.trackInfo.UniformRuleCtrl': {
             code: 0,
             data: { tracks: [{ mid: 'MID1', file: { media_mid: 'REALMEDIA' } }] },
           },
-        }),
-      )
-      .mockResolvedValueOnce(
-        okResponse(
+        })
+      }
+
+      const filenames = body.req?.param?.filename as string[] | undefined
+      if (filenames?.some((filename) => filename.includes('REALMEDIA'))) {
+        return okResponse(
           vkeyResponse([{ filename: 'M800REALMEDIA.mp3', result: 0, purl: 'M800REALMEDIA.mp3?guid=2&vkey=RETRY' }]),
-        ),
-      )
+        )
+      }
+
+      // 生产事故形态：songMid 被误当 mediaMid 时，上游仍返回 result:0 + purl。
+      // 故意不把 purl 放进本测试失败输出；本测试只断言服务构造出的 URL。
+      return okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=1&vkey=WRONG' }]))
+    })
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
 
-    expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M800REALMEDIA.mp3?guid=2&vkey=RETRY')
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(result.url).toContain('M800REALMEDIA.mp3')
+    expect(result.url).toContain('vkey=RETRY')
+    expect(result.url).not.toContain('vkey=WRONG')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [preflightUrl, preflightInit] = fetchMock.mock.calls[0] as [string, { body: string }]
+    const preflightBody = JSON.parse(preflightInit.body)
+    expect(preflightUrl).toBe('https://u.y.qq.com/cgi-bin/musicu.fcg')
+    expect(preflightBody['music.trackInfo.UniformRuleCtrl'].method).toBe('CgiGetTrackInfo')
+    expect(preflightBody.req).toBeUndefined()
+    const [, init] = fetchMock.mock.calls[1] as [string, { body: string }]
+    expect(JSON.parse(init.body).req.param.filename).toContain('M800REALMEDIA.mp3')
+    const internals = provider as unknown as { trackRegistry: { get(key: string): { mediaMid?: string } } }
+    expect(internals.trackRegistry.get('tencent:MID1')?.mediaMid).toBe('REALMEDIA')
   })
 
-  it('recovers media_mid via the legacy song endpoint when track info is IP-blocked', async () => {
+  it('rejects an unsafe upstream media_mid before constructing vkey filenames', async () => {
+    fetchMock.mockImplementation(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body)
+      if (body['music.trackInfo.UniformRuleCtrl']) {
+        return okResponse({
+          code: 0,
+          'music.trackInfo.UniformRuleCtrl': {
+            code: 0,
+            data: { tracks: [{ mid: 'MID1', file: { media_mid: '../INJECTED' } }] },
+          },
+        })
+      }
+      return okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=6&vkey=SAFE' }]))
+    })
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toContain('M500MID1.mp3')
+    for (const [, init] of fetchMock.mock.calls as Array<[string, { body: string }]>) {
+      const body = JSON.parse(init.body)
+      const filenames = body.req?.param?.filename as string[] | undefined
+      if (filenames) expect(filenames.every((filename) => filename.includes('MID1'))).toBe(true)
+    }
+  })
+
+  it('preserves a registry mediaMid and does not replace it with the song mid', async () => {
+    registerTencentMediaMid('MID1', 'REGISTEREDMEDIA')
+    fetchMock.mockResolvedValue(
+      okResponse(
+        vkeyResponse([
+          { filename: 'M800REGISTEREDMEDIA.mp3', result: 0, purl: 'M800REGISTEREDMEDIA.mp3?guid=3&vkey=REG' },
+        ]),
+      ),
+    )
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M800REGISTEREDMEDIA.mp3?guid=3&vkey=REG')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }]
+    expect(JSON.parse(init.body).req.param.filename).toContain('M800REGISTEREDMEDIA.mp3')
+  })
+
+  it('writes restored ref mediaMid into registry without replacing an existing value', async () => {
+    registerTencentMediaMid('MID1', 'CANONICALMEDIA')
+    const internals = provider as unknown as {
+      registerRefMediaMids: (refs: unknown[]) => void
+      trackRegistry: { get(key: string): { mediaMid?: string } | undefined }
+    }
+
+    internals.registerRefMediaMids([
+      { id: 'ref-1', source: 'tencent', sourceId: 'MID1', title: 'Title', artist: [], mediaMid: 'STALEVALUE' },
+    ])
+    expect(internals.trackRegistry.get('tencent:MID1')?.mediaMid).toBe('CANONICALMEDIA')
+
+    internals.registerRefMediaMids([
+      { id: 'ref-2', source: 'tencent', sourceId: 'MID2', title: 'Title', artist: [], mediaMid: 'RESTOREDMEDIA' },
+    ])
+    expect(internals.trackRegistry.get('tencent:MID2')?.mediaMid).toBe('RESTOREDMEDIA')
+  })
+
+  it('keeps a restored ref mediaMid usable for playback without hydrating an empty Track shell', async () => {
+    const internals = provider as unknown as {
+      registerRefMediaMids: (refs: unknown[]) => void
+      hydrateFromRegistry: (source: 'tencent', ids: string[]) => unknown[] | null
+      trackRegistry: { get(key: string): { mediaMid?: string } | undefined }
+    }
+    internals.registerRefMediaMids([
+      {
+        id: 'ref-1',
+        source: 'tencent',
+        sourceId: 'MID1',
+        title: 'Snapshot title',
+        artist: [],
+        mediaMid: 'RESTOREDMEDIA',
+      },
+    ])
+
+    expect(internals.hydrateFromRegistry('tencent', ['MID1'])).toBeNull()
+    fetchMock.mockResolvedValue(
+      okResponse(
+        vkeyResponse([{ filename: 'M800RESTOREDMEDIA.mp3', result: 0, purl: 'M800RESTOREDMEDIA.mp3?guid=5&vkey=REF' }]),
+      ),
+    )
+
+    const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
+
+    expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M800RESTOREDMEDIA.mp3?guid=5&vkey=REF')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0] as [string, { body: string }]
+    expect(JSON.parse(init.body).req.param.filename).toContain('M800RESTOREDMEDIA.mp3')
+  })
+
+  it('recovers media_mid via the legacy song endpoint when the desktop track info is blocked', async () => {
     fetchMock
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      .mockResolvedValueOnce(okResponse(allEmpty()))
-      // plain track info: IP blocked
+      // preflight track info: plain blocked, signed empty, legacy succeeds
       .mockResolvedValueOnce(okResponse({ code: 500001 }))
-      // signed track info: empty
       .mockResolvedValueOnce(okResponse({ code: 0, req: { code: 0, data: { tracks: [] } } }))
-      // legacy fcg_play_single_song: works
       .mockResolvedValueOnce(
         okResponse({
           code: 0,
@@ -272,10 +400,11 @@ describe('MusicProvider tencent stream resolution', () => {
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 320)
 
     expect(result.url).toBe('https://isure.stream.qqmusic.qq.com/M500LEGACYMEDIA.mp3?guid=4&vkey=LEGACYMEDIA')
-    expect(fetchMock).toHaveBeenCalledTimes(7)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
   it('caches anonymous stream URLs', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(
       okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=7&vkey=CACHE' }])),
     )
@@ -287,6 +416,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('returns upstream_failed when all channels reject', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockRejectedValue(new Error('network down'))
 
     const result = await provider.getStreamUrlResult('tencent', 'MID1', 128)
@@ -298,6 +428,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('uses the browser relay when all direct channels fail', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(okResponse(allDenied()))
     const relay = vi.fn(async (url: string) => {
       expect(url).toContain('callback=__vinylQqRelay_')
@@ -396,6 +527,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('does not use the relay when a direct channel succeeds', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     fetchMock.mockResolvedValue(
       okResponse(vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=7&vkey=DIRECT' }])),
     )
@@ -408,6 +540,7 @@ describe('MusicProvider tencent stream resolution', () => {
   })
 
   it('forces the browser relay first when the dev flag is set', async () => {
+    registerTencentMediaMid('MID1', 'MID1')
     const relay = vi.fn(async () =>
       vkeyResponse([{ filename: 'M500MID1.mp3', result: 0, purl: 'M500MID1.mp3?guid=8&vkey=FORCED' }]),
     )

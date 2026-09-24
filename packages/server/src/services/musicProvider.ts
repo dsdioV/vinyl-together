@@ -1,7 +1,13 @@
 import Meting from '@meting/core'
 import { get as kugouLrcGet, Format } from '@s4p/kugou-lrc'
 import type { KrcInfo } from '@s4p/kugou-lrc'
-import { LIMITS, type MusicSource, type Track } from '@music-together/shared'
+import {
+  LIMITS,
+  qqMediaMidSchema,
+  type DefaultQueueTrackRef,
+  type MusicSource,
+  type Track,
+} from '@music-together/shared'
 import { createHash } from 'node:crypto'
 import { LRUCache } from 'lru-cache'
 import { customAlphabet, nanoid } from 'nanoid'
@@ -498,7 +504,10 @@ export class PlaylistSearchLimitError extends Error {
 // ---------------------------------------------------------------------------
 // TrackMeta — Track without per-instance fields (id, requestedBy)
 // ---------------------------------------------------------------------------
-type TrackMeta = Omit<Track, 'id' | 'requestedBy'>
+type TrackMeta = Omit<Track, 'id' | 'requestedBy'> & {
+  /** Ref restoration may seed only mediaMid; such entries must not satisfy full track lookups. */
+  refOnly?: true
+}
 
 /** Why a stream URL lookup failed (or partially degraded). */
 export type StreamUrlFailureReason = 'login_required' | 'vip_or_copyright' | 'upstream_failed' | 'timeout'
@@ -804,18 +813,77 @@ export class MusicProvider {
       const existing = this.trackRegistry.get(key)
       const { id: _id, requestedBy: _rb, ...meta } = t
       if (existing) {
+        const { refOnly: _refOnly, ...existingMeta } = existing
         const merged: TrackMeta = {
-          ...existing,
-          cover: existing.cover || meta.cover,
-          duration: existing.duration || meta.duration,
-          vip: existing.vip || meta.vip,
-          mediaMid: existing.mediaMid || meta.mediaMid,
+          ...existingMeta,
+          source: meta.source,
+          sourceId: meta.sourceId,
+          urlId: existingMeta.urlId || meta.urlId,
+          title: existingMeta.title || meta.title,
+          artist: existingMeta.artist.length > 0 ? existingMeta.artist : meta.artist,
+          album: existingMeta.album || meta.album,
+          cover: existingMeta.cover || meta.cover,
+          duration: existingMeta.duration || meta.duration,
+          mediaMid: existingMeta.mediaMid || meta.mediaMid,
+          vip: existingMeta.vip || meta.vip,
         }
         this.trackRegistry.set(key, merged)
       } else {
         this.trackRegistry.set(key, meta)
       }
     }
+  }
+
+  private safeTencentMediaMid(value: unknown): string | null {
+    const parsed = qqMediaMidSchema.safeParse(value)
+    return parsed.success ? parsed.data : null
+  }
+
+  registerRefMediaMids(refs: readonly DefaultQueueTrackRef[]): void {
+    for (const ref of refs) {
+      if (ref.source !== 'tencent' || !ref.mediaMid) continue
+      const mediaMid = this.safeTencentMediaMid(ref.mediaMid)
+      if (!mediaMid) continue
+      const key = `tencent:${ref.sourceId}`
+      const existing = this.trackRegistry.get(key)
+      // registerTracks uses non-empty-first semantics. A ref must not replace
+      // an already-canonical registry value with a merely persisted snapshot.
+      if (this.safeTencentMediaMid(existing?.mediaMid)) continue
+      if (existing && !existing.refOnly) {
+        this.trackRegistry.set(key, {
+          ...existing,
+          mediaMid,
+        })
+      } else {
+        this.registerTencentMediaMid(ref.sourceId, mediaMid, true)
+      }
+    }
+  }
+
+  /**
+   * Persist a recovered QQ mediaMid while preserving all existing metadata.
+   * Invalid upstream values never reach this method: it is also the defensive
+   * boundary for values originating in registry data or user-supplied refs.
+   */
+  private registerTencentMediaMid(sourceId: string, mediaMid: string, refOnly = false): void {
+    if (!qqMediaMidSchema.safeParse(mediaMid).success) return
+    const key = `tencent:${sourceId}`
+    const existing = this.trackRegistry.get(key)
+    this.trackRegistry.set(key, {
+      title: existing?.title ?? '',
+      artist: existing?.artist ?? [],
+      album: existing?.album ?? '',
+      duration: existing?.duration ?? 0,
+      cover: existing?.cover ?? '',
+      source: 'tencent',
+      sourceId,
+      urlId: existing?.urlId ?? sourceId,
+      mediaMid,
+      ...(refOnly ? { refOnly: true as const } : {}),
+      ...(existing?.lyricId ? { lyricId: existing.lyricId } : {}),
+      ...(existing?.picId ? { picId: existing.picId } : {}),
+      ...(existing?.vip ? { vip: true } : {}),
+    })
   }
 
   /**
@@ -841,7 +909,9 @@ export class MusicProvider {
     const tracks: Track[] = []
     for (const sourceId of ids) {
       const meta = this.trackRegistry.get(`${source}:${sourceId}`)
-      if (!meta) return null
+      // Archive refs may seed only mediaMid. They are useful for playback but
+      // are not complete Track metadata and must still be hydrated upstream.
+      if (!meta || meta.refOnly) return null
       tracks.push({ ...meta, id: nanoid() })
     }
     return tracks
@@ -2297,9 +2367,18 @@ export class MusicProvider {
     const candidates = tencentFileCandidatesForBitrate(bitrate)
     const uin = cookie?.match(/uin=(\d+)/)?.[1] ?? '0'
 
-    // media_mid 与歌曲 mid 常常不同。优先使用 Track 上携带的值（注册表），
-    // 回退到歌曲 mid 本身，两者都失败才重新拉取歌曲详情。
-    const registryMediaMid = this.trackRegistry.get(`tencent:${urlId}`)?.mediaMid || urlId
+    // media_mid 与歌曲 mid 常常不同。播放前若 registry 没有有效值，主动补全并写回，
+    // 避免旧队列跨容器重启后用 songMid 发出“成功但不存在”的 purl。
+    const rawRegistryMediaMid = this.trackRegistry.get(`tencent:${urlId}`)?.mediaMid
+    let mediaMid = this.safeTencentMediaMid(rawRegistryMediaMid)
+    if (!mediaMid) {
+      // fetchTencentMediaMid 内部的 fetchTencentTrackById 会调用 registerTracks，
+      // 但响应可能没有 mediaMid；显式写回可保证恢复值落在 registry。
+      mediaMid = this.safeTencentMediaMid(await this.fetchTencentMediaMid(urlId))
+      if (mediaMid) this.registerTencentMediaMid(urlId, mediaMid)
+    }
+    let registryMediaMid = mediaMid || urlId
+    // 无法从详情恢复时仍沿用旧行为，以 songMid 发起最后尝试。
 
     // 本地调试（TENCENT_FORCE_RELAY=1）：跳过服务器直连，强制先走浏览器中继
     let relayAttempted = false
@@ -2322,12 +2401,14 @@ export class MusicProvider {
     // 风控/不可达），过早返回会让中继永远没有机会。分类在最后统一决定。
     const timedOut = first.reason === 'timeout'
 
-    // 权限拒绝（104003/104013）与 media_mid 无关，跳过详情恢复。
+    // 权限拒绝（104003/104013）与 media_mid 无关；已在播放前成功恢复时也不再重复拉详情。
     const denied = first.upstreamCode === 104003 || first.upstreamCode === 104013
-    if (!denied && !timedOut) {
-      // media_mid 与歌曲 mid 不一致时，从歌曲详情恢复真实 media_mid 后重试一次。
-      const detailMediaMid = await this.fetchTencentMediaMid(urlId)
+    if (!denied && !timedOut && registryMediaMid === urlId) {
+      // 播放前恢复失败时仍保留 vkey 失败后的重试通道。
+      const detailMediaMid = this.safeTencentMediaMid(await this.fetchTencentMediaMid(urlId))
       if (detailMediaMid && detailMediaMid !== registryMediaMid) {
+        registryMediaMid = detailMediaMid
+        this.registerTencentMediaMid(urlId, detailMediaMid)
         const retry = await this.callTencentVkey(urlId, detailMediaMid, candidates, uin, cookie)
         if (retry.url) {
           if (!cookie) this.streamUrlCache.set(`tencent:${urlId}:${bitrate}`, retry.url)
@@ -2371,10 +2452,16 @@ export class MusicProvider {
    */
   private async tryTencentRelay(
     songMid: string,
-    mediaMid: string,
+    rawMediaMid: string,
     candidates: TencentFileType[],
   ): Promise<string | null> {
     if (!this.qqRelayRequester) return null
+    const parsedMediaMid = this.safeTencentMediaMid(rawMediaMid)
+    if (!parsedMediaMid) {
+      logger.warn(`Tencent invalid media_mid rejected before relay: ${songMid}`)
+      return null
+    }
+    const mediaMid = parsedMediaMid
     try {
       const filenames = candidates.map((c) => `${c.code}${mediaMid}${c.ext}`)
       const legacyPayload = {
@@ -2407,8 +2494,14 @@ export class MusicProvider {
         const codes = Array.isArray(relData?.midurlinfo)
           ? relData.midurlinfo.map((e: any) => `${String(e?.filename ?? '?')}:${Number(e?.result ?? 0)}`).join(' ')
           : 'no midurlinfo'
+        // relayedUin is only the request-parameter echo (we send uin='0'); it does
+        // not prove whether the browser relay carried a cookie identity. The
+        // identity actually appears in a usable purl's uin query parameter.
+        const purlHasIdentity = Array.isArray(relData?.midurlinfo)
+          ? relData.midurlinfo.some((entry: any) => typeof entry?.purl === 'string' && /[?&]uin=\d+/.test(entry.purl))
+          : false
         logger.warn(
-          `Tencent relay returned no usable purl: ${songMid} media=${mediaMid} relayedUin=${relData?.uin ? 'present' : 'absent'} results=[${codes}]`,
+          `Tencent relay returned no usable purl: ${songMid} media=${mediaMid} relayedUin=${relData?.uin ? 'present' : 'absent'} purlUin=${purlHasIdentity ? 'present' : 'absent'} results=[${codes}]`,
         )
         return null
       }
@@ -2429,11 +2522,19 @@ export class MusicProvider {
    */
   private async callTencentVkey(
     songMid: string,
-    mediaMid: string,
+    rawMediaMid: string,
     candidates: TencentFileType[],
     uin: string,
     cookie?: string,
   ): Promise<StreamUrlResult & { upstreamCode?: number }> {
+    // Defense in depth: every mediaMid reaching filename construction passes
+    // through the same strict whitelist as client-supplied refs.
+    const parsedMediaMid = this.safeTencentMediaMid(rawMediaMid)
+    if (!parsedMediaMid) {
+      logger.warn(`Tencent invalid media_mid rejected before vkey: ${songMid}`)
+      return { url: null, reason: 'upstream_failed', detail: 'QQ 音乐 media_mid 无效' }
+    }
+    const mediaMid = parsedMediaMid
     const filenames = candidates.map((c) => `${c.code}${mediaMid}${c.ext}`)
     const songmids = filenames.map(() => songMid)
     const songtypes = filenames.map(() => 0)
@@ -2580,7 +2681,7 @@ export class MusicProvider {
   /** 通过单曲详情接口恢复 media_mid（明文 → 签名 → 旧版逐级降级）。 */
   private async fetchTencentMediaMid(mid: string): Promise<string | null> {
     const track = await this.fetchTencentTrackById(mid)
-    return track?.mediaMid || null
+    return this.safeTencentMediaMid(track?.mediaMid)
   }
 
   async getLyric(
@@ -2745,7 +2846,7 @@ export class MusicProvider {
     // 1. Check registry
     const registryKey = `${source}:${sourceId}`
     const cached = this.trackRegistry.get(registryKey)
-    if (cached) {
+    if (cached && !cached.refOnly) {
       logger.info(`Track ID lookup cache hit: ${source}/${sourceId}`)
       return { ...cached, id: nanoid() }
     }
@@ -2998,7 +3099,10 @@ export class MusicProvider {
       if (maxTracks !== undefined && indexed.ids.length > maxTracks) {
         throw new PlaylistSearchLimitError(indexed.ids.length)
       }
-      const allPresent = indexed.ids.every((id) => this.trackRegistry.get(`${indexed.source}:${id}`) !== undefined)
+      const allPresent = indexed.ids.every((id) => {
+        const meta = this.trackRegistry.get(`${indexed.source}:${id}`)
+        return meta !== undefined && !meta.refOnly
+      })
       if (allPresent) {
         logger.info(`Playlist index hit: ${source}/${playlistId} (${indexed.ids.length} tracks)`)
         return { ids: indexed.ids, total: indexed.ids.length }
