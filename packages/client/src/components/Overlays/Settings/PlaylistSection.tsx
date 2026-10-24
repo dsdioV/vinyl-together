@@ -2,7 +2,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { MusicSource, MyPlatformAuth, Playlist } from '@music-together/shared'
 import { ListMusic, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useAutoFetchPlaylists } from '@/hooks/useAutoFetchPlaylists'
+import { useMemo, useState } from 'react'
 
 interface PlaylistSectionProps {
   platform: MusicSource
@@ -26,6 +27,7 @@ function PlaylistSkeleton() {
 }
 
 export function PlaylistSection({
+  platform,
   myStatus,
   playlists,
   loading,
@@ -43,17 +45,24 @@ export function PlaylistSection({
     [playlists, currentPage],
   )
 
-  // Reset page when playlist count changes (e.g. after refresh)
-  useEffect(() => {
+  // 歌单数量变化时回到第一页（如刷新后）。
+  // 用「渲染期调整 state」而不是 useEffect —— 后者会多跑一轮渲染。
+  const [prevCount, setPrevCount] = useState(playlists.length)
+  if (prevCount !== playlists.length) {
+    setPrevCount(playlists.length)
     setCurrentPage(1)
-  }, [playlists.length])
+  }
 
-  // Auto-fetch playlists when logged in and no playlists loaded
-  useEffect(() => {
-    if (isLoggedIn && playlists.length === 0 && !loading) {
-      onFetchMyPlaylists()
-    }
-  }, [isLoggedIn, playlists.length, loading, onFetchMyPlaylists])
+  // 登录身份标识：同一账号重复渲染视为同一次登录，换账号/重新登录才算新的一次。
+  const loginKey = `${platform}:${isLoggedIn ? `${myStatus?.nickname ?? ''}#${myStatus?.vipType ?? 0}` : 'guest'}`
+
+  // 每次登录只自动拉一次歌单 —— 空列表不会触发无限重试，详见 useAutoFetchPlaylists。
+  useAutoFetchPlaylists({
+    enabled: isLoggedIn,
+    loginKey,
+    loading,
+    fetch: onFetchMyPlaylists,
+  })
 
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">

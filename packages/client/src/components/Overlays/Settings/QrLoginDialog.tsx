@@ -3,8 +3,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { PLATFORM_LABELS } from '@/lib/platform'
 import type { MusicSource } from '@music-together/shared'
 import { QR_STATUS, QR_TIMING } from '@music-together/shared'
+import { useQrStatusPolling } from '@/hooks/useQrStatusPolling'
 import { Loader2, RefreshCw, CheckCircle2, AlertCircle, Smartphone } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 interface QrLoginDialogProps {
   open: boolean
@@ -27,48 +28,27 @@ export function QrLoginDialog({
   onRefresh,
   onCheckStatus,
 }: QrLoginDialogProps) {
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const label = PLATFORM_LABELS[platform] ?? platform
   const scanApp = platform === 'tencent' ? '手机QQ' : `${label} App`
-
-  // Auto-poll QR status every 2 seconds when dialog is open and QR is generated
-  useEffect(() => {
-    if (!open || !qrData?.key) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-      return
-    }
-
-    pollRef.current = setInterval(() => {
-      onCheckStatus(qrData.key)
-    }, QR_TIMING.POLL_INTERVAL_MS)
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-    }
-  }, [open, qrData?.key, onCheckStatus])
-
-  // On success or expiry: stop polling immediately + auto-close on success
-  useEffect(() => {
-    const status = qrStatus?.status
-    if (status === QR_STATUS.EXPIRED || status === QR_STATUS.SUCCESS) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current)
-        pollRef.current = null
-      }
-    }
-    if (status === QR_STATUS.SUCCESS) {
-      const t = setTimeout(() => onOpenChange(false), QR_TIMING.SUCCESS_CLOSE_DELAY_MS)
-      return () => clearTimeout(t)
-    }
-  }, [qrStatus?.status, onOpenChange])
-
   const statusCode = qrStatus?.status ?? 0
+
+  // 过期/成功即停止轮询。用声明式的 active 表达，避免再去手工 clearInterval。
+  const pollingActive = open && statusCode !== QR_STATUS.EXPIRED && statusCode !== QR_STATUS.SUCCESS
+
+  // 固定节奏轮询扫码状态。轮询节奏与父组件渲染次数解耦 —— 详见 useQrStatusPolling。
+  useQrStatusPolling({
+    active: pollingActive,
+    key: qrData?.key,
+    intervalMs: QR_TIMING.POLL_INTERVAL_MS,
+    onPoll: onCheckStatus,
+  })
+
+  // 成功后延迟自动关闭对话框
+  useEffect(() => {
+    if (statusCode !== QR_STATUS.SUCCESS) return
+    const t = setTimeout(() => onOpenChange(false), QR_TIMING.SUCCESS_CLOSE_DELAY_MS)
+    return () => clearTimeout(t)
+  }, [statusCode, onOpenChange])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

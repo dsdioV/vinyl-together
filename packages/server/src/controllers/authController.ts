@@ -71,7 +71,15 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
       if (result.status === QR_STATUS.SUCCESS && result.cookie && !qrSuccessHandled) {
         qrSuccessHandled = true
 
-        const infoResult = await provider.getUserInfo(result.cookie)
+        // 与手动 Cookie 路径保持一致：临时错误重试一次。
+        // 二维码是一次性的，这里若不重试，用户扫码授权成功后仍会看到失败，
+        // 且没有第二次机会（只能重新生成二维码）。
+        let infoResult = await provider.getUserInfo(result.cookie)
+        if (!infoResult.ok && infoResult.reason === 'error') {
+          logger.info(`${platform} QR getUserInfo failed (error), retrying once...`)
+          await new Promise((r) => setTimeout(r, 1500))
+          infoResult = await provider.getUserInfo(result.cookie)
+        }
 
         if (infoResult.ok) {
           const userInfo = infoResult.data
@@ -86,14 +94,24 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
               userInfo.vipType,
             )
             broadcastAuthStatus(io, socket, mapping)
+            socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+              success: true,
+              message: `已登录为 ${userInfo.nickname}`,
+              platform,
+              cookie: result.cookie,
+            })
+            logger.info(`${platform} QR login success: ${userInfo.nickname} (vipType=${userInfo.vipType})`)
+          } else {
+            // socket 尚未加入房间：此时无法写入房间 Cookie 池，
+            // 必须明确告知失败，否则前端会显示「已登录」而实际什么都没发生。
+            socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+              success: false,
+              message: '登录成功，但当前未加入房间，请进入房间后重新登录',
+              platform,
+              reason: 'error',
+            })
+            logger.warn(`${platform} QR login succeeded but socket has no room mapping`, { socketId: socket.id })
           }
-          socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
-            success: true,
-            message: `已登录为 ${userInfo.nickname}`,
-            platform,
-            cookie: result.cookie,
-          })
-          logger.info(`${platform} QR login success: ${userInfo.nickname} (vipType=${userInfo.vipType})`)
         } else {
           socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
             success: false,

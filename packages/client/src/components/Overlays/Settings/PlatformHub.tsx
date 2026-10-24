@@ -55,10 +55,31 @@ export function PlatformHub() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.statusLoaded, auth.myStatus])
 
+  // 回调必须保持引用稳定：它们会进入子组件的 effect 依赖数组，
+  // 内联箭头函数会让子组件每次渲染都重建定时器/重复请求。
   const handleQrLogin = useCallback(() => {
     auth.requestQrCode(activePlatform)
     setQrDialogOpen(true)
   }, [auth, activePlatform])
+
+  const handleQrRefresh = useCallback(() => {
+    auth.requestQrCode(auth.qrPlatform)
+  }, [auth])
+
+  const handleQrDialogOpenChange = useCallback(
+    (open: boolean) => {
+      setQrDialogOpen(open)
+      if (!open) auth.resetQr()
+    },
+    [auth],
+  )
+
+  const handleCheckQrStatus = useCallback(
+    (key: string) => {
+      auth.checkQrStatus(key)
+    },
+    [auth],
+  )
 
   const handleCookieLogin = useCallback((platform: MusicSource) => {
     setCookieDialogPlatform(platform)
@@ -177,16 +198,13 @@ export function PlatformHub() {
       {/* QR Dialog */}
       <QrLoginDialog
         open={qrDialogOpen}
-        onOpenChange={(open: boolean) => {
-          setQrDialogOpen(open)
-          if (!open) auth.resetQr()
-        }}
+        onOpenChange={handleQrDialogOpenChange}
         platform={auth.qrPlatform}
         qrData={auth.qrData}
         qrStatus={auth.qrStatus}
         isLoading={auth.isQrLoading}
-        onRefresh={() => auth.requestQrCode(auth.qrPlatform)}
-        onCheckStatus={(key: string) => auth.checkQrStatus(key)}
+        onRefresh={handleQrRefresh}
+        onCheckStatus={handleCheckQrStatus}
       />
 
       {/* Manual Cookie Dialog */}
