@@ -42,5 +42,5 @@
 | 6. 代码规范     | [coding-standards.md](architecture/coding-standards.md)       | 语言模块、路径别名、状态更新、错误处理                                                              |
 | 7. UI 设计规范  | [ui-design.md](architecture/ui-design.md)                     | 组件库、颜色系统、动画、歌词、响应式                                                                |
 | 8. 开发指南     | [dev-guide.md](architecture/dev-guide.md)                     | 快速启动、构建、添加组件、注意事项                                                                  |
-| 9. 部署方案     | [deployment.md](architecture/deployment.md)                   | Docker、FFmpeg、本地音频数据盘、CORS、Watchtower、1Panel                                            |
+| 9. 部署方案     | [deployment.md](architecture/deployment.md)                   | Docker、FFmpeg、本地音频数据盘、CORS、手动部署流程、1Panel                                          |
 | 10. 音源与播放链接 | [music-sources.md](architecture/music-sources.md)           | 四平台（网易云/QQ/酷狗/哔哩哔哩）降级链、QQ 海外行为、JSONP 细节、浏览器中继协议、测试与验证  |

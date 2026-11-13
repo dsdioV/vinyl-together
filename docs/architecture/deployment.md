@@ -14,9 +14,25 @@ Docker 容器 (:3001)
 ## CI/CD 流程
 
 1. **push 到 main** → GitHub Actions 构建 Docker 镜像 → 推送到 GHCR（`ghcr.io`）
-2. **服务器上** Watchtower 每 5 分钟检查镜像更新 → 自动拉取并重启容器
+2. **服务器上**手动拉取并重建容器：
 
-零人工干预，GitHub 零额外 Secrets（使用自带的 `GITHUB_TOKEN`）。
+   ```bash
+   cd /opt/projects/vinyl-together
+   docker compose pull && docker compose up -d
+   ```
+
+GitHub 零额外 Secrets（使用自带的 `GITHUB_TOKEN`）。
+
+### 为什么不用 Watchtower 自动更新
+
+本项目的**服务端状态全部在内存里**（无数据库）：房间、队列、播放进度、房间级 Cookie 池都随进程消失。
+重建容器 = 清空所有人的房间并把所有人踢出去。
+
+自动更新（如 Watchtower 每 5 分钟轮询）会让「什么时候重启」完全脱离人工控制——很可能正好有人在听歌。
+因此**刻意不做自动更新**，部署时机由人决定：确认没有活跃房间（或接受中断）后再拉取。
+
+> ⚠️ 历史文档曾写「Watchtower 每 5 分钟自动更新」，但生产部署里**从未真正运行过 Watchtower**，
+> 镜像长期停留在旧版本。现已改为如实描述手动流程。若将来仍想要自动更新，务必先评估重启代价。
 
 ## Docker 多阶段构建
 
@@ -50,22 +66,29 @@ Docker 容器 (:3001)
 
 ## 服务器部署命令
 
+生产使用 `docker compose`（部署目录 `/opt/projects/vinyl-together`，只放 compose 与 `.env`，
+源码不落在服务器上）。核心等价命令：
+
 ```bash
-# 启动应用容器
+# 首次部署 / 更新：拉取新镜像并重建容器
+cd /opt/projects/vinyl-together
+docker compose pull && docker compose up -d
+```
+
+等价的 `docker run` 形态（仅作参考，实际以 compose 为准）：
+
+```bash
 IDENTITY_SECRET="$(openssl rand -hex 32)"
 docker run -d --name vinyl-together --restart unless-stopped \
-  -p 3001:3001 \
-  -v vinyl-local-audio:/data/local-audio \
+  -p 127.0.0.1:20020:3001 \
+  -v /data/projects/vinyl-together/local-audio:/data/local-audio \
   -e IDENTITY_SECRET="$IDENTITY_SECRET" \
   -e LOCAL_AUDIO_DATA_DIR=/data/local-audio \
   ghcr.io/dsdiov/vinyl-together:latest
-
-# 启动 Watchtower 自动更新
-docker run -d --name watchtower --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -e WATCHTOWER_CLEANUP=true \
-  containrrr/watchtower --interval 300 vinyl-together
 ```
+
+> 宿主层 Caddy 反代 `mt.voidsd.top` → `localhost:20020`（容器内仍是 3001）。
+> 镜像构建完成后容器**不会自动更新**，必须执行上面的 `pull && up -d`。
 
 生产镜像已包含 FFmpeg/FFprobe。房间本地音频首版不跨服务重启持久化，服务启动时会清理无主文件；挂载存储可避免占用系统盘并提供临时上传空间。
 
