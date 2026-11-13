@@ -39,11 +39,28 @@ export function useAuthSync() {
       platform?: MusicSource
       cookie?: string
       reason?: 'expired' | 'error' | 'no_token'
+      credentialVerified?: boolean
     }) => {
       if (data.success) {
         // 持久化 cookie
         if (data.platform && data.cookie) {
           storage.upsertAuthCookie(data.platform, data.cookie)
+        }
+
+        // 凭证未被上游确认时明确提示，别让「待确认」看起来像「完全正常」
+        if (data.credentialVerified === false && data.platform) {
+          const name = PLATFORM_NAMES[data.platform] ?? data.platform
+          toast.warning(`${name} 凭证未能确认，若播放异常请重新扫码登录`, {
+            id: `auth-unverified-${data.platform}`,
+          })
+          if (pendingAutoResendRef.current > 0) pendingAutoResendRef.current--
+          return
+        }
+
+        // 登录成功：清掉该平台遗留的「已过期 / 未能确认」提示
+        if (data.platform) {
+          toast.dismiss(`auth-expired-${data.platform}`)
+          toast.dismiss(`auth-unverified-${data.platform}`)
         }
 
         // 自动恢复成功时静默，手动操作时弹 toast
@@ -61,14 +78,23 @@ export function useAuthSync() {
         }
 
         if (data.reason === 'expired') {
-          toast.warning(`${name} 登录验证失败，将在下次进入房间时重试`, { id: `auth-expired-${data.platform}` })
+          // 过期是可操作状态：光提示「下次重试」没有意义，用户必须重新扫码。
+          // 用 sticky toast（不自动消失）确保用户看得到，并引导到设置页。
+          toast.warning(`${name} 登录已过期，请到设置 → 账号重新扫码登录`, {
+            id: `auth-expired-${data.platform}`,
+            duration: Infinity,
+          })
         } else if (data.reason === 'error') {
-          toast.info(`${name} 登录验证失败，将在下次进入房间时重试`, { id: `auth-error-${data.platform}` })
+          toast.info(`${name} 登录状态暂时无法验证，将在下次进入房间时重试`, {
+            id: `auth-error-${data.platform}`,
+          })
         } else {
           // 手动操作失败
           toast.error(data.message)
         }
-        // Cookie 永不删除 — 只有 useAuth.logout() 有权删除
+        // Cookie 永不删除 — 只有 useAuth.logout() 有权删除。
+        // 过期时保留 Cookie 是刻意的：用户可能只是 musickey 到期，
+        // 重新扫码前不必强制其从零操作；也避免误判导致凭证丢失。
       }
     }
 

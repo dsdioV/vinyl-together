@@ -21,7 +21,14 @@ interface VipLoginData {
   identity?: {
     vip?: number
     svip?: number
+    /** VIP 等级（2 = 绿钻 LV2 …），仅作展示参考。 */
+    level?: number
   }
+  /**
+   * 超级会员标记。实测（2026-11-13，有效绿钻账号）该字段出现在**顶层**，
+   * 而 `identity` 里只有 `vip`——只读 `identity.svip` 会让超级会员永远被降级为普通 VIP。
+   */
+  svip?: number
 }
 
 interface ProfileData {
@@ -36,6 +43,29 @@ interface MusicKeyData {
   musickey?: string
   musicid?: number
   refresh_token?: string
+  openid?: string
+  access_token?: string
+  /** 新 musickey 的到期时间（Unix 秒）。 */
+  expired_at?: number
+}
+
+/**
+ * 凭证续期用的元数据，随 Cookie 一起持久化在 Cookie 字符串中（`o_openid` / `o_access_token`），
+ * 不额外引入存储层。
+ *
+ * 为什么需要它：`music.login.LoginServer.Login` 的续期协议要求
+ * `openid + access_token + refresh_token + musickey` 齐全，而旧实现只保存了
+ * `musickey + o_refresh_token`，把 openid/access_token 丢掉了——于是即使
+ * refresh_token 还在，也无法续期，只能等用户手动重扫。
+ */
+const REFRESH_META_KEYS = ['o_openid', 'o_access_token'] as const
+
+/** musickey 剩余有效期低于该阈值时主动续期（天）。 */
+export const MUSICKEY_REFRESH_THRESHOLD_DAYS = 7
+
+function daysUntil(unixSeconds: number | undefined): number | null {
+  if (!unixSeconds || unixSeconds <= 0) return null
+  return (unixSeconds * 1000 - Date.now()) / 86_400_000
 }
 
 interface PlaylistItem {
@@ -134,10 +164,22 @@ interface TencentApiConfig {
   commExtras?: Record<string, unknown>
 }
 
+/** 原始响应：保留上游 code，供调用方自行分类（成功 / 会话过期 / 其他）。 */
+interface TencentRawResponse<T> {
+  code: number | undefined
+  data: T | undefined
+}
+
 /**
- * 向 musicu.fcg 接口发送带有底层加密签名的 POST 请求
+ * 向 musicu.fcg 接口发送带有底层加密签名的 POST 请求，返回**未分类**的原始结果。
+ *
+ * 与 tencentApiRequest 的区别：不把业务 code 转成异常，让调用方能区分
+ * 「凭证失效（1000/104400/104401）」与「其他上游错误（如 500003 风控）」。
+ * 认证类判断必须走这条路径——把 code 误判成网络错误会让过期凭证被静默接受。
  */
-async function tencentApiRequest<T = Record<string, unknown>>(reqConfig: TencentApiConfig): Promise<T> {
+async function tencentApiRequestRaw<T = Record<string, unknown>>(
+  reqConfig: TencentApiConfig,
+): Promise<TencentRawResponse<T>> {
   const data = {
     comm: {
       cv: 4747474,
@@ -179,13 +221,25 @@ async function tencentApiRequest<T = Record<string, unknown>>(reqConfig: Tencent
   const body = (await response.json()) as TencentApiResponse
   const reqRes = body?.req
 
-  if (reqRes?.code !== 0 && reqRes?.code !== undefined) {
-    if (reqRes.code === 2000) throw new Error(`[SignInvalidError] API ${reqConfig.method} 签名无效 (2000)`)
-    if (reqRes.code === 1000) throw new Error(`[CredentialExpiredError] API ${reqConfig.method} 会话过期 (1000)`)
-    throw new Error(`[ResponseCodeError] API ${reqConfig.method} 报错，code：${reqRes?.code}`)
+  return {
+    code: reqRes?.code,
+    data: (reqRes?.data || body) as T | undefined,
+  }
+}
+
+/**
+ * 向 musicu.fcg 接口发送带有底层加密签名的 POST 请求
+ */
+async function tencentApiRequest<T = Record<string, unknown>>(reqConfig: TencentApiConfig): Promise<T> {
+  const raw = await tencentApiRequestRaw<T>(reqConfig)
+
+  if (raw.code !== 0 && raw.code !== undefined) {
+    if (raw.code === 2000) throw new Error(`[SignInvalidError] API ${reqConfig.method} 签名无效 (2000)`)
+    if (raw.code === 1000) throw new Error(`[CredentialExpiredError] API ${reqConfig.method} 会话过期 (1000)`)
+    throw new Error(`[ResponseCodeError] API ${reqConfig.method} 报错，code：${raw.code}`)
   }
 
-  return (reqRes?.data || body) as T
+  return raw.data as T
 }
 
 // ---------------------------------------------------------------------------
@@ -471,43 +525,127 @@ export async function checkQrStatus(qrsig: string): Promise<{
 
 // UserInfoData 和 GetUserInfoResult 从 authProvider.ts 统一导入
 
+/**
+ * 凭证存活探测结论。
+ *
+ * - `valid`：上游明确确认凭证可用
+ * - `expired`：上游明确以鉴权失败码拒绝（1000 / 104400 / 104401）
+ * - `unknown`：无法判定（网络错误、超时、风控 500003 等），**不得**据此判为过期
+ */
+export type CredentialProbeResult = 'valid' | 'expired' | 'unknown'
+
+/** 上游以「登录态无效」拒绝时返回的 code。 */
+const TENCENT_AUTH_FAILURE_CODES = new Set([1000, 104400, 104401])
+
+/**
+ * 探测 QQ 音乐凭证是否**当前真实有效**。
+ *
+ * 为什么必须单独探测：`vip_login_base` 对任何 Cookie（匿名、过期、伪造）都返回
+ * `code: 0` + 一套数值全零的 `identity`，无法区分「凭证已失效」与「凭证有效但未开绿钻」。
+ * 历史上的 bug 正是因此把过期凭证当成「已登录的非 VIP 用户」静默接受。
+ *
+ * `music.UserInfo.userInfoServer.GetLoginUserInfo` 则是有鉴权的：凭证有效返回
+ * `code: 0` 且带 `info.nick`；凭证失效返回 `code: 1000`。实测矩阵（2026-11-13）：
+ *
+ * | Cookie 状态        | GetLoginUserInfo | vip_login_base          |
+ * | ------------------ | ---------------- | ----------------------- |
+ * | 有效 VIP           | code 0           | code 0, vip=1 svip=1    |
+ * | 过期（旧 musickey）| code 1000        | code 0, 全零            |
+ * | 伪造 key           | code 1000        | code 0, 全零            |
+ * | 无 Cookie          | code 1000        | code 0, 全零            |
+ */
+export async function probeCredential(cookie: string): Promise<CredentialProbeResult> {
+  try {
+    const raw = await tencentApiRequestRaw<{
+      errMsg?: string
+      info?: { nick?: string }
+    }>({
+      module: 'music.UserInfo.userInfoServer',
+      method: 'GetLoginUserInfo',
+      cookie,
+      param: {},
+    })
+
+    if (raw.code === 0) return 'valid'
+    if (raw.code !== undefined && TENCENT_AUTH_FAILURE_CODES.has(raw.code)) return 'expired'
+    // 500003（风控）等：既没确认有效、也没明确拒绝，交给调用方标记为「未确认」
+    logger.warn(`QQ credential probe inconclusive: code=${raw.code}`)
+    return 'unknown'
+  } catch (err) {
+    logger.warn('QQ credential probe failed', { error: err instanceof Error ? err.message : String(err) })
+    return 'unknown'
+  }
+}
+
+/** 从 fcg_get_profile_homepage 取昵称（该接口无鉴权，对匿名也返回公开昵称，仅作兜底）。 */
+async function fetchTencentProfileNickname(uin: string, cookie: string): Promise<string> {
+  const url = `https://c6.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?ct=20&cv=4747474&cid=205360838&userid=${uin}`
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      Cookie: cookie,
+      Referer: 'https://y.qq.com/',
+    },
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  const body = (await response.json()) as { data?: ProfileData }
+  const creator = body?.data?.creator || {}
+  return creator.nick || creator.name || `QQ用户${uin}`
+}
+
 export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
+  const originalCookie = cookie
   try {
     const uin = getCookieValue(cookie, 'uin')
     if (!uin) {
+      return { ok: false, reason: 'no_token' }
+    }
+
+    // ---- 第一步：确认凭证是否真的还有效 ----
+    // 这一步是修复「过期凭证被当成已登录非 VIP 用户」的核心：
+    // 旧实现只检查 cookie 里有没有 uin，而 vip_login_base 对失效凭证从不报错。
+    const probe = await probeCredential(cookie)
+    if (probe === 'expired') {
+      logger.info(`QQ credential expired for uin=${uin}`)
       return { ok: false, reason: 'expired' }
     }
 
-    // 以前使用的 userTag.UserTagServer 已被风控拦截且无鉴权。
-    // 这里我们直接利用 getEncryptUin 背后用到的 fcg_get_profile_homepage.fcg 接口
-    // 它返回的数据中直接包含了 creator.nick
-    const url = `https://c6.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?ct=20&cv=4747474&cid=205360838&userid=${uin}`
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        Cookie: cookie,
-        Referer: 'https://y.qq.com/',
-      },
-      signal: AbortSignal.timeout(10_000),
-    })
+    // ---- 续期尝试（过期前主动续，过期后救不回来）----
+    // 实测：musickey 有效时 LoginServer.Login 能换出全新 key；一旦过期则返回 1000。
+    // 因此这里只在 probe 判定为 valid 时才尝试，且失败不影响本次登录结果。
+    const needsRefresh = probe === 'valid' && (await shouldRefreshMusickey(cookie))
+    if (needsRefresh) {
+      const refreshed = await tryRefreshMusickey(cookie)
+      if (refreshed) {
+        logger.info(`QQ musickey refreshed proactively for uin=${uin}`)
+        // 用新凭证继续后续流程，并把新 Cookie 交回调用方
+        cookie = refreshed
+      }
+    }
 
-    const body = (await response.json()) as { data?: ProfileData }
-    const creator = body?.data?.creator || {}
+    // ---- 第二步：取昵称 ----
+    // 探测为 valid 时优先用 GetLoginUserInfo 的昵称；unknown 时退回无鉴权的资料页。
+    let nickname: string
+    if (probe === 'valid') {
+      const profile = await readLoginUserNickname(cookie)
+      nickname = profile || (await fetchTencentProfileNickname(uin, cookie))
+    } else {
+      nickname = await fetchTencentProfileNickname(uin, cookie)
+    }
 
     // 尝试提取昵称，因为 QQ 返回的可能是 Base64 编码的昵称
-    let rawNick = creator.nick || creator.name || `QQ用户${uin}`
-
-    // 如果符合 Base64 特征，尝试解码
-    if (/^[a-zA-Z0-9+/]+={0,2}$/.test(rawNick) && rawNick.length % 4 === 0) {
+    if (/^[a-zA-Z0-9+/]+={0,2}$/.test(nickname) && nickname.length % 4 === 0) {
       try {
-        rawNick = Buffer.from(rawNick, 'base64').toString('utf8')
+        nickname = Buffer.from(nickname, 'base64').toString('utf8')
       } catch {
         // 解码失败则保留原样
       }
     }
-    const nickname = rawNick
 
-    // 检查 VIP 状态
+    // ---- 第三步：取 VIP 等级 ----
+    // 注意 vip_login_base 对失效凭证静默返回全零，因此它**只**用来读等级，
+    // 不能用来判断凭证是否有效（有效性已由第一步的 probeCredential 决定）。
     let vipType = 0
     try {
       const vipData = await tencentApiRequest<VipLoginData>({
@@ -517,9 +655,10 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
         param: {},
       })
       logger.info(`QQ VIP Data (vip_login_base): ${JSON.stringify(vipData)}`)
-      // vip_login_base 返回的格式中含有 identity.vip 及 identity.svip
-      const isVip = vipData?.identity?.svip ? 2 : vipData?.identity?.vip ? 1 : 0
-      vipType = isVip
+      // 超级会员标记可能出现在 identity 内或顶层，两处都要看（见 VipLoginData 注释）。
+      const isSvip = Boolean(vipData?.identity?.svip || vipData?.svip)
+      const isVip = Boolean(vipData?.identity?.vip)
+      vipType = isSvip ? 2 : isVip ? 1 : 0
     } catch (err: unknown) {
       logger.error('QQ VIP Check failed:', err instanceof Error ? err.message : String(err))
     }
@@ -530,11 +669,128 @@ export async function getUserInfo(cookie: string): Promise<GetUserInfoResult> {
         nickname,
         vipType,
         userId: Number(uin),
+        // unknown 时如实告知调用方「未能确认」，避免 UI 把未确认当成正常登录
+        credentialVerified: probe === 'valid',
+        // Cookie 被续期时交回新值，避免续期结果丢失（调用方负责持久化）
+        ...(originalCookie !== cookie ? { refreshedCookie: cookie } : {}),
       },
     }
   } catch (err) {
     logger.error('QQ getUserInfo failed', err)
     return { ok: false, reason: 'error' }
+  }
+}
+
+/**
+ * 续期冷却：同一份凭证 12 小时内只尝试一次。
+ *
+ * 为什么需要：getUserInfo 在每次进房补发 Cookie 时都会跑。若每次都调续期接口，
+ * 一个房间反复重连就会打成刷新风暴。
+ */
+const REFRESH_COOLDOWN_MS = 12 * 60 * 60 * 1000
+const lastRefreshAttempt = new Map<string, number>()
+
+function refreshThrottleKey(cookie: string): string {
+  return getCookieValue(cookie, 'qm_keyst') ?? getCookieValue(cookie, 'qqmusic_key') ?? cookie.slice(0, 64)
+}
+
+/** 凭证是否需要在过期前主动续期。 */
+async function shouldRefreshMusickey(cookie: string): Promise<boolean> {
+  // 没有 refresh_token 就无从续期
+  if (!getCookieValue(cookie, 'o_refresh_token')) return false
+
+  const key = refreshThrottleKey(cookie)
+  const last = lastRefreshAttempt.get(key)
+  if (last !== undefined && Date.now() - last < REFRESH_COOLDOWN_MS) return false
+
+  const expiresAt = Number(getCookieValue(cookie, 'o_expired_at') ?? '0')
+  const remainingDays = daysUntil(expiresAt)
+  // 未知到期时间（旧版本扫码保存的 Cookie）也要续一次，以补上元数据
+  if (remainingDays === null) return true
+  return remainingDays < MUSICKEY_REFRESH_THRESHOLD_DAYS
+}
+/**
+ * 用现有凭证换一张新的 musickey。
+ *
+ * 协议要点（实测 2026-11-13）：`music.login.LoginServer.Login` 需要
+ * `str_musicid + musickey + refresh_token`，且 `comm.authst` 必须是当前 musickey。
+ * **凭证过期后该接口返回 1000**，所以它只能用于「过期前主动续」，
+ * 不能作为过期后的抢救手段。
+ *
+ * 成功时返回合并后的完整 Cookie 字符串（保留 o_refresh_token 等原有字段）；
+ * 失败返回 null，调用方保持原凭证不变。
+ */
+async function tryRefreshMusickey(cookie: string): Promise<string | null> {
+  const key = refreshThrottleKey(cookie)
+  lastRefreshAttempt.set(key, Date.now())
+
+  const uin = getCookieValue(cookie, 'uin')
+  const musickey = getCookieValue(cookie, 'qm_keyst') ?? getCookieValue(cookie, 'qqmusic_key')
+  const refreshToken = getCookieValue(cookie, 'o_refresh_token')
+  if (!uin || !musickey || !refreshToken) return null
+
+  try {
+    const raw = await tencentApiRequestRaw<MusicKeyData>({
+      module: 'music.login.LoginServer',
+      method: 'Login',
+      cookie,
+      commExtras: { authst: musickey, uin, tmeLoginType: '2' },
+      param: { str_musicid: uin, musickey, refresh_token: refreshToken },
+    })
+
+    if (raw.code !== 0 || !raw.data?.musickey) {
+      logger.warn(`QQ musickey refresh unsuccessful: code=${raw.code}`)
+      return null
+    }
+
+    return buildRefreshedCookie(cookie, raw.data)
+  } catch (err) {
+    logger.warn('QQ musickey refresh failed', { error: err instanceof Error ? err.message : String(err) })
+    return null
+  }
+}
+
+/**
+ * 把续期结果合并回 Cookie 字符串。
+ *
+ * 只覆盖会影响鉴权/续期的字段，其余（uin、o_refresh_token 等）原样保留，
+ * 避免丢失调用方原本持有的信息。
+ */
+function buildRefreshedCookie(original: string, data: MusicKeyData): string {
+  const pairs = new Map<string, string>()
+  for (const part of original.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq < 1) continue
+    pairs.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim())
+  }
+
+  const uin = getCookieValue(original, 'uin') ?? String(data.musicid ?? '')
+  const newKey = data.musickey as string
+  pairs.set('qm_keyst', newKey)
+  pairs.set('qqmusic_key', newKey)
+  if (uin) pairs.set('o_cookie', uin)
+  // refresh_token 在成功续期时通常不变，但一律采用上游返回值（若有）
+  if (data.refresh_token) pairs.set('o_refresh_token', data.refresh_token)
+  if (data.openid) pairs.set('o_openid', data.openid)
+  if (data.access_token) pairs.set('o_access_token', data.access_token)
+  if (data.expired_at) pairs.set('o_expired_at', String(data.expired_at))
+
+  return Array.from(pairs.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ')
+}
+/** 读取 GetLoginUserInfo 的昵称；失败返回 null（不抛异常）。 */
+async function readLoginUserNickname(cookie: string): Promise<string | null> {
+  try {
+    const raw = await tencentApiRequestRaw<{ info?: { nick?: string } }>({
+      module: 'music.UserInfo.userInfoServer',
+      method: 'GetLoginUserInfo',
+      cookie,
+      param: {},
+    })
+    return raw.code === 0 ? (raw.data?.info?.nick ?? null) : null
+  } catch {
+    return null
   }
 }
 
@@ -659,8 +915,22 @@ async function fetchMusicKeySession(code: string): Promise<string | null> {
     })
 
     if (data?.musickey && data?.musicid) {
-      // 完美提取！生成给 musicProvider / API 都可以通吃的凭证
-      return `uin=${data.musicid}; qm_keyst=${data.musickey}; qqmusic_key=${data.musickey}; o_cookie=${data.musicid}; o_refresh_token=${data.refresh_token || ''}`
+      // 完整提取：除鉴权用的 musickey 外，一并保存续期所需的元数据。
+      //
+      // 历史问题：旧实现只存 `o_refresh_token`，丢掉了 openid / access_token /
+      // expired_at。而 `LoginServer.Login` 的续期协议要求 openid + access_token
+      // 齐全，于是即使 refresh_token 还在也无法自动续期，只能等用户手动重扫。
+      const parts = [
+        `uin=${data.musicid}`,
+        `qm_keyst=${data.musickey}`,
+        `qqmusic_key=${data.musickey}`,
+        `o_cookie=${data.musicid}`,
+        `o_refresh_token=${data.refresh_token || ''}`,
+      ]
+      if (data.openid) parts.push(`o_openid=${data.openid}`)
+      if (data.access_token) parts.push(`o_access_token=${data.access_token}`)
+      if (data.expired_at) parts.push(`o_expired_at=${data.expired_at}`)
+      return parts.join('; ')
     }
     return null
   } catch (err) {

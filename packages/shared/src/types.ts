@@ -311,6 +311,19 @@ export interface MyPlatformAuth {
   loggedIn: boolean
   nickname?: string
   vipType?: number
+  /**
+   * 上一次校验时上游明确判定凭证已过期（凭证因此未写入房间池）。
+   *
+   * 与 loggedIn=false 的区别：未登录是「没给凭证」，过期是「给了但失效了」。
+   * 前端必须区别提示——把过期显示成「未登录」会让用户以为登录没生效，
+   * 把过期显示成「已登录」则是本次要修的 bug（看起来像没开 VIP）。
+   */
+  expired?: boolean
+  /**
+   * 凭证有效性是否已被上游明确确认。
+   * false 表示「未能确认」（网络/风控），UI 应显示待确认而不是伪装成正常。
+   */
+  credentialVerified?: boolean
 }
 
 /** 歌单元数据（用于歌单列表展示） */

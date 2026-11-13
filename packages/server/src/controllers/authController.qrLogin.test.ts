@@ -93,7 +93,8 @@ describe('AUTH_CHECK_QR success path', () => {
     const harness = makeHarness()
     await harness.dispatch(EVENTS.AUTH_CHECK_QR, { key: 'qr-key', platform: 'tencent' })
 
-    expect(mocks.addCookie).toHaveBeenCalledWith('room-1', 'tencent', 'user-1', SUCCESS_COOKIE, 'Voidsd', 1)
+    // 第 7 个参数是 credentialVerified：undefined 表示该用例的 mock 未提供（等价于「不区分」）
+    expect(mocks.addCookie).toHaveBeenCalledWith('room-1', 'tencent', 'user-1', SUCCESS_COOKIE, 'Voidsd', 1, undefined)
     expect(harness.socketEmit).toHaveBeenCalledWith(EVENTS.AUTH_MY_STATUS, expect.anything())
     expect(harness.ioToEmit).toHaveBeenCalledWith(EVENTS.AUTH_STATUS_UPDATE, expect.anything())
     expect(cookieResults(harness)).toEqual([{ success: true, message: '已登录为 Voidsd', platform: 'tencent', cookie: SUCCESS_COOKIE }])

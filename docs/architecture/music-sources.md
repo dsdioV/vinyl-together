@@ -101,6 +101,58 @@
 不带登录态，见 §5）；**「境内 IP + 登录」才能播 VIP/地区受限曲**，海外服务器上等价于
 **需要绿钻会员**（会员权益可越过地区限制）。
 
+
+#### ⚠️ 凭证过期会被静默当成「已登录的非 VIP 用户」（2026-11-13 修复）
+
+**现象**：用户扫码登录过 QQ 音乐且确实有绿钻，但某天起界面不再显示 VIP 徽章，
+点 VIP 歌曲必定失败，且**退出登录再重新扫码就恢复正常**。
+
+**根因（两层叠加）**：
+
+1. **`vip_login_base` 不是凭证存活探针**。实测（2026-11-13，同一 uin 三种状态）：
+
+   | Cookie 状态          | `GetLoginUserInfo`    | `vip_login_base`     |
+   | -------------------- | --------------------- | -------------------- |
+   | 有效 + 绿钻          | `code 0` + `info.nick` | `code 0`, `vip=1 svip=1` |
+   | **过期（旧 musickey）** | **`code 1000`**    | **`code 0` + 全零**  |
+   | 伪造 key / 无 Cookie | `code 1000`           | `code 0` + 全零      |
+
+   即：凭证失效时 `vip_login_base` **照样返回 `code: 0`**，只是数值全归零。
+   旧实现只检查「cookie 里有没有 `uin`」，于是把失效凭证当成「凭证有效但未开绿钻」，
+   返回 `{ ok: true, vipType: 0 }` —— UI 于是显示「已登录、无 VIP」。
+   而「登录成功」又会把 Cookie 写进房间池并持久化到浏览器 `localStorage`，
+   **每次进房都自动补发同一张死凭证**，所以只有手动登出才能打破循环。
+
+2. **过期被当成可静默降级的次要错误**。`authController` 旧实现只对 `netease` 拒收
+   `expired`，`tencent`/`kugou` 走「验证失败也保存」的兜底分支，进一步固化错误状态。
+
+**修复**（`tencentAuthService` + `authController` + `LoginSection`）：
+
+- 新增 `probeCredential()`：用有鉴权的 `music.UserInfo.userInfoServer.GetLoginUserInfo`
+  探测存活，只有拿到明确鉴权失败码 `1000 / 104400 / 104401` 才判 `expired`；
+  超时、`500003` 风控、未知码一律 `unknown`（**绝不**据此把有效用户判成过期）。
+  该探针在取证顺序上先于 `vip_login_base`，失效凭证不再浪费额外上游请求。
+- `vip_login_base` 降级为**只读 VIP 等级**；`svip` 标记实测出现在**顶层**而非
+  `identity` 内（只读 `identity.svip` 会把超级会员降级成普通 VIP），两处都看。
+- `authController` 三平台统一拒收过期凭证入池，并 `markCredentialExpired()` 留痕，
+  使前端能显示「登录已过期 · 需重新扫码」而不是「未登录」或「已登录但没 VIP」。
+- 进房补发 Cookie 后仍是**异步**校验（不阻塞 join），结果显示为三态：
+  正常 / 已过期 / 状态待确认。客户端**不会**自动删除 `localStorage` 里的凭证
+  （删除权仍只在 `useAuth.logout()`）。
+
+**自动续期（L4）**：扫码第 5 步现在会同时保存 `o_openid` / `o_access_token` /
+`o_expired_at`（旧实现只存 `musickey` + `o_refresh_token`，而 `LoginServer.Login`
+的续期协议要求 openid + access_token 齐全，于是根本续不了）。剩余有效期 < 7 天时
+在 `getUserInfo` 内主动续期并回传新 Cookie 由客户端覆盖持久化；同一凭证 12 小时内
+最多续一次。**注意续期的能力边界**：musickey 有效时常量续期成功，一旦过期则返回
+`1000`（实测），所以它是「过期前主动保温」而非「过期后抢救」——过期仍必须重新扫码。
+
+**排查陷阱**：
+
+- ❌ 不要用「手动把 relay URL 打开」或「手动调接口」判断凭证有效性；
+- ✅ 判断 QQ 凭证是否过期**只看 `GetLoginUserInfo` 的 code**：`0` 有效、`1000/104400/104401` 过期；
+- ✅ 服务端日志里 `QQ VIP Data (vip_login_base)` 全零 **不代表**账号不是 VIP —— 先看有没有
+  `QQ credential expired for uin=…`。
 #### 播放判定的正确模型（2026-09-24 生产实测定稿）
 
 **播放 = 权限（登录凭证）AND 地区（大陆出口 IP 或会员权益）**：
@@ -211,7 +263,7 @@
 | 08:04 | `0`（非会员）               | ❌ 同上；同期**其他**歌曲经中继可播    |
 | 11:18 | **`1`（使用会员体验卡后）** | ✅ **`vkey ok (plain)` 直连成功**      |
 
-`vipType` 由 `tencentAuthService` 从 QQ 的 `vip_login_base` 接口读取（`identity.svip ? 2 : identity.vip ? 1 : 0`），反映账号会员状态。
+`vipType` 由 `tencentAuthService` 从 QQ 的 `vip_login_base` 接口读取（`svip ? 2 : vip ? 1 : 0`，实测 `svip` 在**顶层**、`identity` 里只有 `vip`），反映账号会员状态。**该字段不能用来判断凭证是否还有效**——过期凭证同样返回 `code: 0` + 全零，判据见上文 §3 的「凭证过期」小节。
 
 **但这不能推出「只有会员能播」**：用户在同一台境内家宽机器上实测，**免费时长 + 大陆 IP 可以播放该曲**。因此上表里 08:00/08:04 直连的失败，是**海外出口 IP** 导致的，而不是「免费时长没有权限」。会员之所以在海外能过，是因为会员权益可以越过该地区限制。
 

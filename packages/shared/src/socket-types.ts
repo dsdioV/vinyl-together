@@ -104,6 +104,8 @@ export interface ServerToClientEvents {
     platform?: MusicSource
     cookie?: string
     reason?: 'expired' | 'error' | 'no_token'
+    /** 上游是否明确确认凭证有效；false 表示未能确认（不应据此判定过期）。 */
+    credentialVerified?: boolean
   }) => void
   [EVENTS.AUTH_STATUS_UPDATE]: (data: PlatformAuthStatus[]) => void
   [EVENTS.AUTH_MY_STATUS]: (data: MyPlatformAuth[]) => void

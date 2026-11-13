@@ -17,6 +17,17 @@ const QR_PLATFORMS = new Set<MusicSource>(['netease', 'kugou', 'tencent'])
 /** 支持 Cookie 登录的平台集合 */
 const VALID_PLATFORMS = new Set<MusicSource>(['netease', 'tencent', 'kugou'])
 
+/**
+ * 这些平台的 `getUserInfo` 返回 `expired` 时语义**可靠**（凭证确实已失效），
+ * 可以据此拒收凭证并把状态标记为「登录已过期」。
+ *
+ * - `netease`：`login_status` 拿不到 profile 说明 Cookie 失效（既有行为）。
+ * - `tencent`：`GetLoginUserInfo` 返回明确鉴权失败码 1000/104400/104401。
+ *
+ * 酷狗不在其中：它把「VIP 接口没返回数据」也报成 expired，那是不可靠信号。
+ */
+const EXPIRY_IS_DEFINITIVE = new Set<MusicSource>(['netease', 'tencent'])
+
 export function registerAuthController(io: TypedServer, socket: TypedSocket) {
   // 防止同一 QR 会话重复处理 803 成功状态
   let qrSuccessHandled = false
@@ -85,20 +96,23 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           const userInfo = infoResult.data
           const mapping = getSocketMapping(socket.id)
           if (mapping) {
+            const qrCookie = userInfo.refreshedCookie ?? result.cookie
             authService.addCookie(
               mapping.roomId,
               platform,
               mapping.userId,
-              result.cookie,
+              qrCookie,
               userInfo.nickname,
               userInfo.vipType,
+              userInfo.credentialVerified,
             )
             broadcastAuthStatus(io, socket, mapping)
             socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
               success: true,
               message: `已登录为 ${userInfo.nickname}`,
               platform,
-              cookie: result.cookie,
+              cookie: qrCookie,
+              credentialVerified: userInfo.credentialVerified,
             })
             logger.info(`${platform} QR login success: ${userInfo.nickname} (vipType=${userInfo.vipType})`)
           } else {
@@ -175,22 +189,48 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
 
       if (infoResult.ok) {
         const userInfo = infoResult.data
+        // 服务端可能在校验过程中续期了凭证（QQ musickey）。续期结果必须回传，
+        // 否则客户端会一直持有旧 Cookie，下一次进房仍拿失效凭证来试探。
+        const effectiveCookie = userInfo.refreshedCookie ?? cookie
         if (mapping && mapping.roomId) {
-          authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, userInfo.nickname, userInfo.vipType)
+          authService.addCookie(
+            mapping.roomId,
+            platform,
+            mapping.userId,
+            effectiveCookie,
+            userInfo.nickname,
+            userInfo.vipType,
+            userInfo.credentialVerified,
+          )
         }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: true,
           message: `已登录为 ${userInfo.nickname}`,
           platform,
-          cookie,
+          cookie: effectiveCookie,
+          // 凭证未被上游确认时如实告知，UI 不把它显示成「完全正常」
+          credentialVerified: userInfo.credentialVerified,
         })
-      } else if (platform === 'netease' && infoResult.reason === 'expired') {
-        // 仅网易云：明确过期时拒绝保存
+      } else if (infoResult.reason === 'expired' && EXPIRY_IS_DEFINITIVE.has(platform)) {
+        // 只对「expired 语义可靠」的平台拒收凭证。
+        //
+        // 旧实现仅对网易云拒收，QQ 音乐走「验证失败也保存」的兜底分支。这对 QQ 是
+        // 致命的：vip_login_base 对失效凭证静默返回全零，于是过期凭证被当成
+        // 「已登录的非 VIP 用户」写进池子——用户看到名字旁没有 VIP 徽章、点 VIP
+        // 歌曲失败，却完全不知道是登录过期。现在 QQ 改成用 GetLoginUserInfo 探针，
+        // 只有明确鉴权失败码才返回 expired，可以安全拒收。
+        //
+        // 酷狗**不在此列**：它的 getUserInfo 在「VIP 接口没返回数据」时就返回
+        // expired（kugouAuthService.ts），那正是本次认定的不可靠信号。保留原有的
+        // 「验证失败也保存」兜底，避免把可用的酷狗凭证误判掉。
+        if (mapping) {
+          authService.markCredentialExpired(mapping.roomId, platform, mapping.userId)
+        }
         socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
           success: false,
-          message: 'Cookie 已过期，请重新登录',
+          message: '登录凭证已过期，请重新扫码登录',
           platform,
-          reason: infoResult.reason,
+          reason: 'expired',
         })
         if (mapping) broadcastAuthStatus(io, socket, mapping)
         return
@@ -202,8 +242,18 @@ export function registerAuthController(io: TypedServer, socket: TypedSocket) {
           platform,
           reason: 'no_token',
         })
+      } else if (platform === 'tencent') {
+        // QQ 音乐：既未确认有效、也未明确过期（网络/风控）。不再把它当成成功登录
+        // 写进池子并宣称「已登录」——那正是误导用户的老行为。保留 Cookie 以便
+        // 用户手动重试，但如实报告状态。
+        socket.emit(EVENTS.AUTH_SET_COOKIE_RESULT, {
+          success: false,
+          message: '暂时无法验证 QQ 音乐登录状态，请稍后重试或重新扫码',
+          platform,
+          reason: 'error',
+        })
       } else {
-        // 酷狗/QQ 音乐：验证失败也保存（可能是 API 变动，播放时可能仍有效）
+        // 酷狗：验证失败也保存（可能是 API 变动，播放时可能仍有效）
         if (mapping && mapping.roomId) {
           authService.addCookie(mapping.roomId, platform, mapping.userId, cookie, '手动登录', 0)
         }

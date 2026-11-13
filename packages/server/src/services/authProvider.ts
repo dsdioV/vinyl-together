@@ -14,12 +14,30 @@ export interface UserInfoData {
   nickname: string
   vipType: number
   userId: number
+  /**
+   * 凭证有效性是否已被上游**明确确认**。
+   *
+   * - `true`：上游确认凭证可用（QQ 走 GetLoginUserInfo，code=0）
+   * - `false`：无法确认（网络错误 / 风控 500003 等），**不代表凭证已过期**
+   * - `undefined`：该平台不做此区分（网易云、酷狗）
+   *
+   * 用于 UI 区分「已登录」与「登录状态待确认」，避免把未确认显示成正常。
+   */
+  credentialVerified?: boolean
+  /**
+   * 服务端在校验过程中更新过的凭证（如 QQ musickey 主动续期后的新 Cookie）。
+   *
+   * 存在时调用方**必须**用它替换客户端持有的旧 Cookie，否则续期结果会丢失，
+   * 下一次进房仍会拿旧凭证去试探。
+   */
+  refreshedCookie?: string
 }
 
 /**
  * getUserInfo 统一返回类型
  * - ok=true: 验证成功，包含用户信息
- * - ok=false + reason='expired': Cookie 已过期
+ * - ok=false + reason='expired': Cookie 已过期（必须由上游**明确**拒绝才可返回，
+ *   仅凭「拿不到 VIP 信息」或网络异常不得判为过期——否则会把有效用户误判掉）
  * - ok=false + reason='no_token': 缺少 token/userid（如手动输入了无效 Cookie）
  * - ok=false + reason='error': 临时错误（网络/超时等）
  */
