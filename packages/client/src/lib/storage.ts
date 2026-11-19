@@ -214,6 +214,29 @@ export const storage = {
     safeRemove('rejoin-token')
   },
 
+  // 房间密码记忆（按房间号持久化；密码房间刷新后可自动填入，无需重复输入）
+  getRoomPassword: (roomId: string): string | null => {
+    if (!roomId) return null
+    const map = safeGetJSON<Record<string, StoredRoomPassword>>('room-passwords') ?? {}
+    const entry = map[roomId]
+    return typeof entry?.password === 'string' && entry.password.length > 0 ? entry.password : null
+  },
+  rememberRoomPassword: (roomId: string, password: string) => {
+    const trimmed = password.trim()
+    if (!roomId || !trimmed) return
+    const map = safeGetJSON<Record<string, StoredRoomPassword>>('room-passwords') ?? {}
+    map[roomId] = { password: trimmed, savedAt: Date.now() }
+    safeSetJSON('room-passwords', pruneRoomPasswords(map))
+  },
+  forgetRoomPassword: (roomId: string) => {
+    if (!roomId) return
+    const map = safeGetJSON<Record<string, StoredRoomPassword>>('room-passwords') ?? {}
+    if (!(roomId in map)) return
+    delete map[roomId]
+    safeSetJSON('room-passwords', map)
+  },
+  forgetAllRoomPasswords: () => safeRemove('room-passwords'),
+
   // QQ 音乐浏览器中继（默认关闭）
   getQqRelayEnabled: () => safeGet('qqRelayEnabled') === 'true',
   setQqRelayEnabled: (v: boolean) => safeSet('qqRelayEnabled', String(v)),
@@ -221,6 +244,31 @@ export const storage = {
   // 默认歌单浏览器存档（结构与校验由 lib/defaultQueueArchive.ts 负责，这里只存原始 JSON）
   getDefaultQueueSnapshot: (): unknown | null => safeGetJSON('dq-snapshot'),
   setDefaultQueueSnapshot: (value: unknown) => safeSetJSON('dq-snapshot', value),
+}
+
+/** 记住的房间密码上限（超过后淘汰最久未保存的记录） */
+export const MAX_REMEMBERED_ROOM_PASSWORDS = 30
+
+/** 单条房间密码记忆记录 */
+export interface StoredRoomPassword {
+  password: string
+  savedAt: number
+}
+
+/**
+ * 淘汰超出上限的房间密码记录，保留 savedAt 最新的 limit 条。
+ * 纯函数，便于单测（不触碰 localStorage）。
+ */
+export function pruneRoomPasswords(
+  map: Record<string, StoredRoomPassword>,
+  limit: number = MAX_REMEMBERED_ROOM_PASSWORDS,
+): Record<string, StoredRoomPassword> {
+  const entries = Object.entries(map).filter(
+    ([roomId, entry]) => roomId.length > 0 && typeof entry?.password === 'string' && entry.password.length > 0,
+  )
+  if (entries.length <= limit) return Object.fromEntries(entries)
+  entries.sort((a, b) => (b[1].savedAt ?? 0) - (a[1].savedAt ?? 0))
+  return Object.fromEntries(entries.slice(0, limit))
 }
 
 /** Shape stored in localStorage for auth cookies */

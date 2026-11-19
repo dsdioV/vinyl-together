@@ -18,6 +18,7 @@ import localAudioRoutes from './routes/localAudio.js'
 import { clearAllTimers } from './services/roomLifecycleService.js'
 import { localAudioService } from './services/localAudioService.js'
 import { ensureNeteaseApiReady } from './services/neteaseApiBootstrap.js'
+import { startPlaybackWatchdog, stopPlaybackWatchdog } from './services/playbackWatchdog.js'
 import { musicRelayService } from './services/musicRelayService.js'
 import { musicProvider } from './services/musicProvider.js'
 import { logger } from './utils/logger.js'
@@ -111,6 +112,8 @@ musicRelayService.setIo(io)
 musicProvider.setQqRelayRequester((url) => musicRelayService.requestJson(url))
 musicProvider.setForceQqRelay(config.qqRelay.force)
 initializeSocket(io)
+// conductor 失联/卡在曲末时的房间级兜底，避免整个房间停止换歌
+startPlaybackWatchdog(io)
 
 httpServer.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
@@ -142,6 +145,7 @@ async function shutdown(signal: string) {
   // HTTP/Socket shutdown and media cleanup then proceed together so an active
   // upload cannot keep the listeners open while cleanup races a new task.
   localAudioService.beginShutdown()
+  stopPlaybackWatchdog()
   clearAllTimers()
   // Do not let a stuck filesystem/FFmpeg cleanup keep the process alive.
   const forceExitTimer = setTimeout(() => {

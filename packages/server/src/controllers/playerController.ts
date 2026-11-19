@@ -184,6 +184,8 @@ export function registerPlayerController(io: TypedServer, socket: TypedSocket) {
         currentTime: estimateCurrentTime(mapping.roomId),
         isPlaying: room.playState.isPlaying,
         serverTimestamp: Date.now(),
+        // 客户端用它对账：弱网/后台冻结时可能漏收 PLAYER_PLAY，只靠位置校正无法发现"曲目错了"
+        track: room.currentTrack,
       })
     } catch (err) {
       logger.error('PLAYER_SYNC_REQUEST handler error', err, {

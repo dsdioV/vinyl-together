@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner'
 import { resolveLocalAudioMediaUrl } from '@/lib/utils'
 import { getHowlSourceFormats } from '@/lib/localAudioPlayback'
+import type { LoadProgress } from '@/lib/playbackReconcile'
 
 /** Max wait (ms) for Howler `unlock` event before giving up and skipping */
 const PLAY_ERROR_TIMEOUT_MS = 3000
@@ -56,6 +57,12 @@ export function useHowl(onTrackEnd: () => void) {
   /** Snapshot of the last loadTrack arguments for local retry. */
   const lastLoadParamsRef = useRef<{ track: Track; seekTo?: number; autoPlay: boolean } | null>(null)
   const loadTrackRef = useRef<LoadTrack | null>(null)
+  /**
+   * 当前曲目的加载进度（onload / onplay 是否触发）。
+   * 供 usePlayer 的对账看门狗判断「媒体请求挂起、永远等不到 onload」的卡死状态 —
+   * 这种状态下 onloaderror 也不会触发，必须由外部超时发现并重试。
+   */
+  const loadStateRef = useRef<LoadProgress | null>(null)
 
   // Use selectors for the one reactive value we need (volume sync effect)
   const volume = usePlayerStore((s) => s.volume)
@@ -134,6 +141,16 @@ export function useHowl(onTrackEnd: () => void) {
       retryToastShownRef.current = false
       lastLoadParamsRef.current = { track, seekTo, autoPlay }
 
+      // 记录本次加载的开始时刻：若 onload 一直不触发（弱网下请求挂起），
+      // 对账看门狗会据此判定卡死并重试。
+      const loadProgress: LoadProgress = {
+        trackId: track.id,
+        startedAt: Date.now(),
+        loaded: false,
+        playedOnce: false,
+      }
+      loadStateRef.current = loadProgress
+
       const initialUrl = track.streamUrl
       if (!initialUrl) return
 
@@ -164,6 +181,7 @@ export function useHowl(onTrackEnd: () => void) {
         volume: 0,
         onload: () => {
           if (howlRef.current !== howl) return // Stale instance guard
+          loadProgress.loaded = true
           const d = howl.duration()
           if (Number.isFinite(d) && d > 0) {
             usePlayerStore.getState().setDuration(d)
@@ -236,6 +254,7 @@ export function useHowl(onTrackEnd: () => void) {
         },
         onplay: () => {
           if (howlRef.current !== howl) return
+          loadProgress.playedOnce = true
           playStartedRef.current = true
           usePlayerStore.getState().setIsPlaying(true)
           const dur = howl.duration()
@@ -362,5 +381,5 @@ export function useHowl(onTrackEnd: () => void) {
     }
   }, [stopTimeUpdate])
 
-  return { howlRef, soundIdRef, loadTrack }
+  return { howlRef, soundIdRef, loadTrack, loadStateRef }
 }

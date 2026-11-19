@@ -35,7 +35,7 @@ export function LyricsSection() {
               value={s.ttmlDbUrl}
               onChange={(e) => s.setTtmlDbUrl(e.target.value)}
               placeholder="https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml"
-              className="w-64 text-xs"
+              className="w-full text-xs sm:w-64"
             />
           </SettingRow>
         )}
@@ -51,7 +51,10 @@ export function LyricsSection() {
           description="当前歌词行在视口中的锚定方式"
           onReset={s.lyricAlignAnchor !== s.lyricAlignAnchorDefault ? s.resetLyricAlignAnchor : undefined}
         >
-          <Select value={s.lyricAlignAnchor} onValueChange={(v) => s.setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')}>
+          <Select
+            value={s.lyricAlignAnchor}
+            onValueChange={(v) => s.setLyricAlignAnchor(v as 'top' | 'center' | 'bottom')}
+          >
             <SelectTrigger className="w-28">
               <SelectValue />
             </SelectTrigger>
@@ -133,7 +136,11 @@ export function LyricsSection() {
         <SettingRow
           label="翻译字体大小"
           description="翻译歌词相对主歌词的字号比例（10-200）"
-          onReset={s.lyricTranslationFontSize !== s.lyricTranslationFontSizeDefault ? s.resetLyricTranslationFontSize : undefined}
+          onReset={
+            s.lyricTranslationFontSize !== s.lyricTranslationFontSizeDefault
+              ? s.resetLyricTranslationFontSize
+              : undefined
+          }
         >
           <NumericInput value={s.lyricTranslationFontSize} onChange={s.setLyricTranslationFontSize} />
         </SettingRow>

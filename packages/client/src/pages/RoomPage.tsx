@@ -175,12 +175,22 @@ export default function RoomPage() {
   }, [roomId])
 
   // --- Gate start handler (receives password from gate if applicable) ---
-  const handleGateStart = useCallback(async (password?: string) => {
-    await unlockAudio()
-    if (password) passwordRef.current = password
-    setGatePasswordError(null)
-    setGateOpen(true)
-  }, [])
+  // 密码房间：用户输入过的密码会按房间号记住，刷新/重连后自动填入并直接复用，
+  // 无需每次重新输入（与昵称的持久化行为一致）。
+  const handleGateStart = useCallback(
+    async (password?: string) => {
+      await unlockAudio()
+      if (password) {
+        passwordRef.current = password
+        if (roomId) storage.rememberRoomPassword(roomId, password)
+      } else if (roomId) {
+        passwordRef.current = storage.getRoomPassword(roomId) ?? undefined
+      }
+      setGatePasswordError(null)
+      setGateOpen(true)
+    },
+    [roomId],
+  )
 
   // --- Auto-join if room state is missing (e.g. page refresh, direct URL access) ---
   // Only after the interaction gate is open — avoids autoplay warnings.
@@ -195,10 +205,11 @@ export default function RoomPage() {
         setGateOpen(false) // Re-show InteractionGate so user can set nickname
         return
       }
+      // 优先使用用户本次输入的密码，其次使用本地记住的密码（刷新后门禁不会再有输入）
       socket.emit(EVENTS.ROOM_JOIN, {
         roomId,
         nickname,
-        password: passwordRef.current || undefined,
+        password: passwordRef.current || storage.getRoomPassword(roomId) || undefined,
         rejoinToken: storage.getRejoinToken(roomId) ?? undefined,
       })
     }
@@ -213,6 +224,10 @@ export default function RoomPage() {
       joiningRef.current = false
 
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        // 记住的密码可能已失效（房主改过密码）：清掉，避免每次重连都用错密码
+        if (roomId) storage.forgetRoomPassword(roomId)
+        passwordRef.current = undefined
+
         // If we came through the gate, revert to gate with error
         if (!passwordNeeded && !gateOpen) {
           // Gate was not yet open — shouldn't happen, but handle gracefully
@@ -225,7 +240,6 @@ export default function RoomPage() {
           // Reset gate so user can re-enter password
           setGateOpen(false)
           setGatePasswordError('密码错误，请重试')
-          passwordRef.current = undefined
           return
         }
 
@@ -260,7 +274,7 @@ export default function RoomPage() {
       socket.off(EVENTS.ROOM_STATE, onRoomState)
       socket.off(EVENTS.ROOM_DELETED)
     }
-  }, [socket, passwordNeeded, gateOpen, navigate])
+  }, [socket, passwordNeeded, gateOpen, navigate, roomId])
 
   // No unmount cleanup needed — the server handles room membership:
   // - On disconnect: server's disconnect handler removes user
@@ -274,6 +288,7 @@ export default function RoomPage() {
       if (!nickname) return
       setPasswordLoading(true)
       setPasswordError(null)
+      storage.rememberRoomPassword(roomId, password)
       socket.emit(EVENTS.ROOM_JOIN, {
         roomId,
         nickname,
@@ -351,6 +366,7 @@ export default function RoomPage() {
           roomName={roomInfo?.name}
           hasPassword={roomInfo?.hasPassword || !!gatePasswordError}
           passwordError={gatePasswordError}
+          initialPassword={roomId ? (storage.getRoomPassword(roomId) ?? '') : ''}
         />
       </motion.div>
     )
@@ -447,6 +463,7 @@ export default function RoomPage() {
           onSubmit={handlePasswordSubmit}
           error={passwordError}
           isLoading={passwordLoading}
+          initialPassword={roomId ? (storage.getRoomPassword(roomId) ?? '') : ''}
         />
       </motion.div>
     </AbilityProvider>

@@ -372,10 +372,10 @@ export function DefaultPlaylistSection() {
 
           {/* Search */}
           <div className="space-y-3 mt-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div
                 ref={sourceContainerRef}
-                className="bg-muted/50 relative flex items-center rounded-lg p-0.5 shrink-0"
+                className="bg-muted/50 relative flex max-w-full shrink-0 items-center overflow-x-auto rounded-lg p-0.5"
               >
                 <motion.div
                   className={cn('absolute inset-y-0.5 rounded-md', PLATFORM_ACTIVE[source])}
@@ -414,7 +414,7 @@ export function DefaultPlaylistSection() {
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="flex-1 h-8 text-sm"
+                className="h-8 min-w-0 flex-1 text-sm"
                 aria-label="搜索添加到默认列表"
               />
               <Button

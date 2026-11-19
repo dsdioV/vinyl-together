@@ -12,11 +12,19 @@ interface InteractionGateProps {
   roomName?: string
   hasPassword?: boolean
   passwordError?: string | null
+  /** 上次为该房间保存的密码，自动填入，刷新后无需重复输入 */
+  initialPassword?: string
 }
 
-export function InteractionGate({ onStart, roomName, hasPassword, passwordError }: InteractionGateProps) {
+export function InteractionGate({
+  onStart,
+  roomName,
+  hasPassword,
+  passwordError,
+  initialPassword,
+}: InteractionGateProps) {
   const prefersReducedMotion = useReducedMotion()
-  const [password, setPassword] = useState('')
+  const [password, setPassword] = useState(initialPassword ?? '')
 
   const savedNickname = storage.getNickname()
   const needsNickname = !savedNickname
@@ -90,6 +98,9 @@ export function InteractionGate({ onStart, roomName, hasPassword, passwordError 
                   autoFocus={!needsNickname}
                   className={passwordError ? 'border-destructive' : ''}
                 />
+                {initialPassword && !passwordError && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">已自动填入上次使用的密码</p>
+                )}
                 {passwordError && (
                   <motion.p
                     initial={{ opacity: 0, y: -4 }}

@@ -284,7 +284,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
 
         <SettingRow label="密码保护">
           {room?.hasPassword ? (
-            <div className="flex items-center gap-2">
+            <div className="flex max-w-full flex-wrap items-center gap-2">
               <Badge variant="secondary" className="gap-1">
                 <Lock className="h-3 w-3" /> 已设置
               </Badge>
@@ -359,7 +359,7 @@ export function RoomSettingsSection({ onUpdateSettings }: RoomSettingsSectionPro
           </SettingRow>
 
           {passwordEnabled && (
-            <div className="flex gap-2 pb-2">
+            <div className="flex flex-wrap gap-2 pb-2">
               <Input
                 type="password"
                 placeholder="输入新密码..."

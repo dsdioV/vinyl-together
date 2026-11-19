@@ -18,14 +18,24 @@ interface PasswordDialogProps {
   onSubmit: (password: string) => void
   error: string | null
   isLoading: boolean
+  /** 上次为该房间保存的密码，自动填入 */
+  initialPassword?: string
 }
 
-export function PasswordDialog({ open, onOpenChange, roomName, onSubmit, error, isLoading }: PasswordDialogProps) {
-  const [password, setPassword] = useState('')
+export function PasswordDialog({
+  open,
+  onOpenChange,
+  roomName,
+  onSubmit,
+  error,
+  isLoading,
+  initialPassword,
+}: PasswordDialogProps) {
+  const [password, setPassword] = useState(initialPassword ?? '')
 
-  // Reset password when dialog opens
+  // Reset password when dialog opens (pre-fill with the remembered password)
   const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) setPassword('')
+    if (nextOpen) setPassword(initialPassword ?? '')
     onOpenChange(nextOpen)
   }
 
@@ -58,6 +68,9 @@ export function PasswordDialog({ open, onOpenChange, roomName, onSubmit, error, 
                 autoFocus
                 className={error ? 'border-destructive' : ''}
               />
+              {initialPassword && !error && (
+                <p className="mt-1.5 text-xs text-muted-foreground">已自动填入上次使用的密码</p>
+              )}
               {error && (
                 <motion.p
                   initial={{ opacity: 0, y: -4 }}

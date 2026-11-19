@@ -58,9 +58,14 @@ export function usePlayerSync(
   howlRef: RefObject<Howl | null>,
   soundIdRef: RefObject<number | undefined>,
   loadTrack: (track: Track, seekTo?: number, autoPlay?: boolean) => void,
+  options?: {
+    /** 服务端权威曲目与本地不一致时回调（漏收切歌事件/媒体请求卡死后的自愈入口） */
+    onSyncTrack?: (data: { track: Track; currentTime: number; isPlaying: boolean; serverTimestamp: number }) => void
+  },
 ) {
   const { socket } = useSocketContext()
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime)
+  const onSyncTrack = options?.onSyncTrack
 
   // Pending scheduled action timers (so we can cancel on unmount / new action)
   const scheduledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -168,14 +173,24 @@ export function usePlayerSync(
           })
           return
         }
-        if (!howlRef.current) {
-          // No Howl instance — the track likely has no streamUrl or loadTrack
-          // was never called.  Ask the server to re-resolve the stream URL
-          // rather than silently doing nothing.
-          console.warn('onResume: no Howl instance, requesting server re-play')
-          socket.emit(EVENTS.PLAYER_PLAY)
+        // 本地播放器不可用时不要对死元素 play()（弱网下媒体请求挂起就是这样：
+        // howl 存在但永远没加载成功，play() 毫无反应，用户只能刷新）。
+        // 改为请服务端重新下发 PLAYER_PLAY，让客户端按权威状态重建播放器。
+        const playerNow = usePlayerStore.getState()
+        const roomTrackId = useRoomStore.getState().room?.currentTrack?.id ?? null
+        const localUnusable =
+          !howlRef.current ||
+          playerNow.duration <= 0 ||
+          (roomTrackId !== null && playerNow.currentTrack?.id !== roomTrackId)
+        if (localUnusable) {
+          // 请求一次权威状态：同步响应会带回曲目与位置，客户端据此重建播放器。
+          // （直接 emit PLAYER_PLAY 对普通成员会变成一次投票，且服务端已在播放时并不会改变什么。）
+          console.warn('onResume: local player unusable, requesting authoritative sync')
+          socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
           return
         }
+        // localUnusable 已排除 null，这里显式收窄类型
+        if (!howlRef.current) return
         // Seek to the expected position at this moment
         if (data.playState.currentTime > 0) {
           howlRef.current.seek(data.playState.currentTime)
@@ -214,7 +229,42 @@ export function usePlayerSync(
     // Only correct when drift exceeds a generous 5s threshold, and only
     // after 2 consecutive confirmations.  The initial no-sync window
     // suppresses all corrections on a new track.
-    const onSyncResponse = (data: { currentTime: number; isPlaying: boolean; serverTimestamp: number }) => {
+    const onSyncResponse = (data: {
+      currentTime: number
+      isPlaying: boolean
+      serverTimestamp: number
+      track: Track | null
+    }) => {
+      const { room: syncRoom } = useRoomStore.getState()
+      if (!syncRoom) return
+
+      // 服务端权威曲目与本地不一致 → 本地漏收了切歌事件（弱网半断连/页面冻结/
+      // 媒体请求卡死）。位置漂移校正无法发现这类脱钩，必须按权威曲目重载。
+      // 另外，同一曲目但本地播放器根本不可用（没有 Howl / 时长为 0 = 从未加载成功）
+      // 时也要重建 —— 否则媒体请求挂起后永远停在"有曲目、没声音、按钮无效"。
+      const playerState = usePlayerStore.getState()
+      const playerTrackId = playerState.currentTrack?.id ?? null
+      const localUnusable = !howlRef.current || playerState.duration <= 0
+      if (data.track && (data.track.id !== playerTrackId || localUnusable)) {
+        console.warn('Playback desync detected via sync response, reloading authoritative track:', data.track.title)
+        onSyncTrack?.({
+          track: data.track,
+          currentTime: data.currentTime,
+          isPlaying: data.isPlaying,
+          serverTimestamp: data.serverTimestamp,
+        })
+        return
+      }
+
+      // 同步响应同时带回权威播放状态，供对账看门狗估算应播位置
+      useRoomStore.getState().updateRoom({
+        playState: {
+          isPlaying: data.isPlaying,
+          currentTime: data.currentTime,
+          serverTimestamp: data.serverTimestamp,
+        },
+      })
+
       // No-sync window: let the audio buffer stabilise first
       if (Date.now() < noSyncUntilRef.current) return
 
@@ -223,7 +273,6 @@ export function usePlayerSync(
 
       // Conductor (hostId) is the authoritative playback source — skip
       // drift correction to avoid a feedback loop.
-      const { room: syncRoom } = useRoomStore.getState()
       const myId = storage.getUserId()
       if (syncRoom?.hostId === myId) return
 
@@ -268,7 +317,7 @@ export function usePlayerSync(
       socket.off(EVENTS.PLAYER_PLAY, onPlay)
       socket.off(EVENTS.PLAYER_SYNC_RESPONSE, onSyncResponse)
     }
-  }, [socket, howlRef, soundIdRef, loadTrack, setCurrentTime])
+  }, [socket, howlRef, soundIdRef, loadTrack, setCurrentTime, onSyncTrack])
 
   // -----------------------------------------------------------------------
   // Periodic sync request (client-initiated drift correction).

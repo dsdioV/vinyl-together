@@ -7,6 +7,16 @@ import { useRoomStore } from '@/stores/roomStore'
 import type { ScheduledPlayState, Track } from '@music-together/shared'
 import { EVENTS } from '@music-together/shared'
 import { useCallback, useEffect, useRef } from 'react'
+import {
+  detectTrackDesync,
+  estimateRoomPosition,
+  isLoadStalled,
+  isPlaybackStartStalled,
+  mayRetry,
+  LOCAL_PAUSED_STUCK_MS,
+  RECONCILE_DEBOUNCE_MS,
+  RECONCILE_INTERVAL_MS,
+} from '@/lib/playbackReconcile'
 import { useHowl } from './useHowl'
 import { useLyric } from './useLyric'
 import { useMediaSession } from './useMediaSession'
@@ -43,11 +53,159 @@ export function usePlayer() {
     }
   }, [socket])
 
-  const { howlRef, soundIdRef, loadTrack } = useHowl(autoNext)
+  const { howlRef, soundIdRef, loadTrack, loadStateRef } = useHowl(autoNext)
   const { fetchLyric } = useLyric()
 
+  // -------------------------------------------------------------------------
+  // 播放对账（playback reconciliation）
+  //
+  // 弱网下本地播放器可能与房间状态永久脱钩，而此前没有任何兜底：
+  //   1. 漏收 PLAYER_PLAY → 本地还停在上一首；
+  //   2. 媒体请求挂起（既无 onload 也无 onloaderror）→ 播放器永远起不来；
+  //   3. 该播却没播（元素停住/被系统暂停）→ 点播放键只是对死元素调用 play()。
+  // 看门狗按固定间隔检查上述三种状态，必要时按服务端权威状态重载，并带退避重试。
+  // -------------------------------------------------------------------------
+  const reconcileRef = useRef({
+    mismatchSince: null as number | null,
+    pausedSince: null as number | null,
+    attempt: 0,
+    lastAttemptAt: 0,
+    lastSyncRequestAt: 0,
+  })
+
+  /** 向服务端要一次权威状态（同步响应会带回当前曲目 + 位置），用于漏收事件后的自愈 */
+  const requestAuthoritativeSync = useCallback(() => {
+    const st = reconcileRef.current
+    const now = Date.now()
+    if (now - st.lastSyncRequestAt < RECONCILE_INTERVAL_MS) return
+    st.lastSyncRequestAt = now
+    socket.emit(EVENTS.PLAYER_SYNC_REQUEST)
+  }, [socket])
+
+  /** 按房间状态（权威曲目 + 估算位置）重载本地播放器 */
+  const loadFromRoomState = useCallback(
+    (override?: { track?: Track; position?: number; shouldPlay?: boolean }) => {
+      const { room } = useRoomStore.getState()
+      if (!room) return
+      const track = override?.track ?? room.currentTrack
+      if (!track?.streamUrl) return
+
+      const shouldPlay = override?.shouldPlay ?? room.playState.isPlaying
+      const position = override?.position ?? estimateRoomPosition(room.playState, getServerTime(), track.duration)
+      console.warn('[reconcile] reloading room track', track.title, 'at', position.toFixed(1), 'playing=', shouldPlay)
+      // 标记为已恢复：紧随其后的 PLAYER_PLAY 不再重复加载
+      recoveredTrackIdRef.current = track.id
+      loadTrack(track, position, shouldPlay)
+      fetchLyric(track)
+    },
+    [fetchLyric, loadTrack],
+  )
+
+  /** 同步响应带回的权威曲目/状态与本地不一致时，以服务端为准重载 */
+  const handleSyncTrack = useCallback(
+    (data: { track: Track; currentTime: number; isPlaying: boolean; serverTimestamp: number }) => {
+      useRoomStore.getState().updateRoom({
+        currentTrack: data.track,
+        playState: {
+          isPlaying: data.isPlaying,
+          currentTime: data.currentTime,
+          serverTimestamp: data.serverTimestamp,
+        },
+      })
+      loadFromRoomState({
+        track: data.track,
+        position: Math.max(0, data.currentTime),
+        shouldPlay: data.isPlaying,
+      })
+    },
+    [loadFromRoomState],
+  )
+
   // Connect sync (handles SEEK, PAUSE, RESUME + conductor reporting)
-  usePlayerSync(howlRef, soundIdRef, loadTrack)
+  usePlayerSync(howlRef, soundIdRef, loadTrack, { onSyncTrack: handleSyncTrack })
+
+  // -----------------------------------------------------------------------
+  // 对账看门狗：把本地播放器从"卡死"状态里拉回来（只在前台运行）。
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    const attemptReload = () => {
+      const st = reconcileRef.current
+      const now = Date.now()
+      if (!mayRetry(st.lastAttemptAt, st.attempt, now)) return
+      st.attempt += 1
+      st.lastAttemptAt = now
+      // 先要一次权威状态（顺带修复 store 里可能也已过期的曲目），再按当前状态重载
+      requestAuthoritativeSync()
+      loadFromRoomState()
+    }
+
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return
+      const { room } = useRoomStore.getState()
+      const player = usePlayerStore.getState()
+      const st = reconcileRef.current
+      const now = Date.now()
+
+      // 不在房间 / 房间没有当前曲目：交给 roomStore 的恢复逻辑，重置判定窗口
+      if (!room?.currentTrack) {
+        st.mismatchSince = null
+        st.pausedSince = null
+        return
+      }
+
+      const desync = detectTrackDesync({
+        roomTrackId: room.currentTrack.id,
+        playerTrackId: player.currentTrack?.id ?? null,
+        hasHowl: Boolean(howlRef.current),
+      })
+
+      if (desync) {
+        st.pausedSince = null
+        if (st.mismatchSince === null) st.mismatchSince = now
+        if (now - st.mismatchSince >= RECONCILE_DEBOUNCE_MS) attemptReload()
+        return
+      }
+      st.mismatchSince = null
+
+      // 同一曲目，但加载始终没完成（媒体请求挂起：onload 与 onloaderror 都不会来）
+      const load = loadStateRef.current
+      if (isLoadStalled(load, now) || isPlaybackStartStalled(load, now)) {
+        st.pausedSince = null
+        attemptReload()
+        return
+      }
+
+      // 已加载过，但房间在播、本地却停着（元素停住 / 被系统暂停）
+      if (room.playState.isPlaying && load?.playedOnce && !player.isPlaying) {
+        if (st.pausedSince === null) st.pausedSince = now
+        if (now - st.pausedSince >= LOCAL_PAUSED_STUCK_MS) {
+          st.pausedSince = null
+          attemptReload()
+        }
+        return
+      }
+      st.pausedSince = null
+
+      // 恢复正常：重置退避，下次卡顿时可以立刻重试
+      if (player.isPlaying) {
+        st.attempt = 0
+        st.lastAttemptAt = 0
+      }
+    }
+
+    const interval = setInterval(tick, RECONCILE_INTERVAL_MS)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    // 启动时先跑一次（覆盖刷新后立即处于卡死状态的场景）
+    tick()
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [howlRef, loadStateRef, requestAuthoritativeSync, loadFromRoomState])
 
   // Reset dedup ref on disconnect so reconnect PLAYER_PLAY is never blocked
   useEffect(() => {

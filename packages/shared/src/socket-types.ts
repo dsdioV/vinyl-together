@@ -75,7 +75,13 @@ export interface ServerToClientEvents {
   [EVENTS.PLAYER_PAUSE]: (data: { playState: ScheduledPlayState }) => void
   [EVENTS.PLAYER_RESUME]: (data: { playState: ScheduledPlayState; track?: Track }) => void
   [EVENTS.PLAYER_SEEK]: (data: { playState: ScheduledPlayState }) => void
-  [EVENTS.PLAYER_SYNC_RESPONSE]: (data: { currentTime: number; isPlaying: boolean; serverTimestamp: number }) => void
+  [EVENTS.PLAYER_SYNC_RESPONSE]: (data: {
+    currentTime: number
+    isPlaying: boolean
+    serverTimestamp: number
+    /** 服务端权威当前曲目（客户端据此对账，修复漏收切歌事件的弱网设备） */
+    track: Track | null
+  }) => void
 
   // NTP clock sync
   [EVENTS.NTP_PONG]: (data: { clientPingId: number; serverTime: number }) => void

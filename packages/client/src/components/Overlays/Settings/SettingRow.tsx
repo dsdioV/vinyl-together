@@ -16,12 +16,15 @@ export function SettingRow({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3">
-      <div className="space-y-0.5">
-        <Label className="text-sm font-medium">{label}</Label>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+    // 移动端纵向堆叠（标签在上、控件在下），桌面端恢复左右两栏。
+    // 之前固定 flex-row 时，长描述会把整行撑到超出容器宽度，
+    // 右侧控件被挤出屏幕（移动端设置面板内容被裁切的根因）。
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="min-w-0 space-y-0.5">
+        <Label className="block text-sm font-medium break-words">{label}</Label>
+        {description && <p className="text-xs break-words text-muted-foreground">{description}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
         {onReset && (
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>

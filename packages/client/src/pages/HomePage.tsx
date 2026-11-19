@@ -121,12 +121,16 @@ export default function HomePage() {
       // 建房失败时丢弃未生效的自动填充意图，避免下次进房误触发
       createAutoFillRef.current = null
       if (error.code === ERROR_CODE.WRONG_PASSWORD) {
+        // 记住的密码失效（房主改过密码）：清除，避免下次继续用错密码
+        const failedRoomId = lastJoinedRoomIdRef.current || directRoomIdRef.current.trim()
+        if (failedRoomId) storage.forgetRoomPassword(failedRoomId)
+
         // If password dialog is already open, show error
         if (passwordDialogRef.current.open) {
           setPasswordError('密码错误，请重试')
         } else {
           // Direct join hit a password-protected room — open password dialog
-          const targetRoomId = lastJoinedRoomIdRef.current || directRoomIdRef.current.trim()
+          const targetRoomId = failedRoomId
           if (targetRoomId) {
             setPasswordDialog({
               open: true,
@@ -181,6 +185,19 @@ export default function HomePage() {
     createRoom(nickname, roomName, password, persistent, persistentTtlHours, customRoomId)
   }
 
+  /**
+   * 密码房间：本地记住过密码就直接带上，避免每次进房都弹密码框。
+   * 密码已失效时服务端会返回 WRONG_PASSWORD，此时清除记忆并回退到密码弹窗。
+   */
+  const joinWithRememberedPassword = (room: RoomListItem, nickname: string): boolean => {
+    const remembered = storage.getRoomPassword(room.id)
+    if (!remembered) return false
+    lastJoinedRoomIdRef.current = room.id
+    setActionLoading(true)
+    joinRoom(room.id, nickname, remembered)
+    return true
+  }
+
   const handleRoomClick = async (room: RoomListItem) => {
     if (actionLoading) return
     if (!requireConnection()) return
@@ -193,6 +210,7 @@ export default function HomePage() {
     await unlockAudio()
 
     if (room.hasPassword) {
+      if (joinWithRememberedPassword(room, savedNickname)) return
       setPasswordDialog({ open: true, room })
       setPasswordError(null)
     } else {
@@ -242,8 +260,10 @@ export default function HomePage() {
       if (pending.type === 'room') {
         const room = pending.room
         if (room.hasPassword) {
-          setPasswordDialog({ open: true, room })
-          setPasswordError(null)
+          if (!joinWithRememberedPassword(room, nickname)) {
+            setPasswordDialog({ open: true, room })
+            setPasswordError(null)
+          }
         } else {
           setActionLoading(true)
           joinRoom(room.id, nickname)
@@ -371,6 +391,7 @@ export default function HomePage() {
         onSubmit={handlePasswordSubmit}
         error={passwordError}
         isLoading={actionLoading}
+        initialPassword={passwordDialog.room ? (storage.getRoomPassword(passwordDialog.room.id) ?? '') : ''}
       />
     </motion.div>
   )
